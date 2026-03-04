@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  seo-agent:
+    build: .
+    container_name: seo-agent-container
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    restart: always
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: ngrok-tunnel
+    command:
+      - "http"
+      - "seo-agent:8501"
+      - "--domain=${NGROK_DOMAIN}"
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    depends_on:
+      - seo-agent
+    restart: always

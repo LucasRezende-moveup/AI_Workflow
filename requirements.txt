@@ -1,0 +1,13 @@
+streamlit
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+pandas
+plotly
+python-dotenv
+google-generativeai
+requests
+beautifulsoup4
+lxml
+curl_cffi
+openpyxl
