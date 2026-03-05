@@ -11,3 +11,4 @@ beautifulsoup4
 lxml
 curl_cffi
 openpyxl
+numpy
