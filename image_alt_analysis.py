@@ -33,18 +33,20 @@ def call_gemini_with_retry(model, prompt, content=None):
         return model.generate_content([prompt, content])
     return model.generate_content(prompt)
 
-def get_images_from_url(url):
-    """Scrapes images from a URL, filtering out likely icons and logos."""
+def get_images_from_url(url, auth=None):
+    """Scrapes images from a URL, filtering out likely icons and logos.
+    Accepts an optional auth=(username, password) tuple for HTTP Basic Auth.
+    """
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15, auth=auth or None)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
         # Keywords that often indicate icons or logos
-        exclude_keywords = ['logo', 'icon', 'svg', 'avatar', 'social', 'button', 'arrow', 'px-', 'sprite']
+        exclude_keywords = ['logo', 'icon', 'svg', 'avatar', 'social', 'button', 'arrow', 'px-', 'sprite', 'profile', 'headshot', 'user']
         
         img_data = []
         for img in soup.find_all('img'):
@@ -168,8 +170,20 @@ def render_image_alt_analysis_page():
             keyword = st.text_input("Target Keyword", placeholder="e.g. digital marketing", key="img_alt_keyword")
             
         manual_intent = st.text_input("Override User Intent (Leave empty for auto-detection)", placeholder="e.g. Informational")
-        
-        analyze_btn = st.button("🚀 Run Analysis", type="primary")
+        max_images = st.number_input("Max Images to Analyze (Set higher to process all)", min_value=1, max_value=500, value=10, step=5)
+
+    with st.expander("🔒 Authentication (Optional — for password-protected pages)"):
+        use_auth = st.checkbox("This page requires authentication", key="imgalt_use_auth")
+        auth = None
+        if use_auth:
+            a_col1, a_col2 = st.columns(2)
+            with a_col1:
+                auth_user = st.text_input("Username", key="imgalt_auth_user", placeholder="user")
+            with a_col2:
+                auth_pass = st.text_input("Password", key="imgalt_auth_pass", placeholder="password", type="password")
+            auth = (auth_user, auth_pass) if auth_user else None
+
+    analyze_btn = st.button("🚀 Run Analysis", type="primary")
         
     if analyze_btn:
         if not url:
@@ -183,7 +197,7 @@ def render_image_alt_analysis_page():
             url = 'https://' + url
 
         with st.spinner("Fetching page and detecting intent..."):
-            images, html_content = get_images_from_url(url)
+            images, html_content = get_images_from_url(url, auth=auth)
             if html_content:
                 if manual_intent:
                     detected_intent = manual_intent
@@ -208,7 +222,7 @@ def render_image_alt_analysis_page():
         results = []
         progress_bar = st.progress(0)
         
-        limit = min(len(images), 10)
+        limit = min(len(images), max_images)
         for i, img_info in enumerate(images[:limit]):
             status_text = st.empty()
             status_text.text(f"Analyzing image {i+1}/{limit}...")
@@ -260,5 +274,7 @@ def render_image_alt_analysis_page():
                                 st.success(f"**AI Proposes:** {res['proposed_alt']}")
                     st.divider()
         
-        if len(images) > 10:
-            st.info(f"Summary: Processed {limit} out of {len(images)} content images found.")
+        if len(images) > limit:
+            st.info(f"Summary: Processed {limit} out of {len(images)} content images found. Increase 'Max Images to Analyze' in settings to process more.")
+        else:
+            st.success(f"Summary: Processed all {limit} content images found.")

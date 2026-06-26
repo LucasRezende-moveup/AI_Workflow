@@ -1,4 +1,7 @@
-import streamlit as st
+try:
+    import streamlit as st
+except ImportError:
+    st = None
 import requests
 from bs4 import BeautifulSoup
 import json
@@ -6,9 +9,10 @@ import os
 import google.generativeai as genai
 from urllib.parse import urlparse, urljoin
 
-def scrape_internal_links(url):
+def scrape_internal_links(url, auth=None):
     """
     Scrapes a URL and extracts internal links with anchor text.
+    Accepts an optional auth=(username, password) tuple for HTTP Basic Auth.
     """
     try:
         if not url.startswith('http'):
@@ -18,10 +22,10 @@ def scrape_internal_links(url):
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         
         try:
-            response = requests.get(url, headers=headers, timeout=15)
+            response = requests.get(url, headers=headers, timeout=15, auth=auth or None)
         except requests.exceptions.SSLError:
             # Fallback for SSL issues (common on Windows)
-            response = requests.get(url, headers=headers, timeout=15, verify=False)
+            response = requests.get(url, headers=headers, timeout=15, verify=False, auth=auth or None)
             
         response.raise_for_status()
         
@@ -131,7 +135,18 @@ def render_internal_linking_page(gsc_client=None):
     st.markdown("### 🔍 Link Discovery Setup")
     with st.container(border=True):
         urls_input = st.text_area("Target URLs (one per line)", placeholder="https://example.com/page1\nhttps://example.com/page2", help="The AI will analyze how these pages link to each other.")
-    
+
+    with st.expander("🔒 Authentication (Optional — for password-protected pages)"):
+        use_auth = st.checkbox("These pages require authentication", key="il_use_auth")
+        auth = None
+        if use_auth:
+            a_col1, a_col2 = st.columns(2)
+            with a_col1:
+                auth_user = st.text_input("Username", key="il_auth_user", placeholder="user")
+            with a_col2:
+                auth_pass = st.text_input("Password", key="il_auth_pass", placeholder="password", type="password")
+            auth = (auth_user, auth_pass) if auth_user else None
+
     st.markdown("<br>", unsafe_allow_html=True)
     
     # Session State Initialization
@@ -155,7 +170,7 @@ def render_internal_linking_page(gsc_client=None):
             
             for i, url in enumerate(input_urls):
                 with st.spinner(f"Scraping {url}..."):
-                    data = scrape_internal_links(url)
+                    data = scrape_internal_links(url, auth=auth)
                     all_data.append(data)
                 progress_bar.progress((i + 1) / len(input_urls))
             

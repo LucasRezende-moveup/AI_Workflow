@@ -3,8 +3,10 @@ import requests
 from bs4 import BeautifulSoup
 import os
 
-def extract_headers(url):
-    """Fetches the URL and extracts all H1 through H6 tags, returning a list of dicts."""
+def extract_headers(url, auth=None):
+    """Fetches the URL and extracts all H1 through H6 tags, returning a list of dicts.
+    Accepts an optional auth=(username, password) tuple for HTTP Basic Auth.
+    """
     headers_data = []
     
     headers = {
@@ -12,7 +14,7 @@ def extract_headers(url):
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15, auth=auth or None)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'lxml')
@@ -93,6 +95,17 @@ def render_header_analysis_page():
     with col2:
         keyword = st.text_input("Target Keyword / Cluster", placeholder="e.g., 'best running shoes'")
 
+    with st.expander("🔒 Authentication (Optional — for password-protected pages)"):
+        use_auth = st.checkbox("This page requires authentication", key="hdr_use_auth")
+        auth = None
+        if use_auth:
+            a_col1, a_col2 = st.columns(2)
+            with a_col1:
+                auth_user = st.text_input("Username", key="hdr_auth_user", placeholder="user")
+            with a_col2:
+                auth_pass = st.text_input("Password", key="hdr_auth_pass", placeholder="password", type="password")
+            auth = (auth_user, auth_pass) if auth_user else None
+
     if st.button("Analyze Headers", type="primary"):
         if not url:
             st.warning("Please enter a valid URL.")
@@ -102,7 +115,7 @@ def render_header_analysis_page():
             return
 
         with st.spinner("Fetching header tags..."):
-            headers_data, error = extract_headers(url)
+            headers_data, error = extract_headers(url, auth=auth)
             
             if error:
                 st.error(error)

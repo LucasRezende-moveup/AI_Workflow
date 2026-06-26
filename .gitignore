@@ -2,6 +2,11 @@
 .env
 client_secret.json
 token.pickle
+log_sites.json
+
+# Scratch / backups
+scratch/
+*.bak
 
 # Python
 __pycache__/
@@ -11,6 +16,9 @@ __pycache__/
 env/
 venv/
 ENV/
+
+# Frontend build output
+frontend/dist/
 
 # Streamlit
 .streamlit/

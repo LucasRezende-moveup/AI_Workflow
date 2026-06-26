@@ -101,9 +101,10 @@ class EmbeddingEngine:
 
 embedding_engine = EmbeddingEngine()
 
-def get_urls_from_sitemap(sitemap_url, depth=0):
+def get_urls_from_sitemap(sitemap_url, auth=None, depth=0):
     """
     Extracts all URLs from an XML sitemap or sitemap index with parallel processing for indexes.
+    Accepts an optional auth=(username, password) tuple for HTTP Basic Auth.
     """
     if depth > 5: # Prevent infinite cycles
         return []
@@ -112,7 +113,7 @@ def get_urls_from_sitemap(sitemap_url, depth=0):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     try:
-        response = requests.get(sitemap_url, headers=headers, timeout=15)
+        response = requests.get(sitemap_url, headers=headers, timeout=15, auth=auth or None)
         response.raise_for_status()
         # Using html.parser for XML since lxml might not be available
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -128,8 +129,10 @@ def get_urls_from_sitemap(sitemap_url, depth=0):
                     sm_urls.append(loc.text.strip())
             
             if sm_urls:
+                from functools import partial
+                fetch_fn = partial(get_urls_from_sitemap, auth=auth, depth=depth + 1)
                 with ThreadPoolExecutor(max_workers=5) as executor:
-                    futures = [executor.submit(get_urls_from_sitemap, url, depth + 1) for url in sm_urls]
+                    futures = [executor.submit(fetch_fn, url) for url in sm_urls]
                     for future in as_completed(futures):
                         all_urls.extend(future.result())
             return list(set(all_urls))
@@ -140,15 +143,16 @@ def get_urls_from_sitemap(sitemap_url, depth=0):
         st.error(f"Error parsing sitemap {sitemap_url}: {e}")
         return []
 
-def extract_page_info(url):
+def extract_page_info(url, auth=None):
     """
     Extracts hreflang tags and basic metadata (title, h1) from a URL.
+    Accepts an optional auth=(username, password) tuple for HTTP Basic Auth.
     """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15, auth=auth or None)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -184,15 +188,16 @@ def extract_page_info(url):
             'status_code': status_code
         }, str(e)
 
-def check_reciprocity(source_url, target_url, source_lang):
+def check_reciprocity(source_url, target_url, source_lang=None, auth=None):
     """
     Checks if the target_url has a hreflang tag pointing back to source_url.
+    Accepts an optional auth=(username, password) tuple for HTTP Basic Auth.
     """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     try:
-        response = requests.get(target_url, headers=headers, timeout=10)
+        response = requests.get(target_url, headers=headers, timeout=10, auth=auth or None)
         if response.status_code != 200:
             return False, f"HTTP Error {response.status_code}"
             
@@ -372,6 +377,17 @@ def render_hreflang_checker_page(gsc_client=None):
 
     mode = st.radio("Select Mode", ["Single URL Audit", "Cross-Sitemap Audit"], horizontal=True)
 
+    with st.expander("🔒 Authentication (Optional — for password-protected pages)"):
+        use_auth = st.checkbox("Pages require authentication", key="hreflang_use_auth")
+        auth = None
+        if use_auth:
+            a_col1, a_col2 = st.columns(2)
+            with a_col1:
+                auth_user = st.text_input("Username", key="hreflang_auth_user", placeholder="user")
+            with a_col2:
+                auth_pass = st.text_input("Password", key="hreflang_auth_pass", placeholder="password", type="password")
+            auth = (auth_user, auth_pass) if auth_user else None
+
     if mode == "Single URL Audit":
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -380,7 +396,7 @@ def render_hreflang_checker_page(gsc_client=None):
             check_btn = st.button("Run Audit", type="primary", use_container_width=True)
 
         if check_btn and url:
-            run_single_audit(url, gsc_client)
+            run_single_audit(url, gsc_client, auth=auth)
     
     else:
         st.subheader("📂 Advanced Cross-Sitemap Audit")
@@ -402,13 +418,14 @@ def render_hreflang_checker_page(gsc_client=None):
         
         if st.button("🚀 Run Deep Cross-Sitemap Audit", type="primary"):
             if sitemaps:
-                run_advanced_sitemap_audit(sitemaps, similarity_threshold, max_workers, gsc_client)
+                run_advanced_sitemap_audit(sitemaps, similarity_threshold, max_workers, gsc_client, auth=auth)
             else:
                 st.error("Please enter at least one valid Sitemap URL.")
 
-def run_advanced_sitemap_audit(sitemap_urls, threshold, max_workers, gsc_client=None):
+def run_advanced_sitemap_audit(sitemap_urls, threshold, max_workers, gsc_client=None, auth=None):
     """
     Performs a deep audit across multiple sitemaps with semantic matching and discrepancy reporting.
+    Accepts an optional auth=(username, password) tuple for HTTP Basic Auth.
     """
     import time
     start_time = time.time()
@@ -419,7 +436,7 @@ def run_advanced_sitemap_audit(sitemap_urls, threshold, max_workers, gsc_client=
     
     with st.spinner("Fetching URLs from sitemaps..."):
         for s_url in sitemap_urls:
-            urls = get_urls_from_sitemap(s_url)
+            urls = get_urls_from_sitemap(s_url, auth=auth)
             if urls:
                 all_urls_data[s_url] = list(set(urls))
                 total_found_urls += len(all_urls_data[s_url])
@@ -443,7 +460,9 @@ def run_advanced_sitemap_audit(sitemap_urls, threshold, max_workers, gsc_client=
     status_text = st.empty()
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_url = {executor.submit(extract_page_info, url): url for url in unique_all_urls}
+        from functools import partial
+        fetch_fn = partial(extract_page_info, auth=auth)
+        future_to_url = {executor.submit(fetch_fn, url): url for url in unique_all_urls}
         
         for i, future in enumerate(as_completed(future_to_url)):
             url = future_to_url[future]
@@ -572,13 +591,13 @@ def run_advanced_sitemap_audit(sitemap_urls, threshold, max_workers, gsc_client=
         })
     st.dataframe(pd.DataFrame(summary_results), use_container_width=True)
 
-def run_single_audit(url, gsc_client=None):
+def run_single_audit(url, gsc_client=None, auth=None):
     if not url.startswith("http"):
         st.error("Please enter a valid URL.")
         return
 
     with st.spinner(f"Auditing {url}..."):
-        page_info, error = extract_page_info(url)
+        page_info, error = extract_page_info(url, auth=auth)
         
         if error:
             st.error(f"Failed to fetch page: {error}")
@@ -632,6 +651,8 @@ def run_single_audit(url, gsc_client=None):
             
             # Use ThreadPoolExecutor for parallel reciprocity checks
             with ThreadPoolExecutor(max_workers=10) as executor:
+                from functools import partial
+                reciprocity_fn = partial(check_reciprocity, url, source_lang=source_lang, auth=auth)
                 future_to_tag = {}
                 for tag in tags:
                     if tag['href'].rstrip('/') == url.rstrip('/'):
@@ -642,7 +663,7 @@ def run_single_audit(url, gsc_client=None):
                             "Message": "Self-referencing"
                         })
                     else:
-                        future = executor.submit(check_reciprocity, url, tag['href'], source_lang)
+                        future = executor.submit(reciprocity_fn, tag['href'])
                         future_to_tag[future] = tag
 
                 for i, future in enumerate(as_completed(future_to_tag)):

@@ -1,9 +1,11 @@
-streamlit
+fastapi
+uvicorn[standard]
+python-multipart
+Pillow
 google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
 pandas
-plotly
 python-dotenv
 google-generativeai
 requests
@@ -12,3 +14,4 @@ lxml
 curl_cffi
 openpyxl
 numpy
+mangum

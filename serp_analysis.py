@@ -4,9 +4,10 @@ import google.generativeai as genai
 from serp_utils import fetch_serp_results, GEOLOCATIONS, get_location_by_name
 from comparator import scrape_url
 
-def analyze_serp_with_gemini(keyword, target_url, serp_data):
+def analyze_serp_with_gemini(keyword, target_url, serp_data, auth=None):
     """
     Uses Gemini to analyze the SERP results and compare with a target URL.
+    Accepts an optional auth=(username, password) tuple for HTTP Basic Auth on the target URL.
     """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -33,7 +34,7 @@ def analyze_serp_with_gemini(keyword, target_url, serp_data):
         related_context = ", ".join(related_keywords) if related_keywords else "None detected."
 
         if target_url:
-            target_data = scrape_url(target_url)
+            target_data = scrape_url(target_url, auth=auth)
             prompt = f"""
             You are an SEO expert. Analyze the top 3 Google Mobile search results for: '{keyword}'.
             
@@ -85,6 +86,17 @@ def render_serp_analysis_page():
             selected_loc_name = st.selectbox("Geolocation", options=loc_names, index=0)
             
         target_url = st.text_input("Target URL (Optional)", placeholder="https://yourpage.com/article")
+
+    with st.expander("🔒 Authentication (Optional — for the Target URL)"):
+        use_auth = st.checkbox("Target URL requires authentication", key="serp_use_auth")
+        auth = None
+        if use_auth:
+            a_col1, a_col2 = st.columns(2)
+            with a_col1:
+                auth_user = st.text_input("Username", key="serp_auth_user", placeholder="user")
+            with a_col2:
+                auth_pass = st.text_input("Password", key="serp_auth_pass", placeholder="password", type="password")
+            auth = (auth_user, auth_pass) if auth_user else None
         
     if st.button("Analyze Mobile SERP", type="primary"):
         if not keyword:
@@ -117,7 +129,7 @@ def render_serp_analysis_page():
                                 st.caption(res['snippet'])
                     
                     with st.spinner("AI is analyzing the mobile competition..."):
-                        analysis = analyze_serp_with_gemini(f"{keyword} (Mobile - {selected_loc_name})", target_url, results_data)
+                        analysis = analyze_serp_with_gemini(f"{keyword} (Mobile - {selected_loc_name})", target_url, results_data, auth=auth)
                         st.markdown("---")
                         st.markdown("### 🤖 Mobile Competitor Insights")
                         st.markdown(analysis)

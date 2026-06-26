@@ -3,15 +3,17 @@ import os
 from dotenv import load_dotenv
 from gsc_client import GSCClient
 from analysis import generate_insights, ask_agent
-from comparator import render_comparator_page
-from internal_linking import render_internal_linking_page
-from serp_analysis import render_serp_analysis_page
+# from comparator import render_comparator_page
+# from internal_linking import render_internal_linking_page
+# from serp_analysis import render_serp_analysis_page
 from screaming_frog import render_screaming_frog_page
-from schema_audit import render_schema_audit_page
-from header_analysis import render_header_analysis_page
+# from schema_audit import render_schema_audit_page
+# from header_analysis import render_header_analysis_page
 from cwv_analysis import render_cwv_analysis_page
-from hreflang_checker import render_hreflang_checker_page
-from image_alt_analysis import render_image_alt_analysis_page
+# from hreflang_checker import render_hreflang_checker_page
+# from image_alt_analysis import render_image_alt_analysis_page
+# from eeat_analysis import render_eeat_analysis_page
+from log_analysis import render_log_analysis_page
 
 
 # Load environment variables
@@ -395,7 +397,7 @@ elif os.path.exists("logo.jpg"):
     st.sidebar.image("logo.jpg", width=60)
 
 st.sidebar.title("🤖 Moveup Media SEO AI Agent")
-page = st.sidebar.radio("Navigate", ["📉 GSC Dashboard", "⚔️ URL Comparator", "🔗 Internal Linking", "🔍 SERP Analyzer - In Progress", "🐸 Screaming Frog", "📊 Schema Audit", "📑 Header Analysis", "⚡ CWV Analysis", "🌐 Hreflang Checker", "🖼️ Image Alt Analysis"], key="nav_radio")
+page = st.sidebar.radio("Navigate", ["📉 GSC Dashboard", "🪵 Log Analyzer", "⚔️ URL Comparator", "🔗 Internal Linking", "🔍 SERP Analyzer - In Progress", "🐸 Screaming Frog", "📊 Schema Audit", "📑 Header Analysis", "⚡ CWV Analysis", "🌐 Hreflang Checker", "🖼️ Image Alt Analysis", "🏆 E-E-A-T Analysis"], key="nav_radio")
 
 
 # Sidebar - Configuration Expander
@@ -612,15 +614,18 @@ if page == "📉 GSC Dashboard":
 
 elif page == "⚔️ URL Comparator":
     render_global_header()
-    render_comparator_page()
+    st.write("Temporarily Disabled")
+    # render_comparator_page()
 
 elif page == "🔗 Internal Linking":
     render_global_header()
-    render_internal_linking_page(client)
+    st.write("Temporarily Disabled")
+    # render_internal_linking_page(client)
 
 elif page == "🔍 SERP Analyzer - In Progress":
     render_global_header()
-    render_serp_analysis_page()
+    st.write("Temporarily Disabled")
+    # render_serp_analysis_page()
 
 elif page == "🐸 Screaming Frog":
     render_global_header()
@@ -628,11 +633,13 @@ elif page == "🐸 Screaming Frog":
 
 elif page == "📊 Schema Audit":
     render_global_header()
-    render_schema_audit_page()
+    st.write("Temporarily Disabled")
+    # render_schema_audit_page()
 
 elif page == "📑 Header Analysis":
     render_global_header()
-    render_header_analysis_page()
+    st.write("Temporarily Disabled")
+    # render_header_analysis_page()
 
 elif page == "⚡ CWV Analysis":
     render_global_header()
@@ -640,8 +647,19 @@ elif page == "⚡ CWV Analysis":
 
 elif page == "🌐 Hreflang Checker":
     render_global_header()
-    render_hreflang_checker_page(client)
+    st.write("Temporarily Disabled")
+    # render_hreflang_checker_page(client)
 
 elif page == "🖼️ Image Alt Analysis":
     render_global_header()
-    render_image_alt_analysis_page()
+    st.write("Temporarily Disabled")
+    # render_image_alt_analysis_page()
+
+elif page == "🏆 E-E-A-T Analysis":
+    render_global_header()
+    st.write("Temporarily Disabled")
+    # render_eeat_analysis_page()
+
+elif page == "🪵 Log Analyzer":
+    render_global_header()
+    render_log_analysis_page()

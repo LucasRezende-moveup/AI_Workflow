@@ -13,6 +13,17 @@ def render_schema_audit_page():
 
     url = st.text_input("Enter URL to Audit Schema", placeholder="https://example.com/page")
 
+    with st.expander("🔒 Authentication (Optional — for password-protected pages)"):
+        use_auth = st.checkbox("This page requires authentication", key="schema_use_auth")
+        auth = None
+        if use_auth:
+            a_col1, a_col2 = st.columns(2)
+            with a_col1:
+                auth_user = st.text_input("Username", key="schema_auth_user", placeholder="user")
+            with a_col2:
+                auth_pass = st.text_input("Password", key="schema_auth_pass", placeholder="password", type="password")
+            auth = (auth_user, auth_pass) if auth_user else None
+
     if st.button("Audit Schema", type="primary"):
         if not url:
             st.warning("Please enter a valid URL.")
@@ -23,7 +34,7 @@ def render_schema_audit_page():
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 }
-                response = requests.get(url, headers=headers, timeout=15)
+                response = requests.get(url, headers=headers, timeout=15, auth=auth or None)
                 response.raise_for_status()
                 
                 soup = BeautifulSoup(response.text, 'lxml')

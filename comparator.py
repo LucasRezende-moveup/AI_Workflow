@@ -1,13 +1,17 @@
-import streamlit as st
+try:
+    import streamlit as st
+except ImportError:
+    st = None
 import requests
 from bs4 import BeautifulSoup
 import json
 import os
 import google.generativeai as genai
 
-def scrape_url(url):
+def scrape_url(url, auth=None):
     """
     Scrapes a URL for detailed SEO elements, schema, and technical tags.
+    Accepts an optional auth=(username, password) tuple for HTTP Basic Auth.
     """
     try:
         if not url.startswith('http'):
@@ -15,9 +19,9 @@ def scrape_url(url):
             
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         try:
-            response = requests.get(url, headers=headers, timeout=15)
+            response = requests.get(url, headers=headers, timeout=15, auth=auth or None)
         except requests.exceptions.SSLError:
-            response = requests.get(url, headers=headers, timeout=15, verify=False)
+            response = requests.get(url, headers=headers, timeout=15, verify=False, auth=auth or None)
             
         response.raise_for_status()
         
@@ -195,6 +199,17 @@ def render_comparator_page():
         with col3:
             url3 = st.text_input("URL 3 (Optional Competitor)", placeholder="https://example.com/page3")
             pos3 = st.number_input("Position 3", min_value=1, value=3, key="pos3")
+
+    with st.expander("🔒 Authentication (Optional — for password-protected pages)"):
+        use_auth = st.checkbox("These pages require authentication", key="comp_use_auth")
+        auth = None
+        if use_auth:
+            a_col1, a_col2 = st.columns(2)
+            with a_col1:
+                auth_user = st.text_input("Username", key="comp_auth_user", placeholder="user")
+            with a_col2:
+                auth_pass = st.text_input("Password", key="comp_auth_pass", placeholder="password", type="password")
+            auth = (auth_user, auth_pass) if auth_user else None
     
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -203,9 +218,9 @@ def render_comparator_page():
             st.error("Please provide at least two URLs (URL 1 and URL 2) and a keyword.")
         else:
             with st.spinner("Scraping and analyzing pages..."):
-                d1 = scrape_url(url1)
-                d2 = scrape_url(url2)
-                d3 = scrape_url(url3) if url3 else None
+                d1 = scrape_url(url1, auth=auth)
+                d2 = scrape_url(url2, auth=auth)
+                d3 = scrape_url(url3, auth=auth) if url3 else None
                 
                 # Check for errors in the required URLs
                 has_error = False

@@ -1,26 +1,25 @@
 version: '3.8'
 
 services:
-  seo-agent:
+  app:
     build: .
-    container_name: seo-agent-container
+    container_name: moveup-seo-agent
     ports:
-      - "8501:8501"
+      - "8000:8000"
     env_file:
       - .env
     volumes:
-      - .:/app
-    restart: always
+      - ./log_sites.json:/app/log_sites.json
+      - ./client_secret.json:/app/client_secret.json
+      - ./token.pickle:/app/token.pickle
+    restart: unless-stopped
 
   ngrok:
     image: ngrok/ngrok:latest
     container_name: ngrok-tunnel
-    command:
-      - "http"
-      - "seo-agent:8501"
-      - "--domain=${NGROK_DOMAIN}"
+    command: ["http", "app:8000", "--domain=${NGROK_DOMAIN}"]
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
     depends_on:
-      - seo-agent
-    restart: always
+      - app
+    restart: unless-stopped
