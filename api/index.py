@@ -34,6 +34,13 @@ import json as _json_cfg
 import re as _re_log
 
 def load_sites():
+    # Check env var first (persists across Vercel serverless invocations)
+    _env = os.getenv("LOG_SITES_JSON")
+    if _env:
+        try:
+            return _json_cfg.loads(_env)
+        except Exception:
+            pass
     for _path in ("log_sites.json", "/tmp/log_sites.json"):
         if os.path.exists(_path):
             try:
