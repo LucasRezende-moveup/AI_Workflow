@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+python-multipart
+Pillow
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+pandas
+python-dotenv
+google-generativeai
+requests
+beautifulsoup4
+lxml
+curl_cffi
+openpyxl
+numpy
+mangum
