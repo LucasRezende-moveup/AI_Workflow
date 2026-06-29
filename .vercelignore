@@ -1,3 +1,3 @@
-# Prevent root requirements.txt from triggering a duplicate Python install
-# The api/ directory has its own requirements.txt for the serverless function
-requirements.txt
+# Only exclude the ROOT requirements.txt to prevent duplicate Python install at project level.
+# api/requirements.txt is intentionally kept for the serverless function.
+/requirements.txt
