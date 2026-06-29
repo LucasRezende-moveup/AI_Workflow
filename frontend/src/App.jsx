@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Activity, LayoutDashboard, Link2, Search, FileCode, Image as ImageIcon, Award, LogOut, Zap } from 'lucide-react';
+import moveupLogo from './assets/logo.png';
 import LogAnalyzer from './LogAnalyzer';
 import GscDashboard from './GscDashboard';
 import ScreamingFrog from './ScreamingFrog';
@@ -65,9 +66,7 @@ export default function App() {
             pointerEvents: 'none', zIndex: 0
           }} />
           <div style={{ position: 'relative', zIndex: 1 }}>
-            <h2 style={{ fontFamily: "'Bai Jamjuree', sans-serif", letterSpacing: '-1px', marginBottom: 30, textShadow: '0 0 15px rgba(226, 0, 113, 0.8)' }}>
-              SEO AI AGENT
-            </h2>
+            <img src={moveupLogo} alt="Moveup Media" style={{ width: 80, height: 80, borderRadius: 16, marginBottom: 30, boxShadow: '0 0 24px rgba(226, 0, 113, 0.5)' }} />
             <form onSubmit={handleLogin}>
               <input
                 type="password"
