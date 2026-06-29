@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import pandas as pd
 from typing import List, Optional
 import os
+import io
 
 # Credential bootstrap: reconstruct files from env vars on read-only filesystems (e.g. Vercel)
 def _bootstrap_credentials():
@@ -430,8 +431,6 @@ class SfFileWrapper:
     def getvalue(self):
         return self.content
 
-import io
-
 @app.post("/api/sf/analyze")
 async def analyze_sf(file: UploadFile = File(...)):
     content = await file.read()
@@ -523,6 +522,10 @@ def sf_insights(req: SfInsightsRequest):
 import requests as http_requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
+
+_google_api_key = os.getenv("GOOGLE_API_KEY")
+if _google_api_key:
+    genai.configure(api_key=_google_api_key)
 
 def _get_flash_model():
     try:
@@ -1067,14 +1070,6 @@ def data_ahrefs_keyword_history(req: KeywordHistoryRequest):
 
     return [r for r in results if r is not None]
 
-
-# --- Serve React frontend (production build) ---
-from fastapi.staticfiles import StaticFiles
-import pathlib
-
-_dist = pathlib.Path(__file__).parent / "frontend" / "dist"
-if _dist.exists():
-    app.mount("/", StaticFiles(directory=str(_dist), html=True), name="frontend")
 
 # --- Vercel serverless handler (only active when mangum is installed) ---
 try:
