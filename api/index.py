@@ -528,10 +528,30 @@ def sf_insights(req: SfInsightsRequest):
 # --- E-E-A-T Analysis Endpoints ---
 import requests as http_requests
 from bs4 import BeautifulSoup
-import anthropic as _anthropic
+import google.generativeai as genai
 
-_claude_client = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-_CLAUDE_MODEL = "claude-sonnet-4-6"
+_google_api_key = os.getenv("GOOGLE_API_KEY")
+if _google_api_key:
+    genai.configure(api_key=_google_api_key)
+
+_flash_model_cache = None
+
+def _get_flash_model():
+    global _flash_model_cache
+    if _flash_model_cache:
+        return _flash_model_cache
+    try:
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        for target in ['models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']:
+            if target in available_models:
+                _flash_model_cache = target
+                return _flash_model_cache
+        flash_models = [m for m in available_models if 'flash' in m.lower()]
+        _flash_model_cache = flash_models[0] if flash_models else 'models/gemini-2.0-flash'
+        return _flash_model_cache
+    except:
+        _flash_model_cache = 'models/gemini-2.0-flash'
+        return _flash_model_cache
 
 def _fetch_page_text(url, auth=None):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/91.0 Safari/537.36"}
@@ -542,16 +562,14 @@ def _fetch_page_text(url, auth=None):
         tag.extract()
     return soup.get_text(separator=' ', strip=True)[:100000]
 
-def _claude_generate(prompt: str, max_tokens: int = 4096) -> str:
-    message = _claude_client.messages.create(
-        model=_CLAUDE_MODEL,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text
+def _gemini_generate(prompt: str) -> str:
+    model_name = _get_flash_model()
+    model = genai.GenerativeModel(model_name)
+    response = model.generate_content(prompt)
+    return response.text
 
 
-def _fetch_serp_via_claude(keyword: str, location_name: str = "Global (No Geolocation)") -> dict:
+def _fetch_serp_via_gemini(keyword: str, location_name: str = "Global (No Geolocation)") -> dict:
     """
     Uses Gemini to simulate a Google SERP — no scraping, no IP blocks, ~3s response.
     Returns the same shape as fetch_serp_results: {organic: [...], related_keywords: [...]}.
@@ -583,19 +601,19 @@ Rules:
 - Return exactly 5 organic results and 6 related_keywords."""
 
     try:
-        raw = _claude_generate(prompt)
+        raw = _gemini_generate(prompt)
         # Strip markdown fences at start/end
         raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
-        # Extract the first JSON object even if Claude added preamble text
+        # Extract the first JSON object even if Gemini added preamble text
         match = _re.search(r'\{[\s\S]*\}', raw)
         if match:
             raw = match.group(0)
         data = _json.loads(raw)
         if isinstance(data.get("organic"), list) and data["organic"]:
             return data
-        return {"organic": [], "related_keywords": [], "error": f"Claude returned no organic results. Raw: {raw[:200]}"}
+        return {"organic": [], "related_keywords": [], "error": f"Gemini returned no organic results. Raw: {raw[:200]}"}
     except Exception as exc:
-        return {"organic": [], "related_keywords": [], "error": f"Claude SERP simulation failed: {exc}"}
+        return {"organic": [], "related_keywords": [], "error": f"Gemini SERP simulation failed: {exc}"}
 
 class EeatRequest(BaseModel):
     url: str
@@ -628,7 +646,7 @@ Format your response in Markdown, with clear, actionable suggestions for improve
 Base page content:
 {content}"""
     try:
-        result = _claude_generate(prompt)
+        result = _gemini_generate(prompt)
         return {"analysis": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -694,7 +712,7 @@ Schema Extracted:
 
 Provide your findings in clear, formatted markdown."""
     try:
-        ai_analysis = _claude_generate(prompt)
+        ai_analysis = _gemini_generate(prompt)
     except Exception as e:
         ai_analysis = f"AI analysis failed: {e}"
 
@@ -764,7 +782,7 @@ TASK:
 Format in clear Markdown."""
 
     try:
-        analysis = _claude_generate(prompt)
+        analysis = _gemini_generate(prompt)
     except Exception as e:
         analysis = f"AI analysis failed: {e}"
 
@@ -859,6 +877,7 @@ def internal_linking_analyze(req: InternalLinkingRequest):
 
 
 # --- Image Alt Analysis Endpoints ---
+from PIL import Image as _PIL_Image
 
 class ImageAltRequest(BaseModel):
     url: str
@@ -893,30 +912,26 @@ def _detect_page_intent(url, html_content):
     meta_desc = meta.get('content', '') if meta else ''
     prompt = (f"Analyze this webpage metadata and return the primary user intent in max 10 words.\n"
               f"URL: {url}\nTitle: {title}\nH1s: {h1s}\nMeta: {meta_desc}")
-    return _claude_generate(prompt).strip()
+    return _gemini_generate(prompt).strip()
 
 def _analyze_image_alt(img_src, current_alt, keyword, intent):
-    import base64 as _b64, json as _json
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/91.0 Safari/537.36"}
     img_resp = http_requests.get(img_src, headers=headers, timeout=10)
     img_resp.raise_for_status()
-    img_data = _b64.standard_b64encode(img_resp.content).decode("utf-8")
-    raw_ct = img_resp.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
-    media_type = raw_ct if raw_ct in ("image/jpeg", "image/png", "image/gif", "image/webp") else "image/jpeg"
-    prompt_text = (f'Analyze this image in context of:\n- Target Keyword: {keyword}\n- Page Intent: {intent}\n'
-                   f'- Current Alt Text: "{current_alt}"\n'
-                   f'Return JSON only: {{"is_best": boolean, "reasoning": "string", "proposed_alt": "string"}}')
-    message = _claude_client.messages.create(
-        model=_CLAUDE_MODEL,
-        max_tokens=512,
-        messages=[{"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}},
-            {"type": "text", "text": prompt_text},
-        ]}],
-    )
-    text = message.content[0].text
-    match = __import__('re').search(r'\{[\s\S]*\}', text)
-    return _json.loads(match.group(0) if match else text)
+    pil_img = _PIL_Image.open(io.BytesIO(img_resp.content))
+    model_name = _get_flash_model()
+    model = genai.GenerativeModel(model_name)
+    prompt = (f'Analyze this image in context of:\n- Target Keyword: {keyword}\n- Page Intent: {intent}\n'
+              f'- Current Alt Text: "{current_alt}"\n'
+              f'Return JSON: {{"is_best": boolean, "reasoning": "string", "proposed_alt": "string"}}')
+    response = model.generate_content([prompt, pil_img])
+    text = response.text
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+    import json as _json
+    return _json.loads(text)
 
 @app.post("/api/image-alt/analyze")
 def image_alt_analyze(req: ImageAltRequest):
@@ -1154,8 +1169,8 @@ def fs_stealer_analyze(req: FsStealerRequest):
     target_url = req.target_url if req.target_url.startswith("http") else "https://" + req.target_url
     intent = _classify_intent(req.keyword)
 
-    # Step 1 — Claude simulates the SERP (~3s, no scraping, no IP blocks)
-    serp = _fetch_serp_via_claude(req.keyword, req.location_name)
+    # Step 1 — Gemini simulates the SERP (~3s, no scraping, no IP blocks)
+    serp = _fetch_serp_via_gemini(req.keyword, req.location_name)
     if not serp.get("organic"):
         raise HTTPException(status_code=502, detail=serp.get("error", "SERP simulation failed. Please try again."))
 
@@ -1234,7 +1249,7 @@ Checkbox list the user ticks off after each change.
 Be ruthlessly specific — tie every recommendation to what {fs_holder["link"]} does that {target_url} does not."""
 
     try:
-        analysis = _claude_generate(prompt, max_tokens=8192)
+        analysis = _gemini_generate(prompt)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {e}")
 
