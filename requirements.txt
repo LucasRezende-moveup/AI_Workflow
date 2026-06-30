@@ -7,7 +7,7 @@ google-auth-oauthlib
 google-auth-httplib2
 pandas
 python-dotenv
-google-generativeai
+anthropic
 requests
 beautifulsoup4
 lxml
