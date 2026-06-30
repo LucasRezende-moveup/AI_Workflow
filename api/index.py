@@ -534,16 +534,24 @@ _google_api_key = os.getenv("GOOGLE_API_KEY")
 if _google_api_key:
     genai.configure(api_key=_google_api_key)
 
+_flash_model_cache = None
+
 def _get_flash_model():
+    global _flash_model_cache
+    if _flash_model_cache:
+        return _flash_model_cache
     try:
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        for target in ['models/gemini-1.5-flash', 'models/gemini-flash-latest', 'models/gemini-2.0-flash']:
+        for target in ['models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']:
             if target in available_models:
-                return target
+                _flash_model_cache = target
+                return _flash_model_cache
         flash_models = [m for m in available_models if 'flash' in m.lower()]
-        return flash_models[0] if flash_models else 'models/gemini-1.5-flash'
+        _flash_model_cache = flash_models[0] if flash_models else 'models/gemini-2.0-flash'
+        return _flash_model_cache
     except:
-        return 'models/gemini-1.5-flash'
+        _flash_model_cache = 'models/gemini-2.0-flash'
+        return _flash_model_cache
 
 def _fetch_page_text(url, auth=None):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/91.0 Safari/537.36"}
@@ -559,6 +567,53 @@ def _gemini_generate(prompt: str) -> str:
     model = genai.GenerativeModel(model_name)
     response = model.generate_content(prompt)
     return response.text
+
+
+def _fetch_serp_via_gemini(keyword: str, location_name: str = "Global (No Geolocation)") -> dict:
+    """
+    Uses Gemini to simulate a Google SERP — no scraping, no IP blocks, ~3s response.
+    Returns the same shape as fetch_serp_results: {organic: [...], related_keywords: [...]}.
+    """
+    import json as _json, re as _re
+    loc_hint = f"in {location_name}" if location_name != "Global (No Geolocation)" else "globally"
+    prompt = f"""You are simulating a Google SERP for an SEO research tool.
+
+Keyword: "{keyword}"
+Search context: {loc_hint}
+
+Return ONLY a valid JSON object — no markdown, no explanation, no code fences. Format:
+{{
+  "organic": [
+    {{"title": "...", "link": "https://...", "snippet": "..."}},
+    {{"title": "...", "link": "https://...", "snippet": "..."}},
+    {{"title": "...", "link": "https://...", "snippet": "..."}},
+    {{"title": "...", "link": "https://...", "snippet": "..."}},
+    {{"title": "...", "link": "https://...", "snippet": "..."}}
+  ],
+  "related_keywords": ["...", "...", "...", "...", "...", "..."]
+}}
+
+Rules:
+- Use real, existing domains that would realistically rank for this keyword.
+- The snippet should mirror a real Google meta-description / snippet for that URL.
+- For the keyword context ({loc_hint}), prefer results in the appropriate language.
+- related_keywords must be short (2-6 words each), realistic Google "related searches".
+- Return exactly 5 organic results and 6 related_keywords."""
+
+    try:
+        raw = _gemini_generate(prompt)
+        # Strip markdown fences at start/end
+        raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+        # Extract the first JSON object even if Gemini added preamble text
+        match = _re.search(r'\{[\s\S]*\}', raw)
+        if match:
+            raw = match.group(0)
+        data = _json.loads(raw)
+        if isinstance(data.get("organic"), list) and data["organic"]:
+            return data
+        return {"organic": [], "related_keywords": [], "error": f"Gemini returned no organic results. Raw: {raw[:200]}"}
+    except Exception as exc:
+        return {"organic": [], "related_keywords": [], "error": f"Gemini SERP simulation failed: {exc}"}
 
 class EeatRequest(BaseModel):
     url: str
@@ -1076,6 +1131,137 @@ def data_ahrefs_keyword_history(req: KeywordHistoryRequest):
         results = list(pool.map(_fetch, valid_dates))
 
     return [r for r in results if r is not None]
+
+
+# --- Featured Snippet Stealer ---
+
+def _classify_intent(keyword: str) -> str:
+    kw = keyword.lower()
+    transactional = ["comprar", "buy", "price", "preço", "código", "code", "coupon", "cupom",
+                     "promo", "desconto", "discount", "grátis", "free", "download", "assinar",
+                     "cadastro", "signup", "register", "bet", "bônus", "bonus", "oferta", "deal"]
+    commercial    = ["melhor", "best", "review", "avaliação", "comparar", "vs", "versus",
+                     "recomenda", "ranking", "top", "alternativa", "vale a pena", "opinion"]
+    informational = ["como", "o que", "what", "how", "why", "por que", "quando", "where",
+                     "onde", "quem", "who", "tutorial", "guia", "guide", "dica", "tip",
+                     "exemplo", "example", "significa", "definição", "definition"]
+    for t in transactional:
+        if t in kw:
+            return "Transactional"
+    for c in commercial:
+        if c in kw:
+            return "Commercial"
+    for i in informational:
+        if i in kw:
+            return "Informational"
+    return "Navigational"
+
+
+class FsStealerRequest(BaseModel):
+    keyword: str
+    target_url: str
+    location_name: str = "Global (No Geolocation)"
+    auth_user: Optional[str] = None
+    auth_pass: Optional[str] = None
+
+@app.post("/api/fs/analyze")
+def fs_stealer_analyze(req: FsStealerRequest):
+    target_url = req.target_url if req.target_url.startswith("http") else "https://" + req.target_url
+    intent = _classify_intent(req.keyword)
+
+    # Step 1 — Gemini simulates the SERP (~3s, no scraping, no IP blocks)
+    serp = _fetch_serp_via_gemini(req.keyword, req.location_name)
+    if not serp.get("organic"):
+        raise HTTPException(status_code=502, detail=serp.get("error", "SERP simulation failed. Please try again."))
+
+    organic = serp.get("organic", [])
+    related_keywords = serp.get("related_keywords", [])
+    fs_holder = organic[0]
+
+    serp_context = "\n".join(
+        f"#{i+1} — {r['title']}\n   URL: {r['link']}\n   Snippet: {r['snippet']}"
+        for i, r in enumerate(organic[:5])
+    )
+    related_context = ", ".join(related_keywords) if related_keywords else "None detected."
+
+    # Step 2 — Gemini generates the full action plan (~5-8s)
+    # No page fetching — Gemini uses its own knowledge of the FS holder and target domain.
+    prompt = f"""You are an elite SEO strategist specializing in Featured Snippet (FS) optimization.
+SERP data is AI-simulated. Use your knowledge of the FS holder domain and target page to make recommendations specific and copy-paste ready.
+
+KEYWORD: "{req.keyword}"
+DETECTED INTENT: {intent}
+TARGET PAGE: {target_url}
+GEOLOCATION: {req.location_name}
+
+═══ SIMULATED SERP (top 5) ═══
+{serp_context}
+
+═══ RELATED SEARCHES (semantic cluster) ═══
+{related_context}
+
+═══ FS HOLDER (Position #1) ═══
+URL: {fs_holder["link"]}
+Title: {fs_holder["title"]}
+Snippet: {fs_holder["snippet"]}
+
+FS TYPE WINNING STRATEGIES:
+- Paragraph FS → 40-60 word direct answer right after the H2/H3 matching the query.
+- Numbered List FS → <ol> with 5-8 steps under a "Como…"/"How to…" heading; each step ≤ 80 words.
+- Bulleted List FS → <ul> under a "Quais são…"/"What are…" heading; bold the first 2-3 words per item.
+- Table FS → <table> with clear caption and ≥2 columns; rows labeled with user-scanned keywords.
+
+---
+
+Provide the Featured Snippet Steal Action Plan in clean Markdown:
+
+## 🔎 SERP Intent
+One sentence confirming the {intent} intent and what content format Google rewards for it.
+
+## 🔍 Featured Snippet Diagnosis
+- **FS Type**: Paragraph / Numbered List / Bulleted List / Table
+- **What Google is extracting**: exact block description
+- **Why the current holder wins**: 2-3 bullets
+- **FS opportunity score**: N/10 — justification specific to {target_url}
+
+## 🧩 Semantic Gap — Related Keywords Analysis
+| Related Keyword | Covered on Target Page? | Recommended Placement |
+|-----------------|------------------------|-----------------------|
+[5-7 rows — base "Covered?" on your knowledge of {target_url}]
+
+## 📊 Gap Analysis — Target vs FS Holder
+| Factor | FS Holder ({fs_holder["link"]}) | Target Page ({target_url}) | Priority |
+|--------|--------------------------------|---------------------------|----------|
+[rows: Direct answer placement, Content format, Word count of answer block, Header structure, Schema markup, Reading level, Mobile formatting, Semantic coverage]
+
+## 🎯 Step-by-Step Action Plan
+[5-8 numbered steps. Each must have:
+- **What to do**: specific action
+- **Exactly where**: section / heading / element on {target_url}
+- **Copy-paste example**: actual HTML or content — not a description]
+
+## ⚡ Quick Wins (implement in < 1 hour)
+3 changes that alone could trigger a FS swap within days.
+
+## 📋 Validation Checklist
+Checkbox list the user ticks off after each change.
+
+Be ruthlessly specific — tie every recommendation to what {fs_holder["link"]} does that {target_url} does not."""
+
+    try:
+        analysis = _gemini_generate(prompt)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI analysis failed: {e}")
+
+    return {
+        "keyword": req.keyword,
+        "target_url": target_url,
+        "intent": intent,
+        "fs_holder": fs_holder,
+        "organic": organic[:5],
+        "related_keywords": related_keywords,
+        "analysis": analysis,
+    }
 
 
 # --- Vercel serverless handler (only active when mangum is installed) ---
