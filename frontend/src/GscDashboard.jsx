@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, Globe, MousePointerClick, Eye, TrendingUp, BarChart2, MessageSquare, Sparkles, Search, Link, Users, Star, X, ArrowUp, ArrowDown, Minus } from 'lucide-react';
+import { Download, Globe, MousePointerClick, Eye, TrendingUp, BarChart2, MessageSquare, Sparkles, Search, Link, Users, Star, X, ArrowUp, ArrowDown, Minus, ExternalLink, MapPin } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
@@ -81,9 +81,19 @@ export default function GscDashboard() {
   const [serpPaa,         setSerpPaa]         = useState([]);
   const [serpLoading,     setSerpLoading]     = useState(false);
 
+  // ── SERP Research tab ────────────────────────────
+  const [serpTabKeyword,   setSerpTabKeyword]   = useState('');
+  const [serpTabLocation,  setSerpTabLocation]  = useState('Global (No Geolocation)');
+  const [serpTabLocations, setSerpTabLocations] = useState([]);
+  const [serpTabTargetUrl, setSerpTabTargetUrl] = useState('');
+  const [serpTabLoading,   setSerpTabLoading]   = useState(false);
+  const [serpTabData,      setSerpTabData]      = useState(null);
+  const [serpTabError,     setSerpTabError]     = useState('');
+
   useEffect(() => {
     fetchGscSites();
     fetchAhrefsProjects();
+    fetch('/api/serp/geolocations').then(r => r.json()).then(d => setSerpTabLocations(d.geolocations || [])).catch(() => {});
   }, []);
 
   const fetchGscSites = async () => {
@@ -258,20 +268,39 @@ export default function GscDashboard() {
     (ahrefsTab === 'keywords'    && ahrefsKeywords.length === 0) ||
     (ahrefsTab === 'competitors' && competitors.length === 0);
 
+  // ── SERP Research handler ────────────────────────
+  const handleSerpSearch = async () => {
+    if (!serpTabKeyword.trim()) return;
+    setSerpTabLoading(true); setSerpTabData(null); setSerpTabError('');
+    try {
+      const res = await fetch('/api/serp/analyze', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword: serpTabKeyword.trim(), location_name: serpTabLocation, target_url: serpTabTargetUrl || null })
+      });
+      const data = await res.json();
+      if (!res.ok) { setSerpTabError(data.detail || 'Failed to fetch SERP results'); return; }
+      setSerpTabData(data);
+    } catch (e) { setSerpTabError('Request failed. Check network.'); }
+    finally { setSerpTabLoading(false); }
+  };
+
   // ── Render ───────────────────────────────────────
   return (
     <div className="flex-col gap-6">
 
       {/* Main tabs */}
       <div className="flex gap-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 16 }}>
-        {[{ id: 'gsc', label: 'GSC Performance', icon: Search }, { id: 'ahrefs', label: 'Ahrefs Intelligence', icon: BarChart2 }]
-          .map(({ id, label, icon: Icon }) => (
-            <button key={id} className={`nav-item ${mainTab === id ? 'active' : ''}`}
-              onClick={() => setMainTab(id)}
-              style={{ background: mainTab === id ? 'var(--primary)' : 'transparent' }}>
-              <Icon size={16} /> {label}
-            </button>
-          ))}
+        {[
+          { id: 'gsc',   label: 'GSC Performance',    icon: Search },
+          { id: 'ahrefs', label: 'Ahrefs Intelligence', icon: BarChart2 },
+          { id: 'serp',  label: 'SERP Research',       icon: ExternalLink },
+        ].map(({ id, label, icon: Icon }) => (
+          <button key={id} className={`nav-item ${mainTab === id ? 'active' : ''}`}
+            onClick={() => setMainTab(id)}
+            style={{ background: mainTab === id ? 'var(--primary)' : 'transparent' }}>
+            <Icon size={16} /> {label}
+          </button>
+        ))}
       </div>
 
       {/* ════════ GSC ════════ */}
@@ -663,6 +692,145 @@ export default function GscDashboard() {
                 🚀 Fetch Data
               </button>
             </div>
+          )}
+        </>
+      )}
+
+      {/* ════════ SERP Research ════════ */}
+      {mainTab === 'serp' && (
+        <>
+          <div className="glass-panel">
+            <h2 className="flex items-center gap-2 mb-4"><ExternalLink size={20} /> SERP Research</h2>
+            <p className="mb-5" style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+              Live Google Mobile SERP fetched via Googlebot emulation. Results may take 10–20 s.
+            </p>
+            <div className="grid grid-cols-4 gap-4 mb-4">
+              <div style={{ gridColumn: 'span 2' }}>
+                <label className="metric-label mb-2 block">Keyword</label>
+                <input
+                  className="glass-input"
+                  placeholder="e.g. best coffee machine 2024"
+                  value={serpTabKeyword}
+                  onChange={e => setSerpTabKeyword(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && !serpTabLoading && handleSerpSearch()}
+                />
+              </div>
+              <div>
+                <label className="metric-label mb-2 block"><MapPin size={12} style={{ display: 'inline', marginRight: 4 }} />Geolocation</label>
+                <select className="glass-input glass-select" value={serpTabLocation} onChange={e => setSerpTabLocation(e.target.value)}>
+                  {serpTabLocations.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+              <div className="flex items-end">
+                <button className="btn-primary w-full" onClick={handleSerpSearch} disabled={serpTabLoading || !serpTabKeyword.trim()}>
+                  {serpTabLoading ? <><div className="loader" /> Fetching…</> : '🔍 Search SERP'}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="metric-label mb-2 block">Target URL <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional — enables gap analysis)</span></label>
+              <input
+                className="glass-input"
+                placeholder="https://yoursite.com/page"
+                value={serpTabTargetUrl}
+                onChange={e => setSerpTabTargetUrl(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <ErrorBanner msg={serpTabError} />
+
+          {serpTabLoading && (
+            <div className="glass-panel flex items-center justify-center" style={{ padding: 48 }}>
+              <div style={{ textAlign: 'center' }}>
+                <div className="loader" style={{ width: 40, height: 40, borderWidth: 4, margin: '0 auto 16px' }} />
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Emulating Googlebot Mobile… this can take up to 20 s</p>
+              </div>
+            </div>
+          )}
+
+          {serpTabData && !serpTabLoading && (
+            <>
+              {/* Related keywords */}
+              {serpTabData.related_keywords?.length > 0 && (
+                <div className="glass-panel">
+                  <h4 className="mb-3" style={{ fontSize: '0.9rem' }}>Related Searches</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {serpTabData.related_keywords.map((kw, i) => (
+                      <button
+                        key={i}
+                        onClick={() => { setSerpTabKeyword(kw); setSerpTabData(null); }}
+                        style={{ padding: '5px 12px', borderRadius: 20, background: 'rgba(226,0,113,0.12)', border: '1px solid rgba(226,0,113,0.3)', color: 'var(--primary)', fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.2s' }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(226,0,113,0.25)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'rgba(226,0,113,0.12)'}
+                      >
+                        {kw}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Organic results */}
+              {serpTabData.organic?.length > 0 && (
+                <div className="glass-panel">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="flex items-center gap-2">
+                      <Search size={18} /> Organic Results
+                      <span style={{ fontSize: '0.8rem', fontWeight: 400, color: 'var(--text-muted)' }}>
+                        — {serpTabKeyword} · {serpTabLocation}
+                      </span>
+                    </h3>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{serpTabData.organic.length} results</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {serpTabData.organic.map((row, i) => {
+                      let hostname = '';
+                      try { hostname = new URL(row.link).hostname.replace('www.', ''); } catch {}
+                      const isTarget = serpTabTargetUrl && row.link && serpTabTargetUrl && row.link.includes(new URL(serpTabTargetUrl.startsWith('http') ? serpTabTargetUrl : 'https://' + serpTabTargetUrl).hostname);
+                      return (
+                        <div key={i} style={{
+                          display: 'flex', gap: 14, padding: '14px 16px', borderRadius: 10,
+                          background: isTarget ? 'rgba(226,0,113,0.1)' : 'rgba(255,255,255,0.03)',
+                          border: isTarget ? '1px solid rgba(226,0,113,0.4)' : '1px solid rgba(255,255,255,0.07)',
+                          transition: 'background 0.2s',
+                        }}
+                          onMouseEnter={e => { if (!isTarget) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+                          onMouseLeave={e => { if (!isTarget) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                        >
+                          <div style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1rem', background: i < 3 ? 'rgba(226,0,113,0.2)' : 'rgba(255,255,255,0.06)', color: i < 3 ? 'var(--primary)' : 'var(--text-muted)' }}>
+                            {i + 1}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span style={{ fontWeight: 600, fontSize: '0.92rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{row.title}</span>
+                              {isTarget && (
+                                <span style={{ flexShrink: 0, fontSize: '0.7rem', padding: '2px 8px', borderRadius: 4, background: 'var(--primary)', color: 'white', fontWeight: 700 }}>YOUR PAGE</span>
+                              )}
+                            </div>
+                            <a href={row.link} target="_blank" rel="noopener noreferrer"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.78rem', color: '#4ade80', marginBottom: 6, textDecoration: 'none' }}>
+                              {hostname} <ExternalLink size={10} />
+                            </a>
+                            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>{row.snippet}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* AI Analysis */}
+              {serpTabData.analysis && (
+                <div className="glass-panel">
+                  <h3 className="flex items-center gap-2 mb-4"><Sparkles size={18} color="var(--primary)" /> AI Competitive Analysis</h3>
+                  <div className="markdown-content" style={{ lineHeight: 1.7 }}>
+                    <ReactMarkdown>{serpTabData.analysis}</ReactMarkdown>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </>
       )}

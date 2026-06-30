@@ -35,17 +35,105 @@ def generate_uule(location_name):
     return f"w+CAIQICI{secret_char}{encoded_loc}"
 
 GEOLOCATIONS = [
-    {"name": "Global (No Geolocation)", "gl": "", "hl": "en", "domain": "google.com", "uule_name": "", "cr": ""},
-    {"name": "Brazil (General)", "gl": "br", "hl": "pt-BR", "domain": "google.com.br", "uule_name": "Brazil", "cr": "countryBR"},
-    {"name": "Brazil (São Paulo)", "gl": "br", "hl": "pt-BR", "domain": "google.com.br", "uule_name": "Sao Paulo,State of Sao Paulo,Brazil", "cr": "countryBR"},
-    {"name": "Brazil (Rio de Janeiro)", "gl": "br", "hl": "pt-BR", "domain": "google.com.br", "uule_name": "Rio de Janeiro,State of Rio de Janeiro,Brazil", "cr": "countryBR"},
-    {"name": "United States", "gl": "us", "hl": "en", "domain": "google.com", "uule_name": "United States", "cr": "countryUS"},
+    # Global
+    {"name": "Global (No Geolocation)", "gl": "",   "hl": "en",    "domain": "google.com",    "uule_name": "",                                                  "cr": "",          "ddg_kl": "wt-wt"},
+    # Brazil
+    {"name": "Brazil (General)",         "gl": "br", "hl": "pt-BR", "domain": "google.com.br", "uule_name": "Brazil",                                            "cr": "countryBR", "ddg_kl": "br-pt"},
+    {"name": "Brazil (São Paulo)",       "gl": "br", "hl": "pt-BR", "domain": "google.com.br", "uule_name": "Sao Paulo,State of Sao Paulo,Brazil",               "cr": "countryBR", "ddg_kl": "br-pt"},
+    {"name": "Brazil (Rio de Janeiro)",  "gl": "br", "hl": "pt-BR", "domain": "google.com.br", "uule_name": "Rio de Janeiro,State of Rio de Janeiro,Brazil",     "cr": "countryBR", "ddg_kl": "br-pt"},
+    # Portuguese-speaking
+    {"name": "Portugal",                 "gl": "pt", "hl": "pt-PT", "domain": "google.pt",     "uule_name": "Portugal",                                          "cr": "countryPT", "ddg_kl": "pt-pt"},
+    # Spanish-speaking
+    {"name": "Spain",                    "gl": "es", "hl": "es",    "domain": "google.es",     "uule_name": "Spain",                                             "cr": "countryES", "ddg_kl": "es-es"},
+    {"name": "Mexico",                   "gl": "mx", "hl": "es",    "domain": "google.com.mx", "uule_name": "Mexico",                                            "cr": "countryMX", "ddg_kl": "mx-es"},
+    {"name": "Argentina",                "gl": "ar", "hl": "es",    "domain": "google.com.ar", "uule_name": "Argentina",                                         "cr": "countryAR", "ddg_kl": "ar-es"},
+    {"name": "Colombia",                 "gl": "co", "hl": "es",    "domain": "google.com.co", "uule_name": "Colombia",                                          "cr": "countryCO", "ddg_kl": "co-es"},
+    {"name": "Chile",                    "gl": "cl", "hl": "es",    "domain": "google.cl",     "uule_name": "Chile",                                             "cr": "countryCL", "ddg_kl": "cl-es"},
+    {"name": "Peru",                     "gl": "pe", "hl": "es",    "domain": "google.com.pe", "uule_name": "Peru",                                              "cr": "countryPE", "ddg_kl": "pe-es"},
+    # English-speaking
+    {"name": "United States",            "gl": "us", "hl": "en",    "domain": "google.com",    "uule_name": "United States",                                     "cr": "countryUS", "ddg_kl": "us-en"},
+    {"name": "United Kingdom",           "gl": "gb", "hl": "en",    "domain": "google.co.uk",  "uule_name": "United Kingdom",                                    "cr": "countryGB", "ddg_kl": "uk-en"},
+    {"name": "Canada",                   "gl": "ca", "hl": "en",    "domain": "google.ca",     "uule_name": "Canada",                                            "cr": "countryCA", "ddg_kl": "ca-en"},
+    {"name": "Australia",                "gl": "au", "hl": "en",    "domain": "google.com.au", "uule_name": "Australia",                                         "cr": "countryAU", "ddg_kl": "au-en"},
+    # European
+    {"name": "Germany",                  "gl": "de", "hl": "de",    "domain": "google.de",     "uule_name": "Germany",                                           "cr": "countryDE", "ddg_kl": "de-de"},
+    {"name": "France",                   "gl": "fr", "hl": "fr",    "domain": "google.fr",     "uule_name": "France",                                            "cr": "countryFR", "ddg_kl": "fr-fr"},
+    {"name": "Italy",                    "gl": "it", "hl": "it",    "domain": "google.it",     "uule_name": "Italy",                                             "cr": "countryIT", "ddg_kl": "it-it"},
+    {"name": "Netherlands",              "gl": "nl", "hl": "nl",    "domain": "google.nl",     "uule_name": "Netherlands",                                       "cr": "countryNL", "ddg_kl": "nl-nl"},
 ]
+
+def fetch_serp_duckduckgo(query, location_name="Global (No Geolocation)"):
+    """
+    DuckDuckGo HTML endpoint — reliable from cloud IPs where Google is blocked.
+    Returns the same dict shape as fetch_serp_results: {organic: [...], related_keywords: [...]}
+    """
+    loc_data = next((l for l in GEOLOCATIONS if l["name"] == location_name), GEOLOCATIONS[0])
+    hl = loc_data.get("hl", "en")
+    kl = loc_data.get("ddg_kl", "wt-wt")
+
+    encoded_query = urllib.parse.quote_plus(query)
+    url = f"https://html.duckduckgo.com/html/?q={encoded_query}&kl={kl}"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": f"{hl},en;q=0.8",
+        "Referer": "https://duckduckgo.com/",
+    }
+
+    try:
+        session = crequests.Session()
+        resp = session.get(url, headers=headers, impersonate="chrome120", timeout=15)
+        if resp.status_code != 200:
+            return {"organic": [], "related_keywords": []}
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        results = {"organic": [], "related_keywords": []}
+
+        for div in soup.select(".result:not(.result--ad)"):
+            try:
+                title_tag = div.select_one(".result__title a")
+                if not title_tag:
+                    continue
+                link = title_tag.get("href", "")
+                # DDG wraps links in a redirect — extract the real URL
+                if "duckduckgo.com" in link:
+                    parsed = urllib.parse.urlparse(link)
+                    uddg = urllib.parse.parse_qs(parsed.query).get("uddg")
+                    link = uddg[0] if uddg else link
+                if not link.startswith("http"):
+                    continue
+                title = title_tag.get_text(strip=True)
+                snippet_tag = div.select_one(".result__snippet")
+                snippet = snippet_tag.get_text(strip=True) if snippet_tag else "N/A"
+                results["organic"].append({"title": title, "link": link, "snippet": snippet})
+                if len(results["organic"]) >= 5:
+                    break
+            except:
+                continue
+
+        # Related keywords from DDG "searches related to" block
+        for tag in soup.select(".result--related .result__a"):
+            kw = tag.get_text(strip=True)
+            if kw and len(kw) < 60 and kw not in results["related_keywords"]:
+                results["related_keywords"].append(kw)
+
+        return results
+    except Exception as e:
+        return {"organic": [], "related_keywords": [], "error": str(e)}
+
 
 def fetch_serp_results(query, location_name="Global (No Geolocation)", hl="en"):
     """
-    Hyper-accurate Google fetcher with Googlebot Mobile emulation and UULE geolocation.
+    SERP fetcher: tries DuckDuckGo first (fast, cloud-IP-friendly), falls back to
+    Googlebot Mobile emulation if DDG returns no results.
     """
+    # Fast path — DDG works reliably from cloud IPs with no artificial delays
+    ddg = fetch_serp_duckduckgo(query, location_name)
+    if ddg.get("organic"):
+        return ddg
+
+    # Slow path — Google (often blocked from Vercel IPs, kept as last resort)
     sleep_min = float(os.getenv("SCRAPER_SLEEP_MIN", 3))
     sleep_max = float(os.getenv("SCRAPER_SLEEP_MAX", 7))
     
@@ -136,7 +224,7 @@ def fetch_serp_results(query, location_name="Global (No Geolocation)", hl="en"):
         except:
             continue
             
-    return {"error": "Google is currently blocking this IP. Try waiting 10 minutes or use a Proxy."}
+    return {"error": "SERP fetch failed (Google blocked, DuckDuckGo returned no results). Try again in a few minutes."}
 
 def parse_google_results(html):
     soup = BeautifulSoup(html, "html.parser")

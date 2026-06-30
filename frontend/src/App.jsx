@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, LayoutDashboard, Link2, Search, FileCode, Image as ImageIcon, Award, LogOut, Zap } from 'lucide-react';
+import { Activity, LayoutDashboard, Link2, Search, FileCode, Image as ImageIcon, Award, LogOut, Zap, Target } from 'lucide-react';
 import moveupLogo from './assets/logo.png';
 import LogAnalyzer from './LogAnalyzer';
 import GscDashboard from './GscDashboard';
@@ -11,6 +11,7 @@ import SchemaAudit from './SchemaAudit';
 import CwvAnalysis from './CwvAnalysis';
 import ImageAltAnalysis from './ImageAltAnalysis';
 import EeatAnalysis from './EeatAnalysis';
+import FsStealer from './FsStealer';
 import './index.css';
 
 const navItems = [
@@ -24,6 +25,7 @@ const navItems = [
   { name: 'CWV Analysis',       icon: <Zap size={18} /> },
   { name: 'Image Alt Analysis', icon: <ImageIcon size={18} /> },
   { name: 'E-E-A-T Analysis',   icon: <Award size={18} /> },
+  { name: 'FS Stealer',         icon: <Target size={18} /> },
 ];
 
 function renderPage(page) {
@@ -38,6 +40,7 @@ function renderPage(page) {
     case 'CWV Analysis':       return <CwvAnalysis />;
     case 'Image Alt Analysis': return <ImageAltAnalysis />;
     case 'E-E-A-T Analysis':   return <EeatAnalysis />;
+    case 'FS Stealer':         return <FsStealer />;
     default:                   return null;
   }
 }
