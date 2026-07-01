@@ -1066,6 +1066,109 @@ Use markdown. Be specific. Max 350 words."""
     }
 
 
+# --- SEO Health / Sheets KPI Endpoints ---
+import json as _json_mod
+
+class SheetAnalyzeRequest(BaseModel):
+    spreadsheet_id: str
+    site_name: str = ""
+
+def _extract_spreadsheet_id(url_or_id: str) -> str:
+    m = _re_log.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url_or_id)
+    return m.group(1) if m else url_or_id.strip()
+
+@app.post("/api/sheets/analyze")
+def sheets_analyze(req: SheetAnalyzeRequest):
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="GOOGLE_API_KEY not configured.")
+
+    sheet_id = _extract_spreadsheet_id(req.spreadsheet_id)
+
+    try:
+        meta_r = http_requests.get(
+            f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}",
+            params={"key": api_key}, timeout=15
+        )
+        meta_r.raise_for_status()
+        meta = meta_r.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot access spreadsheet: {e}. Ensure it is set to 'Anyone with the link can view'.")
+
+    spreadsheet_title = meta.get("properties", {}).get("title", req.site_name or "Unknown")
+    sheets = meta.get("sheets", [])
+
+    all_data = []
+    for sheet in sheets[:4]:
+        sheet_name = sheet["properties"]["title"]
+        try:
+            val_r = http_requests.get(
+                f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{sheet_name}!A1:R200",
+                params={"key": api_key}, timeout=15
+            )
+            val_r.raise_for_status()
+            values = val_r.json().get("values", [])
+            if not values or len(values) < 2:
+                continue
+            headers = values[0]
+            rows = values[1:]
+            recent = rows[-15:] if len(rows) > 15 else rows
+            all_data.append({"sheet": sheet_name, "headers": headers, "rows": recent})
+        except Exception:
+            continue
+
+    if not all_data:
+        raise HTTPException(status_code=404, detail="No readable data found in this spreadsheet.")
+
+    data_text = ""
+    for sd in all_data:
+        data_text += f"\n=== Sheet: {sd['sheet']} ===\n"
+        data_text += "Headers: " + " | ".join(str(h) for h in sd["headers"]) + "\n"
+        for row in sd["rows"]:
+            data_text += " | ".join(str(v) for v in row) + "\n"
+        data_text = data_text[:8000]
+
+    prompt = f"""You are an SEO analyst. Below is data from a Google Sheets SEO monitoring dashboard for: "{req.site_name or spreadsheet_title}".
+
+{data_text}
+
+Extract the most important SEO KPIs. Look for: organic sessions/traffic, clicks, impressions, CTR, average position, indexed pages, crawl errors, Core Web Vitals, bounce rate, backlinks, domain rating, conversions, revenue.
+
+Return ONLY a valid JSON array, no markdown, no explanation:
+[
+  {{
+    "name": "metric name",
+    "current": <number>,
+    "previous": <number or null>,
+    "unit": "number|percent|ms|score",
+    "category": "traffic|rankings|technical|backlinks|conversions|other",
+    "trend": "up|down|neutral"
+  }}
+]
+
+Rules:
+- current/previous must be plain numbers (no commas, no % symbol, no units)
+- Use the most recent data row for current, the row before for previous
+- Extract 6 to 12 of the most meaningful metrics
+- If a previous value cannot be determined, set it to null and trend to null"""
+
+    try:
+        model = genai.GenerativeModel(_get_flash_model())
+        raw = model.generate_content(prompt).text.strip()
+        raw = _re_log.sub(r'^```json\s*', '', raw, flags=_re_log.MULTILINE)
+        raw = _re_log.sub(r'^```\s*', '', raw, flags=_re_log.MULTILINE).strip()
+        metrics = _json_mod.loads(raw)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to extract metrics via AI: {e}")
+
+    return {
+        "site_name": req.site_name or spreadsheet_title,
+        "spreadsheet_title": spreadsheet_title,
+        "metrics": metrics,
+        "sheets_read": [d["sheet"] for d in all_data],
+    }
+
+
 # --- CWV Analysis Endpoints ---
 class CwvRequest(BaseModel):
     url: str

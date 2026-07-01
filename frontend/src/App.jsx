@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Activity, LayoutDashboard, Link2, Search, Layers, LogOut, Settings, Target } from 'lucide-react';
+import { Activity, LayoutDashboard, Link2, Search, Layers, LogOut, Settings, Target, BarChart2 } from 'lucide-react';
 import moveupLogo from './assets/logo.png';
 import GscDashboard from './GscDashboard';
 import TechnicalAudit from './TechnicalAudit';
 import OnPageAudit from './OnPageAudit';
+import SeoHealth from './SeoHealth';
 import UrlComparator from './UrlComparator';
 import InternalLinking from './InternalLinking';
 import SerpAnalyzer from './SerpAnalyzer';
@@ -12,6 +13,7 @@ import './index.css';
 
 const navItems = [
   { name: 'GSC Dashboard',      icon: <Activity size={18} /> },
+  { name: 'SEO Health',         icon: <BarChart2 size={18} /> },
   { name: 'Technical Auditor',  icon: <Settings size={18} /> },
   { name: 'On-Page Auditor',    icon: <Layers size={18} /> },
   { name: 'URL Comparator',     icon: <Link2 size={18} /> },
@@ -23,6 +25,7 @@ const navItems = [
 function renderPage(page) {
   switch (page) {
     case 'GSC Dashboard':     return <GscDashboard />;
+    case 'SEO Health':        return <SeoHealth />;
     case 'Technical Auditor': return <TechnicalAudit />;
     case 'On-Page Auditor':   return <OnPageAudit />;
     case 'URL Comparator':    return <UrlComparator />;
