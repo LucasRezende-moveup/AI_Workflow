@@ -1069,6 +1069,15 @@ Use markdown. Be specific. Max 350 words."""
 # --- SEO Health / Sheets KPI Endpoints ---
 import json as _json_mod
 
+@app.get("/api/sheets/sites")
+def sheets_sites():
+    raw = os.getenv("SEO_HEALTH_SITES", "[]")
+    try:
+        sites = _json_mod.loads(raw)
+    except Exception:
+        sites = []
+    return {"sites": sites}
+
 class SheetAnalyzeRequest(BaseModel):
     spreadsheet_id: str
     site_name: str = ""
