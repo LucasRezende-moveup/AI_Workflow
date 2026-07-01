@@ -1,43 +1,37 @@
 import { useState } from 'react';
-import { Activity, LayoutDashboard, Link2, Search, FileCode, Image as ImageIcon, Award, LogOut, Zap, Target } from 'lucide-react';
+import { Activity, LayoutDashboard, Link2, Search, FileCode, Image as ImageIcon, Award, LogOut, Settings, Target } from 'lucide-react';
 import moveupLogo from './assets/logo.png';
-import LogAnalyzer from './LogAnalyzer';
 import GscDashboard from './GscDashboard';
-import ScreamingFrog from './ScreamingFrog';
+import TechnicalAudit from './TechnicalAudit';
 import UrlComparator from './UrlComparator';
 import InternalLinking from './InternalLinking';
 import SerpAnalyzer from './SerpAnalyzer';
 import SchemaAudit from './SchemaAudit';
-import CwvAnalysis from './CwvAnalysis';
 import ImageAltAnalysis from './ImageAltAnalysis';
 import EeatAnalysis from './EeatAnalysis';
 import FsStealer from './FsStealer';
 import './index.css';
 
 const navItems = [
-  { name: 'GSC Dashboard',      icon: <Activity size={18} /> },
-  { name: 'Log Analyzer',       icon: <DatabaseIcon size={18} /> },
-  { name: 'Screaming Frog',     icon: <FrogIcon size={18} /> },
-  { name: 'URL Comparator',     icon: <Link2 size={18} /> },
-  { name: 'Internal Linking',   icon: <LayoutDashboard size={18} /> },
-  { name: 'SERP Analyzer',      icon: <Search size={18} /> },
-  { name: 'Schema Audit',       icon: <FileCode size={18} /> },
-  { name: 'CWV Analysis',       icon: <Zap size={18} /> },
-  { name: 'Image Alt Analysis', icon: <ImageIcon size={18} /> },
-  { name: 'E-E-A-T Analysis',   icon: <Award size={18} /> },
-  { name: 'FS Stealer',         icon: <Target size={18} /> },
+  { name: 'GSC Dashboard',       icon: <Activity size={18} /> },
+  { name: 'Technical Auditor',   icon: <Settings size={18} /> },
+  { name: 'URL Comparator',      icon: <Link2 size={18} /> },
+  { name: 'Internal Linking',    icon: <LayoutDashboard size={18} /> },
+  { name: 'SERP Analyzer',       icon: <Search size={18} /> },
+  { name: 'Schema Audit',        icon: <FileCode size={18} /> },
+  { name: 'Image Alt Analysis',  icon: <ImageIcon size={18} /> },
+  { name: 'E-E-A-T Analysis',    icon: <Award size={18} /> },
+  { name: 'FS Stealer',          icon: <Target size={18} /> },
 ];
 
 function renderPage(page) {
   switch (page) {
     case 'GSC Dashboard':      return <GscDashboard />;
-    case 'Log Analyzer':       return <LogAnalyzer />;
-    case 'Screaming Frog':     return <ScreamingFrog />;
+    case 'Technical Auditor':  return <TechnicalAudit />;
     case 'URL Comparator':     return <UrlComparator />;
     case 'Internal Linking':   return <InternalLinking />;
     case 'SERP Analyzer':      return <SerpAnalyzer />;
     case 'Schema Audit':       return <SchemaAudit />;
-    case 'CWV Analysis':       return <CwvAnalysis />;
     case 'Image Alt Analysis': return <ImageAltAnalysis />;
     case 'E-E-A-T Analysis':   return <EeatAnalysis />;
     case 'FS Stealer':         return <FsStealer />;
@@ -139,23 +133,3 @@ export default function App() {
   );
 }
 
-function DatabaseIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={props.size} height={props.size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <ellipse cx="12" cy="5" rx="9" ry="3" />
-      <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-      <path d="M3 12A9 3 0 0 0 21 12" />
-    </svg>
-  );
-}
-
-function FrogIcon(props) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={props.size} height={props.size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z" />
-      <circle cx="9" cy="10" r="1" />
-      <circle cx="15" cy="10" r="1" />
-      <path d="M10 14a2 2 0 0 0 4 0" />
-    </svg>
-  );
-}

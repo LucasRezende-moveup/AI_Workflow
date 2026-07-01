@@ -43,7 +43,7 @@ function MetricCard({ icon: Icon, label, value, color = 'var(--primary)', sub })
   );
 }
 
-export default function LogAnalyzer() {
+export default function LogAnalyzer({ onData } = {}) {
   const [sites, setSites] = useState({});
   const [selectedSite, setSelectedSite] = useState('');
   const [availableFiles, setAvailableFiles] = useState([]);
@@ -126,6 +126,7 @@ export default function LogAnalyzer() {
       });
       const data = await res.json();
       setAnalytics(data);
+      onData?.(data);
       finishProgress();
     } catch (e) { console.error(e); finishProgress(); }
     finally { setLoading(false); }

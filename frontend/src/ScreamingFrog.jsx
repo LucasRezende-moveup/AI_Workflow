@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Upload, FileDown, Terminal, ChevronDown, ChevronUp, Link, CheckCircle, AlertTriangle, FileMinus, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
-export default function ScreamingFrog() {
+export default function ScreamingFrog({ onData } = {}) {
   const [file, setFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -52,6 +52,7 @@ export default function ScreamingFrog() {
       if (res.ok) {
         setResult(data);
         setInsights('');
+        onData?.(data);
       } else {
         alert("Error parsing file: " + data.detail);
       }
