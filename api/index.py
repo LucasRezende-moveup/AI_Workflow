@@ -963,6 +963,109 @@ def image_alt_analyze(req: ImageAltRequest):
     return {"detected_intent": detected_intent, "total_images": len(imgs), "results": results}
 
 
+# --- Header Analysis Endpoints ---
+class HeadersRequest(BaseModel):
+    url: str
+    keyword: str
+    auth_user: Optional[str] = None
+    auth_pass: Optional[str] = None
+
+@app.post("/api/headers/analyze")
+def headers_analyze(req: HeadersRequest):
+    url = req.url if req.url.startswith("http") else "https://" + req.url
+    auth = (req.auth_user, req.auth_pass) if req.auth_user else None
+    ua = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"}
+    try:
+        response = http_requests.get(url, headers=ua, timeout=15, auth=auth)
+        response.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not fetch URL: {e}")
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+    header_tags = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+    if not header_tags:
+        raise HTTPException(status_code=404, detail="No heading tags (H1–H6) found on this page.")
+
+    keyword_lower = req.keyword.lower()
+    keyword_words = set(w for w in keyword_lower.split() if len(w) > 2)
+
+    headers_list = []
+    for i, tag in enumerate(header_tags):
+        text = tag.get_text(strip=True)
+        text_lower = text.lower()
+        has_full = keyword_lower in text_lower
+        has_partial = bool(keyword_words) and sum(1 for w in keyword_words if w in text_lower) >= max(1, len(keyword_words) // 2)
+        headers_list.append({
+            "level": int(tag.name[1]),
+            "text": text,
+            "has_keyword": has_full or has_partial,
+            "position": i,
+        })
+
+    issues = []
+    h1_count = sum(1 for h in headers_list if h["level"] == 1)
+    if h1_count == 0:
+        issues.append({"severity": "critical", "message": "No H1 tag found on the page."})
+    elif h1_count > 1:
+        issues.append({"severity": "critical", "message": f"Multiple H1 tags found ({h1_count}). There should be exactly one H1."})
+
+    if h1_count >= 1 and not any(h["has_keyword"] for h in headers_list if h["level"] == 1):
+        issues.append({"severity": "critical", "message": f"H1 does not contain the target keyword '{req.keyword}'."})
+
+    prev_level = 0
+    seen_skips = set()
+    for h in headers_list:
+        if h["level"] > prev_level + 1 and prev_level > 0:
+            skip_key = (prev_level, h["level"])
+            if skip_key not in seen_skips:
+                issues.append({"severity": "warning", "message": f"Heading hierarchy skips from H{prev_level} to H{h['level']}: \"{h['text'][:50]}\""})
+                seen_skips.add(skip_key)
+        prev_level = h["level"]
+
+    kw_count = sum(1 for h in headers_list if h["has_keyword"])
+    if kw_count == 0:
+        issues.append({"severity": "critical", "message": "No headings reference the target keyword or its variants."})
+    elif kw_count < 2 and len(headers_list) >= 5:
+        issues.append({"severity": "warning", "message": "Only 1 heading references the keyword. Add keyword variants to more subheadings."})
+
+    score = 100 - sum(25 if i["severity"] == "critical" else 10 for i in issues)
+    score = max(0, min(100, score))
+
+    headers_md = "\n".join(f"{'#' * h['level']} {h['text']}" for h in headers_list[:50])
+    prompt = f"""You are an SEO expert auditing the heading structure of a webpage.
+
+Target keyword: "{req.keyword}"
+URL: {url}
+
+Heading structure:
+{headers_md}
+
+Detected issues: {[i['message'] for i in issues] if issues else 'None detected'}
+
+Give a concise, actionable analysis. Cover:
+1. H1 optimization for the keyword
+2. Heading hierarchy and logical content flow
+3. Keyword distribution and semantic coverage across headings
+4. Rewritten examples for the most problematic headings
+
+Use markdown. Be specific. Max 350 words."""
+
+    try:
+        model = genai.GenerativeModel(_get_flash_model())
+        ai_analysis = model.generate_content(prompt).text
+    except Exception as e:
+        ai_analysis = f"AI analysis unavailable: {e}"
+
+    return {
+        "headers": headers_list,
+        "issues": issues,
+        "score": score,
+        "ai_analysis": ai_analysis,
+        "total": len(headers_list),
+        "keyword": req.keyword,
+    }
+
+
 # --- CWV Analysis Endpoints ---
 class CwvRequest(BaseModel):
     url: str
