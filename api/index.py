@@ -1088,9 +1088,10 @@ def _extract_spreadsheet_id(url_or_id: str) -> str:
 
 @app.post("/api/sheets/analyze")
 def sheets_analyze(req: SheetAnalyzeRequest):
-    api_key = os.getenv("GOOGLE_API_KEY")
+    # Prefer a dedicated unrestricted server key; fall back to the shared key
+    api_key = os.getenv("GOOGLE_SHEETS_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=503, detail="GOOGLE_API_KEY not configured.")
+        raise HTTPException(status_code=503, detail="No Google API key configured. Set GOOGLE_SHEETS_API_KEY in Vercel env vars.")
 
     sheet_id = _extract_spreadsheet_id(req.spreadsheet_id)
 
