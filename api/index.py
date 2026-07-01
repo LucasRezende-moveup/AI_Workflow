@@ -1086,6 +1086,125 @@ def _extract_spreadsheet_id(url_or_id: str) -> str:
     m = _re_log.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url_or_id)
     return m.group(1) if m else url_or_id.strip()
 
+_SHEETS_METRIC_MAP = [
+    # (keyword_in_header, display_name, category, unit)
+    # Traffic
+    ("organic session",          "Organic Sessions",       "traffic",     None),
+    ("organic traffic",          "Organic Traffic",        "traffic",     None),
+    ("organic click",            "Organic Clicks",         "traffic",     None),
+    ("session",                  "Sessions",               "traffic",     None),
+    ("pageview",                 "Pageviews",              "traffic",     None),
+    ("active user",              "Active Users",           "traffic",     None),
+    ("user",                     "Users",                  "traffic",     None),
+    ("visit",                    "Visits",                 "traffic",     None),
+    ("click",                    "Clicks",                 "traffic",     None),
+    ("impression",               "Impressions",            "traffic",     None),
+    ("bounce rate",              "Bounce Rate",            "traffic",     "percent"),
+    # Rankings
+    ("average position",         "Avg Position",           "rankings",    "score"),
+    ("avg position",             "Avg Position",           "rankings",    "score"),
+    ("ctr",                      "CTR",                    "rankings",    "percent"),
+    ("position",                 "Avg Position",           "rankings",    "score"),
+    ("ranking",                  "Ranking",                "rankings",    "score"),
+    # Technical — crawl
+    ("total urls crawled",       "URLs Crawled",           "technical",   None),
+    ("total urls encountered",   "URLs Encountered",       "technical",   None),
+    ("total internal indexable", "Indexable URLs",         "technical",   None),
+    ("total internal non-index", "Non-Indexable URLs",     "technical",   None),
+    ("indexable url",            "Indexable URLs",         "technical",   None),
+    ("non-indexable",            "Non-Indexable URLs",     "technical",   None),
+    ("crawl error",              "Crawl Errors",           "technical",   None),
+    ("404",                      "404 Errors",             "technical",   None),
+    ("redirect",                 "Redirects",              "technical",   None),
+    ("index",                    "Indexed Pages",          "technical",   None),
+    # Technical — CWV
+    ("lcp",                      "LCP",                    "technical",   "ms"),
+    ("cls",                      "CLS",                    "technical",   None),
+    ("fid",                      "FID",                    "technical",   "ms"),
+    ("inp",                      "INP",                    "technical",   "ms"),
+    ("response time",            "Response Time",          "technical",   "ms"),
+    ("load time",                "Load Time",              "technical",   "ms"),
+    # Backlinks
+    ("domain rating",            "Domain Rating",          "backlinks",   "score"),
+    ("domain authority",         "Domain Authority",       "backlinks",   "score"),
+    ("referring domain",         "Referring Domains",      "backlinks",   None),
+    ("referring page",           "Referring Pages",        "backlinks",   None),
+    ("backlink",                 "Backlinks",              "backlinks",   None),
+    # Conversions
+    ("revenue",                  "Revenue",                "conversions", None),
+    ("conversion",               "Conversions",            "conversions", None),
+    ("transaction",              "Transactions",           "conversions", None),
+    ("goal",                     "Goals",                  "conversions", None),
+    ("ecommerce",                "E-commerce Revenue",     "conversions", None),
+]
+
+_DATE_KEYWORDS = {"date", "time", "period", "month", "week", "day", "year", "hour", "elapsed", "modified"}
+
+def _parse_num(val):
+    if val is None or str(val).strip() == "":
+        return None
+    s = str(val).strip().replace(",", "").replace("%", "").replace("$", "").replace("R$", "").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+def _extract_metrics_deterministic(all_data):
+    seen_names = set()
+    metrics = []
+    for sd in all_data:
+        headers = sd["headers"]
+        rows = sd["rows"]
+        if len(rows) < 1:
+            continue
+        current_row = rows[-1]
+        prev_row = rows[-2] if len(rows) >= 2 else None
+
+        for col_idx, raw_header in enumerate(headers):
+            header_lc = raw_header.lower().strip()
+            # skip date/time columns
+            if any(kw in header_lc for kw in _DATE_KEYWORDS):
+                continue
+
+            matched_name, matched_cat, matched_unit = None, "other", None
+            for keyword, disp, cat, unit in _SHEETS_METRIC_MAP:
+                if keyword in header_lc:
+                    matched_name = disp
+                    matched_cat = cat
+                    matched_unit = unit
+                    break
+
+            if matched_name is None:
+                continue
+            if matched_name in seen_names:
+                continue
+
+            cur_val = _parse_num(current_row[col_idx] if col_idx < len(current_row) else None)
+            if cur_val is None:
+                continue
+
+            prev_val = None
+            if prev_row is not None:
+                prev_val = _parse_num(prev_row[col_idx] if col_idx < len(prev_row) else None)
+
+            if cur_val is not None and prev_val is not None:
+                trend = "up" if cur_val > prev_val else ("down" if cur_val < prev_val else "neutral")
+            else:
+                trend = "neutral"
+
+            seen_names.add(matched_name)
+            metrics.append({
+                "name": matched_name,
+                "current": cur_val,
+                "previous": prev_val,
+                "unit": matched_unit,
+                "category": matched_cat,
+                "trend": trend,
+            })
+
+    return metrics
+
+
 @app.post("/api/sheets/analyze")
 def sheets_analyze(req: SheetAnalyzeRequest):
     # Prefer a dedicated unrestricted server key; fall back to the shared key
@@ -1113,7 +1232,7 @@ def sheets_analyze(req: SheetAnalyzeRequest):
         sheet_name = sheet["properties"]["title"]
         try:
             val_r = http_requests.get(
-                f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{sheet_name}!A1:R200",
+                f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{sheet_name}!A1:AZ500",
                 params={"key": api_key}, timeout=15
             )
             val_r.raise_for_status()
@@ -1130,46 +1249,7 @@ def sheets_analyze(req: SheetAnalyzeRequest):
     if not all_data:
         raise HTTPException(status_code=404, detail="No readable data found in this spreadsheet.")
 
-    data_text = ""
-    for sd in all_data:
-        data_text += f"\n=== Sheet: {sd['sheet']} ===\n"
-        data_text += "Headers: " + " | ".join(str(h) for h in sd["headers"]) + "\n"
-        for row in sd["rows"]:
-            data_text += " | ".join(str(v) for v in row) + "\n"
-        data_text = data_text[:8000]
-
-    prompt = f"""You are an SEO analyst. Below is data from a Google Sheets SEO monitoring dashboard for: "{req.site_name or spreadsheet_title}".
-
-{data_text}
-
-Extract the most important SEO KPIs. Look for: organic sessions/traffic, clicks, impressions, CTR, average position, indexed pages, crawl errors, Core Web Vitals, bounce rate, backlinks, domain rating, conversions, revenue.
-
-Return ONLY a valid JSON array, no markdown, no explanation:
-[
-  {{
-    "name": "metric name",
-    "current": <number>,
-    "previous": <number or null>,
-    "unit": "number|percent|ms|score",
-    "category": "traffic|rankings|technical|backlinks|conversions|other",
-    "trend": "up|down|neutral"
-  }}
-]
-
-Rules:
-- current/previous must be plain numbers (no commas, no % symbol, no units)
-- Use the most recent data row for current, the row before for previous
-- Extract 6 to 12 of the most meaningful metrics
-- If a previous value cannot be determined, set it to null and trend to null"""
-
-    try:
-        model = genai.GenerativeModel(_get_flash_model())
-        raw = model.generate_content(prompt).text.strip()
-        raw = _re_log.sub(r'^```json\s*', '', raw, flags=_re_log.MULTILINE)
-        raw = _re_log.sub(r'^```\s*', '', raw, flags=_re_log.MULTILINE).strip()
-        metrics = _json_mod.loads(raw)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to extract metrics via AI: {e}")
+    metrics = _extract_metrics_deterministic(all_data)
 
     return {
         "site_name": req.site_name or spreadsheet_title,
