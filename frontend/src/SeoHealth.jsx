@@ -70,8 +70,51 @@ function MetricCard({ m }) {
   );
 }
 
+function HealthGauge({ score, label }) {
+  const color = score >= 90 ? '#4ade80' : score >= 75 ? '#a3e635' : score >= 55 ? '#f59e0b' : '#f87171';
+  const r = 30;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (score / 100) * circ;
+  return (
+    <div style={{ position: 'relative', width: 80, height: 80, flexShrink: 0 }}>
+      <svg width="80" height="80" style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx="40" cy="40" r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="6" />
+        <circle cx="40" cy="40" r={r} fill="none" stroke={color} strokeWidth="6"
+          strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.6s ease' }} />
+      </svg>
+      <div style={{
+        position: 'absolute', inset: 0,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <span style={{ fontSize: '1.35rem', fontWeight: 800, color, lineHeight: 1 }}>{score}</span>
+        <span style={{ fontSize: '0.52rem', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 2 }}>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function ScoreBreakdown({ breakdown }) {
+  if (!breakdown?.length) return null;
+  return (
+    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Score Deductions</div>
+      {breakdown.map((b, i) => (
+        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem' }}>
+          <span style={{ color: 'rgba(255,255,255,0.75)' }}>{b.issue}</span>
+          <span style={{ color: '#f87171', fontWeight: 700, flexShrink: 0, marginLeft: 12 }}>−{b.penalty}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SiteCard({ site, cached, isLoading, err, onRefresh }) {
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const metrics = cached?.data?.metrics || [];
+  const score   = cached?.data?.score;
+  const label   = cached?.data?.score_label || '';
+  const breakdown = cached?.data?.score_breakdown || [];
   const ts = cached?.ts
     ? new Date(cached.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null;
@@ -85,14 +128,30 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
 
   return (
     <div className="glass-panel">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-        <div>
-          <h3 style={{ marginBottom: 3, fontSize: '1.1rem' }}>{site.name}</h3>
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', gap: 10 }}>
-            {ts && <span>Updated {ts}</span>}
-            {cached?.data?.sheets_read?.length > 0 && (
-              <span>Sheets: {cached.data.sheets_read.join(', ')}</span>
-            )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, gap: 16 }}>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flex: 1, minWidth: 0 }}>
+          {score !== undefined && score !== null && (
+            <div>
+              <HealthGauge score={score} label={label} />
+              {breakdown.length > 0 && (
+                <button
+                  onClick={() => setShowBreakdown(v => !v)}
+                  style={{ display: 'block', margin: '4px auto 0', fontSize: '0.65rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                >
+                  {showBreakdown ? 'hide' : 'why?'}
+                </button>
+              )}
+            </div>
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 style={{ marginBottom: 3, fontSize: '1.1rem' }}>{site.name}</h3>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {ts && <span>Updated {ts}</span>}
+              {cached?.data?.sheets_read?.length > 0 && (
+                <span>Sheets: {cached.data.sheets_read.join(', ')}</span>
+              )}
+            </div>
+            {showBreakdown && <ScoreBreakdown breakdown={breakdown} />}
           </div>
         </div>
         <button

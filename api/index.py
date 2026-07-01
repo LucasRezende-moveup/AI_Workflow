@@ -1087,55 +1087,64 @@ def _extract_spreadsheet_id(url_or_id: str) -> str:
     return m.group(1) if m else url_or_id.strip()
 
 _SHEETS_METRIC_MAP = [
-    # (keyword_in_header, display_name, category, unit)
-    # Traffic
-    ("organic session",          "Organic Sessions",       "traffic",     None),
-    ("organic traffic",          "Organic Traffic",        "traffic",     None),
-    ("organic click",            "Organic Clicks",         "traffic",     None),
-    ("session",                  "Sessions",               "traffic",     None),
-    ("pageview",                 "Pageviews",              "traffic",     None),
-    ("active user",              "Active Users",           "traffic",     None),
-    ("user",                     "Users",                  "traffic",     None),
-    ("visit",                    "Visits",                 "traffic",     None),
-    ("click",                    "Clicks",                 "traffic",     None),
-    ("impression",               "Impressions",            "traffic",     None),
-    ("bounce rate",              "Bounce Rate",            "traffic",     "percent"),
-    # Rankings
-    ("average position",         "Avg Position",           "rankings",    "score"),
-    ("avg position",             "Avg Position",           "rankings",    "score"),
-    ("ctr",                      "CTR",                    "rankings",    "percent"),
-    ("position",                 "Avg Position",           "rankings",    "score"),
-    ("ranking",                  "Ranking",                "rankings",    "score"),
-    # Technical — crawl
-    ("total urls crawled",       "URLs Crawled",           "technical",   None),
-    ("total urls encountered",   "URLs Encountered",       "technical",   None),
-    ("total internal indexable", "Indexable URLs",         "technical",   None),
-    ("total internal non-index", "Non-Indexable URLs",     "technical",   None),
-    ("indexable url",            "Indexable URLs",         "technical",   None),
-    ("non-indexable",            "Non-Indexable URLs",     "technical",   None),
-    ("crawl error",              "Crawl Errors",           "technical",   None),
-    ("404",                      "404 Errors",             "technical",   None),
-    ("redirect",                 "Redirects",              "technical",   None),
-    ("index",                    "Indexed Pages",          "technical",   None),
-    # Technical — CWV
-    ("lcp",                      "LCP",                    "technical",   "ms"),
-    ("cls",                      "CLS",                    "technical",   None),
-    ("fid",                      "FID",                    "technical",   "ms"),
-    ("inp",                      "INP",                    "technical",   "ms"),
-    ("response time",            "Response Time",          "technical",   "ms"),
-    ("load time",                "Load Time",              "technical",   "ms"),
-    # Backlinks
-    ("domain rating",            "Domain Rating",          "backlinks",   "score"),
-    ("domain authority",         "Domain Authority",       "backlinks",   "score"),
-    ("referring domain",         "Referring Domains",      "backlinks",   None),
-    ("referring page",           "Referring Pages",        "backlinks",   None),
-    ("backlink",                 "Backlinks",              "backlinks",   None),
-    # Conversions
-    ("revenue",                  "Revenue",                "conversions", None),
-    ("conversion",               "Conversions",            "conversions", None),
-    ("transaction",              "Transactions",           "conversions", None),
-    ("goal",                     "Goals",                  "conversions", None),
-    ("ecommerce",                "E-commerce Revenue",     "conversions", None),
+    # === Screaming Frog crawl summary (specific patterns first) ===
+    # Crawl coverage
+    ("total internal indexable urls",        "Indexable URLs",       "technical",   None),
+    ("total internal non-indexable",         "Non-Indexable URLs",   "technical",   None),
+    ("total internal blocked by robots",     "Robots Blocked",       "technical",   None),
+    ("total urls crawled",                   "URLs Crawled",         "technical",   None),
+    ("total urls encountered",               "URLs Encountered",     "technical",   None),
+    ("total internal urls",                  "Internal URLs",        "technical",   None),
+    ("total external urls",                  "External URLs",        "technical",   None),
+    # H1 structure
+    ("h1:missing",                           "H1 Missing",           "technical",   None),
+    ("h1:duplicate",                         "H1 Duplicate",         "technical",   None),
+    ("h1:over x",                            "H1 Too Long",          "technical",   None),
+    ("h1:multiple",                          "H1 Multiple",          "technical",   None),
+    ("h1:all",                               "H1 Total",             "technical",   None),
+    # H2 structure
+    ("h2:missing",                           "H2 Missing",           "technical",   None),
+    ("h2:duplicate",                         "H2 Duplicate",         "technical",   None),
+    ("h2:non-sequential",                    "H2 Non-Sequential",    "technical",   None),
+    ("h2:over x",                            "H2 Too Long",          "technical",   None),
+    ("h2:all",                               "H2 Total",             "technical",   None),
+    # JavaScript / rendering
+    ("javascript:pages with javascript errors",   "JS Errors",            "technical",   None),
+    ("javascript:pages with javascript warnings", "JS Warnings",          "technical",   None),
+    ("javascript:pages with chrome issues",       "Chrome Issues",        "technical",   None),
+    ("javascript:canonical mismatch",             "Canonical Mismatch",   "technical",   None),
+    ("javascript:all",                            "JS Pages",             "technical",   None),
+    # === Generic SEO metrics (for other sheet types) ===
+    ("organic session",    "Organic Sessions",   "traffic",     None),
+    ("organic traffic",    "Organic Traffic",    "traffic",     None),
+    ("organic click",      "Organic Clicks",     "traffic",     None),
+    ("session",            "Sessions",           "traffic",     None),
+    ("pageview",           "Pageviews",          "traffic",     None),
+    ("active user",        "Active Users",       "traffic",     None),
+    ("new user",           "New Users",          "traffic",     None),
+    ("user",               "Users",              "traffic",     None),
+    ("visit",              "Visits",             "traffic",     None),
+    ("click",              "Clicks",             "traffic",     None),
+    ("impression",         "Impressions",        "traffic",     None),
+    ("bounce rate",        "Bounce Rate",        "traffic",     "percent"),
+    ("average position",   "Avg Position",       "rankings",    "score"),
+    ("avg position",       "Avg Position",       "rankings",    "score"),
+    ("ctr",                "CTR",                "rankings",    "percent"),
+    ("position",           "Avg Position",       "rankings",    "score"),
+    ("domain rating",      "Domain Rating",      "backlinks",   "score"),
+    ("domain authority",   "Domain Authority",   "backlinks",   "score"),
+    ("referring domain",   "Referring Domains",  "backlinks",   None),
+    ("backlink",           "Backlinks",          "backlinks",   None),
+    ("revenue",            "Revenue",            "conversions", None),
+    ("conversion",         "Conversions",        "conversions", None),
+    ("transaction",        "Transactions",       "conversions", None),
+    ("lcp",                "LCP",                "technical",   "ms"),
+    ("cls",                "CLS",                "technical",   None),
+    ("fid",                "FID",                "technical",   "ms"),
+    ("inp",                "INP",                "technical",   "ms"),
+    ("response time",      "Response Time",      "technical",   "ms"),
+    ("crawl error",        "Crawl Errors",       "technical",   None),
+    ("404",                "404 Errors",         "technical",   None),
 ]
 
 _DATE_KEYWORDS = {"date", "time", "period", "month", "week", "day", "year", "hour", "elapsed", "modified"}
@@ -1148,6 +1157,128 @@ def _parse_num(val):
         return float(s)
     except ValueError:
         return None
+
+def _calculate_health_score(all_data):
+    """Compute 0-100 SEO health score from crawl summary data with breakdown."""
+    kv = {}
+    for sd in all_data:
+        for i, h in enumerate(sd["headers"]):
+            row = sd["rows"][-1] if sd["rows"] else []
+            kv[h.lower().strip()] = row[i] if i < len(row) else ""
+
+    def n(key, default=0.0):
+        try:
+            return float(str(kv.get(key, default)).replace(",", "").strip() or default)
+        except Exception:
+            return default
+
+    score = 100.0
+    breakdown = []
+
+    # 1. Indexability (max -20)
+    idx = n("total internal indexable urls")
+    non_idx = n("total internal non-indexable urls")
+    total = idx + non_idx
+    if total > 0:
+        pct = non_idx / total
+        p = 20 if pct > 0.20 else 12 if pct > 0.10 else 5 if pct > 0.05 else 2 if pct > 0 else 0
+        score -= p
+        if p: breakdown.append({"issue": f"{pct*100:.1f}% non-indexable URLs", "penalty": p})
+
+    # 2. Robots.txt blocking (max -10)
+    robots = n("total internal blocked by robots.txt")
+    if total > 0 and robots > 0:
+        p = min(10, max(3, round((robots / total) * 100)))
+        score -= p
+        breakdown.append({"issue": f"{int(robots)} internal URLs blocked by robots.txt", "penalty": p})
+
+    # 3. H1 quality (max -30)
+    h1_all = n("h1:all")
+    if h1_all > 0:
+        miss_p = n("h1:missing") / h1_all
+        dup_p  = n("h1:duplicate") / h1_all
+        multi_p = n("h1:multiple") / h1_all
+        long_p = n("h1:over x characters") / h1_all
+
+        if miss_p > 0.10: p = 20; r = f"{miss_p*100:.0f}% of pages missing H1"
+        elif miss_p > 0.03: p = 12; r = f"{miss_p*100:.1f}% of pages missing H1"
+        elif miss_p > 0: p = 5; r = f"{int(n('h1:missing'))} pages missing H1"
+        else: p = 0; r = None
+        score -= p
+        if r: breakdown.append({"issue": r, "penalty": p})
+
+        if dup_p > 0.10: p = 8; r = f"{dup_p*100:.0f}% duplicate H1s"
+        elif dup_p > 0: p = 3; r = f"{int(n('h1:duplicate'))} duplicate H1s"
+        else: p = 0; r = None
+        score -= p
+        if r: breakdown.append({"issue": r, "penalty": p})
+
+        if multi_p > 0.10: p = 5; r = f"{multi_p*100:.0f}% pages with multiple H1s"
+        elif multi_p > 0.03: p = 2; r = None
+        else: p = 0; r = None
+        score -= p
+        if r: breakdown.append({"issue": r, "penalty": p})
+
+        if long_p > 0.20: p = 3; r = f"{long_p*100:.0f}% H1s too long"
+        else: p = 0; r = None
+        score -= p
+        if r: breakdown.append({"issue": r, "penalty": p})
+
+    # 4. H2 quality (max -20)
+    h2_all = n("h2:all")
+    if h2_all > 0:
+        miss_p = n("h2:missing") / h2_all
+        dup_p  = n("h2:duplicate") / h2_all
+        ns_p   = n("h2:non-sequential") / h2_all
+        long_p = n("h2:over x characters") / h2_all
+
+        if miss_p > 0.20: p = 8; r = f"{miss_p*100:.0f}% of pages missing H2"
+        elif miss_p > 0.05: p = 4; r = f"{miss_p*100:.1f}% of pages missing H2"
+        elif miss_p > 0: p = 1; r = None
+        else: p = 0; r = None
+        score -= p
+        if r: breakdown.append({"issue": r, "penalty": p})
+
+        if dup_p > 0.30: p = 7; r = f"{dup_p*100:.0f}% duplicate H2s"
+        elif dup_p > 0.10: p = 4; r = f"{dup_p*100:.0f}% duplicate H2s"
+        elif dup_p > 0: p = 2; r = f"{int(n('h2:duplicate'))} duplicate H2s"
+        else: p = 0; r = None
+        score -= p
+        if r: breakdown.append({"issue": r, "penalty": p})
+
+        if ns_p > 0.05: p = 3; r = f"{ns_p*100:.1f}% non-sequential H2s"
+        elif ns_p > 0: p = 1; r = None
+        else: p = 0; r = None
+        score -= p
+        if r: breakdown.append({"issue": r, "penalty": p})
+
+        if long_p > 0.20: p = 2; r = f"{long_p*100:.0f}% H2s too long"
+        else: p = 0; r = None
+        score -= p
+        if r: breakdown.append({"issue": r, "penalty": p})
+
+    # 5. Canonical integrity (max -15)
+    canon = n("javascript:canonical mismatch")
+    if total > 0 and canon > 0:
+        p = min(15, max(5, round((canon / total) * 100)))
+        score -= p
+        breakdown.append({"issue": f"{int(canon)} canonical mismatches", "penalty": p})
+
+    # 6. JavaScript errors (max -10)
+    js_all = n("javascript:all")
+    if js_all > 0:
+        js_err = n("javascript:pages with javascript errors")
+        err_p = js_err / js_all
+        if err_p > 0.10: p = 10; r = f"{err_p*100:.0f}% of pages have JS errors"
+        elif err_p > 0.02: p = 5; r = f"{err_p*100:.1f}% of pages have JS errors"
+        elif js_err > 0: p = 2; r = f"{int(js_err)} pages with JS errors"
+        else: p = 0; r = None
+        score -= p
+        if r: breakdown.append({"issue": r, "penalty": p})
+
+    final = max(0, min(100, round(score)))
+    label = "Excellent" if final >= 90 else "Good" if final >= 75 else "Needs Work" if final >= 55 else "Critical"
+    return {"score": final, "label": label, "breakdown": breakdown}
 
 def _extract_metrics_deterministic(all_data):
     seen_names = set()
@@ -1162,7 +1293,6 @@ def _extract_metrics_deterministic(all_data):
 
         for col_idx, raw_header in enumerate(headers):
             header_lc = raw_header.lower().strip()
-            # skip date/time columns
             if any(kw in header_lc for kw in _DATE_KEYWORDS):
                 continue
 
@@ -1174,9 +1304,7 @@ def _extract_metrics_deterministic(all_data):
                     matched_unit = unit
                     break
 
-            if matched_name is None:
-                continue
-            if matched_name in seen_names:
+            if matched_name is None or matched_name in seen_names:
                 continue
 
             cur_val = _parse_num(current_row[col_idx] if col_idx < len(current_row) else None)
@@ -1187,10 +1315,9 @@ def _extract_metrics_deterministic(all_data):
             if prev_row is not None:
                 prev_val = _parse_num(prev_row[col_idx] if col_idx < len(prev_row) else None)
 
+            trend = "neutral"
             if cur_val is not None and prev_val is not None:
                 trend = "up" if cur_val > prev_val else ("down" if cur_val < prev_val else "neutral")
-            else:
-                trend = "neutral"
 
             seen_names.add(matched_name)
             metrics.append({
@@ -1250,12 +1377,16 @@ def sheets_analyze(req: SheetAnalyzeRequest):
         raise HTTPException(status_code=404, detail="No readable data found in this spreadsheet.")
 
     metrics = _extract_metrics_deterministic(all_data)
+    health  = _calculate_health_score(all_data)
 
     return {
         "site_name": req.site_name or spreadsheet_title,
         "spreadsheet_title": spreadsheet_title,
         "metrics": metrics,
         "sheets_read": [d["sheet"] for d in all_data],
+        "score": health["score"],
+        "score_label": health["label"],
+        "score_breakdown": health["breakdown"],
     }
 
 
