@@ -111,6 +111,7 @@ function ScoreBreakdown({ breakdown }) {
 
 function SiteCard({ site, cached, isLoading, err, onRefresh }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const metrics = cached?.data?.metrics || [];
   const score   = cached?.data?.score;
   const label   = cached?.data?.score_label || '';
@@ -187,21 +188,38 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
       )}
 
       {metrics.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {CAT_ORDER.filter(c => grouped[c].length > 0).map(cat => (
-            <div key={cat}>
-              <div style={{
-                fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase',
-                letterSpacing: '0.07em', color: CAT_COLOR[cat], marginBottom: 10,
-              }}>
-                {cat}
-              </div>
-              <div className="grid grid-cols-4 gap-3">
-                {grouped[cat].map((m, i) => <MetricCard key={i} m={m} />)}
-              </div>
+        <>
+          <button
+            onClick={() => setExpanded(v => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+              padding: '9px 14px', borderRadius: 8, fontSize: '0.82rem', fontWeight: 600,
+              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+              color: 'var(--text-muted)', cursor: 'pointer', textAlign: 'left',
+            }}
+          >
+            <span style={{ flex: 1 }}>{expanded ? '▲ Hide Metrics' : '▼ Show Metrics'}</span>
+            <span style={{ fontSize: '0.75rem' }}>{metrics.length} metrics</span>
+          </button>
+
+          {expanded && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginTop: 4 }}>
+              {CAT_ORDER.filter(c => grouped[c].length > 0).map(cat => (
+                <div key={cat}>
+                  <div style={{
+                    fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase',
+                    letterSpacing: '0.07em', color: CAT_COLOR[cat], marginBottom: 10,
+                  }}>
+                    {cat}
+                  </div>
+                  <div className="grid grid-cols-4 gap-3">
+                    {grouped[cat].map((m, i) => <MetricCard key={i} m={m} />)}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   );
