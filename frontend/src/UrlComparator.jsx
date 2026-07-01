@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Link2, Globe, Wand2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 export default function UrlComparator() {
@@ -11,8 +11,40 @@ export default function UrlComparator() {
   const [authPass, setAuthPass] = useState('');
   const [showAuth, setShowAuth] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [serpLoading, setSerpLoading] = useState(false);
+  const [serpLocation, setSerpLocation] = useState('Global (No Geolocation)');
+  const [geolocations, setGeolocations] = useState(['Global (No Geolocation)']);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetch('/api/serp/geolocations').then(r => r.json())
+      .then(d => { if (d.geolocations?.length) setGeolocations(d.geolocations); })
+      .catch(() => {});
+  }, []);
+
+  const handleFetchTop3 = async () => {
+    if (!keyword.trim()) return;
+    setSerpLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/serp/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword: keyword.trim(), location_name: serpLocation }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || 'SERP fetch failed'); return; }
+      const organic = data.organic || [];
+      if (organic[0]) { setUrl1(organic[0].link); setPos1(1); }
+      if (organic[1]) { setUrl2(organic[1].link); setPos2(2); }
+      if (organic[2]) { setUrl3(organic[2].link); setPos3(3); }
+    } catch (e) {
+      setError('Network error: ' + e.message);
+    } finally {
+      setSerpLoading(false);
+    }
+  };
 
   const handleCompare = async () => {
     if (!keyword || !url1 || !url2) return;
@@ -51,6 +83,34 @@ export default function UrlComparator() {
         <div className="mb-4">
           <label className="metric-label mb-2 block">Focus Keyword</label>
           <input className="glass-input" placeholder="e.g. best seo tools" value={keyword} onChange={e => setKeyword(e.target.value)} />
+        </div>
+
+        <div className="flex items-center gap-3 mb-5" style={{ padding: '12px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <Globe size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+          <select
+            className="glass-input glass-select"
+            style={{ flex: 1, padding: '6px 10px', fontSize: '0.82rem' }}
+            value={serpLocation}
+            onChange={e => setSerpLocation(e.target.value)}
+          >
+            {geolocations.map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
+          <button
+            onClick={handleFetchTop3}
+            disabled={serpLoading || !keyword.trim()}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px',
+              borderRadius: 7, border: '1px solid rgba(226,0,113,0.4)',
+              background: 'rgba(226,0,113,0.1)', color: 'var(--primary)',
+              cursor: keyword.trim() ? 'pointer' : 'not-allowed',
+              fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap',
+              opacity: !keyword.trim() ? 0.4 : 1,
+            }}
+          >
+            {serpLoading
+              ? <><div className="loader" style={{ width: 12, height: 12, borderWidth: 2 }} /> Fetching…</>
+              : <><Wand2 size={13} /> Auto-fill top 3</>}
+          </button>
         </div>
 
         <div className="grid grid-cols-3 gap-4 mb-4">

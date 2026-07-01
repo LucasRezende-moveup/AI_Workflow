@@ -1,5 +1,30 @@
 import { useState, useEffect } from 'react';
-import { ExternalLink, Target, Search, Sparkles, Globe, Tag } from 'lucide-react';
+import { ExternalLink, Target, Search, Sparkles, Globe, Tag, HelpCircle, ChevronDown } from 'lucide-react';
+
+function PaaItem({ question, answer }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ borderRadius: 8, border: '1px solid rgba(255,255,255,0.07)', overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '11px 14px', background: open ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.02)',
+          border: 'none', color: 'var(--text-main)', cursor: 'pointer', textAlign: 'left', gap: 12,
+          fontSize: '0.87rem', fontWeight: 500, transition: 'background 0.15s',
+        }}
+      >
+        <span>{question}</span>
+        <ChevronDown size={14} style={{ flexShrink: 0, color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+      </button>
+      {open && (
+        <div style={{ padding: '10px 14px 13px', borderTop: '1px solid rgba(255,255,255,0.05)', fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.65 }}>
+          {answer}
+        </div>
+      )}
+    </div>
+  );
+}
 import ReactMarkdown from 'react-markdown';
 
 
@@ -264,6 +289,21 @@ export default function FsStealer() {
                   >
                     {kw}
                   </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* People Also Ask */}
+          {result.paa && result.paa.length > 0 && (
+            <div className="glass-panel">
+              <h3 className="flex items-center gap-2 mb-3" style={{ fontSize: '0.95rem' }}>
+                <HelpCircle size={16} /> People Also Ask
+                <span style={{ fontSize: '0.78rem', fontWeight: 400, color: 'var(--text-muted)' }}>— {result.paa.length} questions</span>
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {result.paa.map((item, i) => (
+                  <PaaItem key={i} question={item.question} answer={item.answer} />
                 ))}
               </div>
             </div>

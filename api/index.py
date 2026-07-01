@@ -590,7 +590,13 @@ Return ONLY a valid JSON object — no markdown, no explanation, no code fences.
     {{"title": "...", "link": "https://...", "snippet": "..."}},
     {{"title": "...", "link": "https://...", "snippet": "..."}}
   ],
-  "related_keywords": ["...", "...", "...", "...", "...", "..."]
+  "related_keywords": ["...", "...", "...", "...", "...", "..."],
+  "paa": [
+    {{"question": "...", "answer": "..."}},
+    {{"question": "...", "answer": "..."}},
+    {{"question": "...", "answer": "..."}},
+    {{"question": "...", "answer": "..."}}
+  ]
 }}
 
 Rules:
@@ -598,7 +604,8 @@ Rules:
 - The snippet should mirror a real Google meta-description / snippet for that URL.
 - For the keyword context ({loc_hint}), prefer results in the appropriate language.
 - related_keywords must be short (2-6 words each), realistic Google "related searches".
-- Return exactly 5 organic results and 6 related_keywords."""
+- paa must be 4 realistic "People Also Ask" questions with concise answers (2-4 sentences each) in the appropriate language.
+- Return exactly 5 organic results, 6 related_keywords, and 4 paa items."""
 
     try:
         raw = _gemini_generate(prompt)
@@ -1260,6 +1267,7 @@ Be ruthlessly specific — tie every recommendation to what {fs_holder["link"]} 
         "fs_holder": fs_holder,
         "organic": organic[:5],
         "related_keywords": related_keywords,
+        "paa": serp.get("paa", []),
         "analysis": analysis,
     }
 
