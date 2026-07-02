@@ -852,32 +852,51 @@ def internal_linking_analyze(req: InternalLinkingRequest):
         p = _urlparse(u)
         return (p.netloc + p.path).rstrip('/').lower().replace('www.', '')
 
-    summary = []
-    for d in all_data:
-        if d.get('error'):
-            summary.append({"url": d['source_url'], "status": f"Error: {d['error']}", "title": "N/A",
-                            "contextual_links": 0, "inter_links": 0, "word_count": 0})
-        else:
-            inter = [l for l in d.get('links', []) if any(t in l['url'] for t in req.urls if t != d['source_url'])]
-            summary.append({"url": d['source_url'], "status": "OK", "title": d.get('title', 'N/A'),
-                "contextual_links": d.get('internal_links_count', 0),
-                "inter_links": len(inter), "word_count": d.get('word_count', 0)})
-
+    # Build matrix with per-cell anchor data
     matrix = []
     for d_src in all_data:
         row = {"source": d_src['source_url'], "values": {}}
         if d_src.get('error'):
             for t in req.urls:
-                row["values"][t] = "N/A"
+                row["values"][t] = {"status": "error", "anchors": []}
         else:
             src_n = _norm(d_src['source_url'])
             for t in req.urls:
                 t_n = _norm(t)
                 if src_n == t_n:
-                    row["values"][t] = "Self"
+                    row["values"][t] = {"status": "self", "anchors": []}
                 else:
-                    row["values"][t] = "✅ Link" if any(_norm(l['url']) == t_n for l in d_src.get('links', [])) else "❌ No"
+                    matching = [l['anchor'] for l in d_src.get('links', []) if _norm(l['url']) == t_n]
+                    row["values"][t] = {"status": "link" if matching else "none", "anchors": matching[:10]}
         matrix.append(row)
+
+    # Compute inbound counts from matrix (avoids a second pass over all_data)
+    inbound = {u: 0 for u in req.urls}
+    for row in matrix:
+        for t, cell in row['values'].items():
+            if cell.get('status') == 'link':
+                inbound[t] = inbound.get(t, 0) + 1
+
+    # Build summary with outbound anchor details per inter-link
+    summary = []
+    for d in all_data:
+        if d.get('error'):
+            summary.append({
+                "url": d['source_url'], "status": f"Error: {d['error']}", "title": "N/A",
+                "contextual_links": 0, "inter_links": 0, "word_count": 0,
+                "inbound_count": 0, "outbound_anchors": []
+            })
+        else:
+            inter = [l for l in d.get('links', [])
+                     if any(_norm(l['url']) == _norm(t) for t in req.urls if t != d['source_url'])]
+            outbound_anchors = [{"to": l['url'], "anchor": l['anchor']} for l in inter[:20]]
+            summary.append({
+                "url": d['source_url'], "status": "OK", "title": d.get('title', 'N/A'),
+                "contextual_links": d.get('internal_links_count', 0),
+                "inter_links": len(inter), "word_count": d.get('word_count', 0),
+                "inbound_count": inbound.get(d['source_url'], 0),
+                "outbound_anchors": outbound_anchors
+            })
 
     analysis = _il_analyze(all_data, req.urls)
     return {"summary": summary, "matrix": matrix, "matrix_cols": req.urls, "analysis": analysis}
@@ -1696,6 +1715,112 @@ Be ruthlessly specific — tie every recommendation to what {fs_holder["link"]} 
         "related_keywords": related_keywords,
         "paa": serp.get("paa", []),
         "analysis": analysis,
+    }
+
+
+# --- SEO Data API proxy (indexation control) ---
+
+_SEO_DATA_BASE = "https://api.moveupx.ai/data/v1/seo"
+
+def _seo_get(path: str, params: dict = None):
+    key = os.getenv("SEO_DATA_API_KEY")
+    if not key:
+        raise HTTPException(status_code=500, detail="SEO_DATA_API_KEY not configured in environment")
+    resp = http_requests.get(
+        f"{_SEO_DATA_BASE}/{path}",
+        headers={"Authorization": f"Bearer {key}"},
+        params=params or {},
+        timeout=25,
+    )
+    if resp.status_code == 404:
+        return None
+    if not resp.ok:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = {"error": resp.text}
+        raise HTTPException(status_code=resp.status_code, detail=detail)
+    return resp.json()
+
+
+@app.get("/api/indexation/gsc-sites")
+def indexation_gsc_sites():
+    data = _seo_get("dims/gsc-sites")
+    return {"sites": data or []}
+
+
+@app.get("/api/indexation/gsc-dates")
+def indexation_gsc_dates():
+    data = _seo_get("gsc/dates")
+    if not data:
+        return {"dates": []}
+    settled = [d for d in data if (d.get("row_count") or 0) > 0]
+    return {"dates": settled}
+
+
+class IndexationRequest(BaseModel):
+    site_slug: str
+    date: Optional[str] = None
+    search_type: str = "web"
+    urls: Optional[List[str]] = None
+
+
+@app.post("/api/indexation/check")
+def indexation_check(req: IndexationRequest):
+    params: dict = {}
+    if req.date:
+        params["date"] = req.date
+    if req.search_type:
+        params["search_type"] = req.search_type
+
+    pages = _seo_get(f"gsc/{req.site_slug}/page", params) or []
+
+    sitemaps: list = []
+    try:
+        sm_params = {"date": req.date} if req.date else {}
+        sitemaps = _seo_get(f"gsc/{req.site_slug}/sitemaps", sm_params) or []
+    except Exception:
+        pass
+
+    def _norm(u: str) -> str:
+        from urllib.parse import urlparse as _up
+        p = _up(u.strip())
+        host = p.netloc.lower().replace("www.", "")
+        path = p.path.rstrip("/") or "/"
+        return host + path
+
+    indexed_map = {_norm(p["page"]): p for p in pages if p.get("page")}
+
+    url_results: list = []
+    if req.urls:
+        for u in req.urls:
+            if not u.strip():
+                continue
+            match = indexed_map.get(_norm(u))
+            url_results.append({
+                "url": u.strip(),
+                "in_gsc": match is not None,
+                "clicks": match["clicks"] if match else None,
+                "impressions": match["impressions"] if match else None,
+                "ctr": match["ctr"] if match else None,
+                "position": match["position"] if match else None,
+            })
+
+    pages_sorted = sorted(pages, key=lambda x: x.get("impressions") or 0, reverse=True)[:2000]
+
+    stats = {
+        "total_pages": len(pages),
+        "with_clicks": sum(1 for p in pages if (p.get("clicks") or 0) > 0),
+        "no_clicks": sum(1 for p in pages if (p.get("clicks") or 0) == 0),
+        "sitemap_count": len(sitemaps),
+        "report_date": pages[0]["report_date"] if pages else req.date,
+    }
+
+    return {
+        "stats": stats,
+        "pages": pages_sorted,
+        "sitemaps": sitemaps,
+        "url_results": url_results,
     }
 
 

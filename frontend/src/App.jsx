@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, LayoutDashboard, Link2, Search, Layers, LogOut, Settings, Target, BarChart2 } from 'lucide-react';
+import { Activity, LayoutDashboard, Link2, Search, Layers, LogOut, Settings, Target, BarChart2, Globe } from 'lucide-react';
 import moveupLogo from './assets/logo.png';
 import GscDashboard from './GscDashboard';
 import TechnicalAudit from './TechnicalAudit';
@@ -9,30 +9,33 @@ import UrlComparator from './UrlComparator';
 import InternalLinking from './InternalLinking';
 import SerpAnalyzer from './SerpAnalyzer';
 import FsStealer from './FsStealer';
+import IndexationControl from './IndexationControl';
 import './index.css';
 
 const navItems = [
-  { name: 'GSC Dashboard',      icon: <Activity size={18} /> },
-  { name: 'SEO Health',         icon: <BarChart2 size={18} /> },
-  { name: 'Technical Auditor',  icon: <Settings size={18} /> },
-  { name: 'On-Page Auditor',    icon: <Layers size={18} /> },
-  { name: 'URL Comparator',     icon: <Link2 size={18} /> },
-  { name: 'Internal Linking',   icon: <LayoutDashboard size={18} /> },
-  { name: 'SERP Analyzer',      icon: <Search size={18} /> },
-  { name: 'FS Stealer',         icon: <Target size={18} /> },
+  { name: 'GSC Dashboard',       icon: <Activity size={18} /> },
+  { name: 'SEO Health',          icon: <BarChart2 size={18} /> },
+  { name: 'Indexation Control',  icon: <Globe size={18} /> },
+  { name: 'Technical Auditor',   icon: <Settings size={18} /> },
+  { name: 'On-Page Auditor',     icon: <Layers size={18} /> },
+  { name: 'URL Comparator',      icon: <Link2 size={18} /> },
+  { name: 'Internal Linking',    icon: <LayoutDashboard size={18} /> },
+  { name: 'SERP Analyzer',       icon: <Search size={18} /> },
+  { name: 'FS Stealer',          icon: <Target size={18} /> },
 ];
 
 function renderPage(page) {
   switch (page) {
-    case 'GSC Dashboard':     return <GscDashboard />;
-    case 'SEO Health':        return <SeoHealth />;
-    case 'Technical Auditor': return <TechnicalAudit />;
-    case 'On-Page Auditor':   return <OnPageAudit />;
-    case 'URL Comparator':    return <UrlComparator />;
-    case 'Internal Linking':  return <InternalLinking />;
-    case 'SERP Analyzer':     return <SerpAnalyzer />;
-    case 'FS Stealer':        return <FsStealer />;
-    default:                  return null;
+    case 'GSC Dashboard':      return <GscDashboard />;
+    case 'SEO Health':         return <SeoHealth />;
+    case 'Indexation Control': return <IndexationControl />;
+    case 'Technical Auditor':  return <TechnicalAudit />;
+    case 'On-Page Auditor':    return <OnPageAudit />;
+    case 'URL Comparator':     return <UrlComparator />;
+    case 'Internal Linking':   return <InternalLinking />;
+    case 'SERP Analyzer':      return <SerpAnalyzer />;
+    case 'FS Stealer':         return <FsStealer />;
+    default:                   return null;
   }
 }
 
