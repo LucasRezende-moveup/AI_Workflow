@@ -1,10 +1,17 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pandas as pd
 from typing import List, Optional
 import os
 import io
+import json
+import uuid
+import time
+import bcrypt
+from jose import jwt, JWTError
+from datetime import datetime, timedelta, timezone
+import requests as _http
 
 # Credential bootstrap: reconstruct files from env vars on read-only filesystems (e.g. Vercel)
 def _bootstrap_credentials():
@@ -89,6 +96,210 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auth & User Management
+# ─────────────────────────────────────────────────────────────────────────────
+
+_JWT_SECRET  = os.getenv("JWT_SECRET", "CHANGE_ME_set_JWT_SECRET_env_var")
+_JWT_ALGO    = "HS256"
+_JWT_HOURS   = 24
+
+# In-memory cache so reads within the same warm instance are fast
+_users_cache: Optional[list] = None
+_users_cache_ts: float = 0.0
+_CACHE_TTL = 120  # seconds
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class UserCreate(BaseModel):
+    email: str
+    password: str
+    name: Optional[str] = None
+    role: str = "editor"
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    password: Optional[str] = None
+
+
+def _load_users() -> list:
+    global _users_cache, _users_cache_ts
+    now = time.time()
+    if _users_cache is None or (now - _users_cache_ts) > _CACHE_TTL:
+        raw = os.getenv("USERS_JSON", "[]")
+        try:
+            _users_cache = json.loads(raw)
+        except Exception:
+            _users_cache = []
+        _users_cache_ts = now
+    return list(_users_cache)
+
+
+def _persist_users(users: list) -> dict:
+    """Write users back to the USERS_JSON Vercel env var via REST API."""
+    global _users_cache, _users_cache_ts
+    _users_cache = users          # update in-memory immediately
+    _users_cache_ts = time.time()
+
+    token      = os.getenv("VERCEL_TOKEN")
+    project_id = os.getenv("VERCEL_PROJECT_ID", "prj_qYG4BB62fzbzP3iRhzFxewUxKxSD")
+    team_id    = os.getenv("VERCEL_TEAM_ID",    "team_5PPnZmu0JrbtGrxvP1RznhzF")
+
+    if not token:
+        return {"persisted": False, "reason": "VERCEL_TOKEN not configured"}
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    qs      = f"?teamId={team_id}"
+    list_url = f"https://api.vercel.com/v9/projects/{project_id}/env{qs}"
+
+    try:
+        resp   = _http.get(list_url, headers=headers, timeout=10)
+        envs   = resp.json().get("envs", [])
+        target = next((e for e in envs if e["key"] == "USERS_JSON"), None)
+        value  = json.dumps(users)
+
+        if target:
+            patch_url = f"https://api.vercel.com/v9/projects/{project_id}/env/{target['id']}{qs}"
+            r = _http.patch(patch_url, headers=headers,
+                            json={"value": value}, timeout=10)
+        else:
+            r = _http.post(list_url, headers=headers, json={
+                "key": "USERS_JSON", "value": value,
+                "type": "sensitive", "target": ["production", "preview", "development"]
+            }, timeout=10)
+
+        if r.status_code in (200, 201):
+            return {"persisted": True}
+        return {"persisted": False, "reason": f"Vercel API {r.status_code}: {r.text[:200]}"}
+    except Exception as exc:
+        return {"persisted": False, "reason": str(exc)}
+
+
+def _decode_token(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        return jwt.decode(authorization[7:], _JWT_SECRET, algorithms=[_JWT_ALGO])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def _require_super_admin(current_user=Depends(_decode_token)):
+    if current_user.get("role") != "super-admin":
+        raise HTTPException(status_code=403, detail="Super-admin access required")
+    return current_user
+
+
+# ── Auth endpoints ────────────────────────────────────────────────────────────
+
+@app.post("/api/auth/login")
+def auth_login(req: LoginRequest):
+    users = _load_users()
+    user  = next((u for u in users if u["email"].lower() == req.email.strip().lower()), None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    try:
+        match = bcrypt.checkpw(req.password.encode(), user["password_hash"].encode())
+    except Exception:
+        match = False
+    if not match:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    exp   = datetime.now(timezone.utc) + timedelta(hours=_JWT_HOURS)
+    token = jwt.encode(
+        {"sub": user["id"], "email": user["email"],
+         "name": user.get("name", ""), "role": user["role"],
+         "exp": exp},
+        _JWT_SECRET, algorithm=_JWT_ALGO
+    )
+    return {
+        "token": token,
+        "user":  {"id": user["id"], "email": user["email"],
+                  "name": user.get("name", ""), "role": user["role"]}
+    }
+
+
+@app.get("/api/auth/me")
+def auth_me(current_user=Depends(_decode_token)):
+    return current_user
+
+
+# ── User management endpoints (super-admin only) ──────────────────────────────
+
+@app.get("/api/users")
+def list_users(current_user=Depends(_require_super_admin)):
+    users = _load_users()
+    return [{"id": u["id"], "email": u["email"], "name": u.get("name", ""),
+             "role": u["role"], "created_at": u.get("created_at", "")}
+            for u in users]
+
+
+@app.post("/api/users")
+def create_user(req: UserCreate, current_user=Depends(_require_super_admin)):
+    users = _load_users()
+    if any(u["email"].lower() == req.email.strip().lower() for u in users):
+        raise HTTPException(status_code=409, detail="Email already exists")
+    if req.role not in ("super-admin", "editor"):
+        raise HTTPException(status_code=400, detail="Role must be super-admin or editor")
+
+    pw_hash  = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt(12)).decode()
+    new_user = {
+        "id":            str(uuid.uuid4()),
+        "email":         req.email.strip().lower(),
+        "name":          req.name or req.email.split("@")[0],
+        "role":          req.role,
+        "password_hash": pw_hash,
+        "created_at":    datetime.now(timezone.utc).isoformat(),
+    }
+    users.append(new_user)
+    result = _persist_users(users)
+    return {"user": {"id": new_user["id"], "email": new_user["email"],
+                     "name": new_user["name"], "role": new_user["role"]},
+            **result}
+
+
+@app.put("/api/users/{user_id}")
+def update_user(user_id: str, req: UserUpdate, current_user=Depends(_require_super_admin)):
+    users   = _load_users()
+    user    = next((u for u in users if u["id"] == user_id), None)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if req.role and req.role not in ("super-admin", "editor"):
+        raise HTTPException(status_code=400, detail="Role must be super-admin or editor")
+
+    if req.name     is not None: user["name"] = req.name
+    if req.role     is not None: user["role"] = req.role
+    if req.password is not None:
+        user["password_hash"] = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt(12)).decode()
+
+    result = _persist_users(users)
+    return {"user": {"id": user["id"], "email": user["email"],
+                     "name": user["name"], "role": user["role"]},
+            **result}
+
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: str, current_user=Depends(_require_super_admin)):
+    if user_id == current_user["sub"]:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    users   = _load_users()
+    updated = [u for u in users if u["id"] != user_id]
+    if len(updated) == len(users):
+        raise HTTPException(status_code=404, detail="User not found")
+    result = _persist_users(updated)
+    return {"deleted": True, **result}
+
+
+@app.get("/api/users/management-status")
+def management_status(current_user=Depends(_require_super_admin)):
+    has_token = bool(os.getenv("VERCEL_TOKEN"))
+    return {"vercel_token_configured": has_token,
+            "user_count": len(_load_users())}
+
 
 class SiteConfig(BaseModel):
     name: str
