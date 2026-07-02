@@ -196,17 +196,48 @@ function TrendBadge({ current, previous, trend }) {
   );
 }
 
-function MetricCard({ m }) {
+function MetricSparkline({ values, color }) {
+  const recent = (values || []).filter(v => v.ts >= Date.now() - SEVEN_DAYS_MS);
+  if (recent.length < 2) return null;
+
+  const H = 28;
+  const n = recent.length;
+  const vals = recent.map(v => v.value);
+  const minV = Math.min(...vals);
+  const maxV = Math.max(...vals);
+  const rangeV = maxV - minV || 1;
+
+  const xOf = i => ((i / (n - 1)) * 100).toFixed(1);
+  const yOf = v  => (2 + ((maxV - v) / rangeV) * (H - 4)).toFixed(1);
+
+  const pts  = recent.map((v, i) => [xOf(i), yOf(v.value)]);
+  const line = pts.map(([x, y]) => `${x},${y}`).join(' ');
+  const area = `M 0,${H} L ${pts.map(([x, y]) => `${x},${y}`).join(' L ')} L 100,${H} Z`;
+
+  return (
+    <svg
+      viewBox={`0 0 100 ${H}`}
+      preserveAspectRatio="none"
+      style={{ width: '100%', height: H, display: 'block', marginTop: 10 }}
+    >
+      <path d={area} fill={color} opacity={0.15} vectorEffect="non-scaling-stroke" />
+      <polyline points={line} fill="none" stroke={color} strokeWidth="1.5"
+        strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      {/* endpoint dot — fixed apparent size via non-scaling-stroke trick on a degenerate line */}
+      <circle cx={pts[n-1][0]} cy={pts[n-1][1]} r="1" fill={color}
+        stroke={color} strokeWidth="3" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+function MetricCard({ m, sparkValues }) {
   const color = CAT_COLOR[m.category] || CAT_COLOR.other;
   return (
-    <div className="glass-panel" style={{ padding: '16px 18px', borderTop: `3px solid ${color}` }}>
-      <div style={{ fontSize: '0.68rem', color, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>
-        {m.category}
-      </div>
-      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 4, lineHeight: 1.2 }}>
+    <div className="glass-panel" style={{ padding: '14px 16px', borderTop: `3px solid ${color}` }}>
+      <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.6)', marginBottom: 4, lineHeight: 1.2 }}>
         {m.name}
       </div>
-      <div style={{ fontSize: '2.1rem', fontWeight: 800, color: 'white', lineHeight: 1, marginBottom: 8 }}>
+      <div style={{ fontSize: '2rem', fontWeight: 800, color: 'white', lineHeight: 1, marginBottom: 7 }}>
         {fmt(m.current, m.unit)}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -215,6 +246,7 @@ function MetricCard({ m }) {
           <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>prev {fmt(m.previous, m.unit)}</span>
         )}
       </div>
+      <MetricSparkline values={sparkValues} color={color} />
     </div>
   );
 }
@@ -266,6 +298,16 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
   const label     = cached?.data?.score_label || '';
   const breakdown = cached?.data?.score_breakdown || [];
   const history   = cached?.history || [];
+
+  // Build per-metric value arrays from the daily history snapshots
+  const metricHistories = {};
+  history.forEach(h => {
+    if (!h.metrics) return;
+    Object.entries(h.metrics).forEach(([name, value]) => {
+      if (!metricHistories[name]) metricHistories[name] = [];
+      metricHistories[name].push({ ts: h.ts, value });
+    });
+  });
   const ts        = cached?.ts
     ? new Date(cached.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null;
@@ -389,7 +431,9 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
                     {cat}
                   </div>
                   <div className="grid grid-cols-4 gap-3">
-                    {grouped[cat].map((m, i) => <MetricCard key={i} m={m} />)}
+                    {grouped[cat].map((m, i) => (
+                      <MetricCard key={i} m={m} sparkValues={metricHistories[m.name] || []} />
+                    ))}
                   </div>
                 </div>
               ))}
@@ -447,10 +491,16 @@ export default function SeoHealth() {
           const prevHistory  = prev[site.id]?.history || [];
           const todayStr     = new Date().toDateString();
 
-          // One snapshot per calendar day — replace today's entry if it exists
+          // Snapshot metric values keyed by name
+          const metricsSnapshot = {};
+          (data.metrics || []).forEach(m => {
+            if (m.name && m.current != null) metricsSnapshot[m.name] = m.current;
+          });
+
+          // One entry per calendar day — replace today's if it exists
           const withoutToday = prevHistory.filter(h => new Date(h.ts).toDateString() !== todayStr);
           const newHistory   = (data.score != null)
-            ? [...withoutToday, { ts: Date.now(), score: data.score }].slice(-30)
+            ? [...withoutToday, { ts: Date.now(), score: data.score, metrics: metricsSnapshot }].slice(-30)
             : prevHistory;
 
           return { ...prev, [site.id]: { data, ts: Date.now(), history: newHistory } };
