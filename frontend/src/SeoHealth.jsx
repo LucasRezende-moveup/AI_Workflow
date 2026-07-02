@@ -14,6 +14,10 @@ const CAT_COLOR = {
 
 const CAT_ORDER = ['traffic', 'rankings', 'backlinks', 'technical', 'conversions', 'other'];
 
+function scoreColor(s) {
+  return s >= 90 ? '#4ade80' : s >= 75 ? '#a3e635' : s >= 55 ? '#f59e0b' : '#f87171';
+}
+
 function fmt(val, unit) {
   if (val === null || val === undefined) return '—';
   const n = Number(val);
@@ -61,9 +65,7 @@ function MetricCard({ m }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <TrendBadge current={m.current} previous={m.previous} trend={m.trend} />
         {m.previous !== null && m.previous !== undefined && (
-          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-            prev {fmt(m.previous, m.unit)}
-          </span>
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>prev {fmt(m.previous, m.unit)}</span>
         )}
       </div>
     </div>
@@ -71,7 +73,7 @@ function MetricCard({ m }) {
 }
 
 function HealthGauge({ score, label }) {
-  const color = score >= 90 ? '#4ade80' : score >= 75 ? '#a3e635' : score >= 55 ? '#f59e0b' : '#f87171';
+  const color = scoreColor(score);
   const r = 30;
   const circ = 2 * Math.PI * r;
   const offset = circ - (score / 100) * circ;
@@ -83,12 +85,149 @@ function HealthGauge({ score, label }) {
           strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
           style={{ transition: 'stroke-dashoffset 0.6s ease' }} />
       </svg>
-      <div style={{
-        position: 'absolute', inset: 0,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      }}>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <span style={{ fontSize: '1.35rem', fontWeight: 800, color, lineHeight: 1 }}>{score}</span>
         <span style={{ fontSize: '0.52rem', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 2 }}>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function ScoreSparkline({ history }) {
+  if (!history?.length) return null;
+
+  const W = 160, H = 68;
+  const padT = 10, padB = 18, padL = 6, padR = 6;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const scores = history.map(h => h.score);
+  const n = scores.length;
+
+  const minS = Math.max(0,   Math.min(...scores) - 10);
+  const maxS = Math.min(100, Math.max(...scores) + 10);
+  const rangeS = maxS - minS || 1;
+
+  const xOf = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const yOf = (s)  => padT + ((maxS - s) / rangeS) * plotH;
+
+  const pts = scores.map((s, i) => ({ x: xOf(i), y: yOf(s), s, ts: history[i].ts }));
+  const last = pts[n - 1];
+  const first = pts[0];
+  const color = scoreColor(last.s);
+
+  const polyline = pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+
+  const areaPath = [
+    `M ${first.x.toFixed(1)},${(padT + plotH).toFixed(1)}`,
+    ...pts.map(p => `L ${p.x.toFixed(1)},${p.y.toFixed(1)}`),
+    `L ${last.x.toFixed(1)},${(padT + plotH).toFixed(1)}`,
+    'Z',
+  ].join(' ');
+
+  const fmtDate = (ts) => {
+    const d = new Date(ts);
+    return `${d.getDate()}/${d.getMonth() + 1}`;
+  };
+
+  // Delta badge
+  const delta = n >= 2 ? last.s - first.s : null;
+  const deltaColor = delta === null ? null : delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : '#94a3b8';
+
+  // Threshold reference lines to draw (only if in visible range)
+  const thresholds = [90, 75, 55].filter(t => t > minS && t < maxS);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignSelf: 'flex-start' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Score trend
+        </span>
+        {delta !== null && (
+          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: deltaColor }}>
+            {delta > 0 ? '+' : ''}{delta}
+          </span>
+        )}
+      </div>
+      <svg width={W} height={H} style={{ overflow: 'visible' }}>
+        {/* Threshold gridlines */}
+        {thresholds.map(t => (
+          <line key={t}
+            x1={padL} y1={yOf(t)} x2={W - padR} y2={yOf(t)}
+            stroke="rgba(255,255,255,0.06)" strokeDasharray="3,3"
+          />
+        ))}
+
+        {/* Area fill */}
+        <path d={areaPath} fill={color} opacity={0.1} />
+
+        {/* Line */}
+        {n > 1 && (
+          <polyline
+            points={polyline}
+            fill="none"
+            stroke={color}
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
+
+        {/* Dots */}
+        {pts.map((p, i) => {
+          const isLast = i === n - 1;
+          return (
+            <circle key={i}
+              cx={p.x} cy={p.y}
+              r={isLast ? 3.5 : 2}
+              fill={isLast ? color : `${color}80`}
+              stroke={isLast ? 'rgba(10,10,20,0.6)' : 'none'}
+              strokeWidth="1.5"
+            />
+          );
+        })}
+
+        {/* Score label above last point */}
+        <text
+          x={last.x} y={last.y - 6}
+          fontSize="9" fontWeight="700"
+          fill={color}
+          textAnchor={last.x > W * 0.75 ? 'end' : last.x < W * 0.25 ? 'start' : 'middle'}
+        >
+          {last.s}
+        </text>
+
+        {/* Score label above first point (only if far enough from last) */}
+        {n > 1 && Math.abs(last.x - first.x) > 28 && (
+          <text
+            x={first.x} y={first.y - 6}
+            fontSize="9"
+            fill="rgba(255,255,255,0.35)"
+            textAnchor={first.x < W * 0.25 ? 'start' : 'middle'}
+          >
+            {first.s}
+          </text>
+        )}
+
+        {/* Date labels at bottom */}
+        {n > 1 && (
+          <>
+            <text x={first.x} y={H} fontSize="8" fill="rgba(255,255,255,0.25)" textAnchor={first.x < W * 0.25 ? 'start' : 'middle'}>
+              {fmtDate(first.ts)}
+            </text>
+            <text x={last.x} y={H} fontSize="8" fill="rgba(255,255,255,0.4)" textAnchor={last.x > W * 0.75 ? 'end' : 'middle'}>
+              {fmtDate(last.ts)}
+            </text>
+          </>
+        )}
+        {n === 1 && (
+          <text x={last.x} y={H} fontSize="8" fill="rgba(255,255,255,0.25)" textAnchor="middle">
+            {fmtDate(last.ts)}
+          </text>
+        )}
+      </svg>
+      <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.2)', textAlign: 'center' }}>
+        {n} {n === 1 ? 'snapshot' : 'snapshots'}
       </div>
     </div>
   );
@@ -112,10 +251,13 @@ function ScoreBreakdown({ breakdown }) {
 function SiteCard({ site, cached, isLoading, err, onRefresh }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const metrics = cached?.data?.metrics || [];
-  const score   = cached?.data?.score;
-  const label   = cached?.data?.score_label || '';
+
+  const metrics   = cached?.data?.metrics || [];
+  const score     = cached?.data?.score;
+  const label     = cached?.data?.score_label || '';
   const breakdown = cached?.data?.score_breakdown || [];
+  const history   = cached?.history || [];
+
   const ts = cached?.ts
     ? new Date(cached.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null;
@@ -130,9 +272,13 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
   return (
     <div className="glass-panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, gap: 16 }}>
+
+        {/* Left: gauge + sparkline + info */}
         <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flex: 1, minWidth: 0 }}>
+
+          {/* Gauge */}
           {score !== undefined && score !== null && (
-            <div>
+            <div style={{ flexShrink: 0 }}>
               <HealthGauge score={score} label={label} />
               {breakdown.length > 0 && (
                 <button
@@ -144,6 +290,19 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
               )}
             </div>
           )}
+
+          {/* Sparkline — only when data loaded */}
+          {history.length > 0 && score !== undefined && score !== null && (
+            <div style={{
+              flexShrink: 0, padding: '6px 10px', borderRadius: 8,
+              background: 'rgba(255,255,255,0.025)',
+              border: '1px solid rgba(255,255,255,0.06)',
+            }}>
+              <ScoreSparkline history={history} />
+            </div>
+          )}
+
+          {/* Site name + metadata */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <h3 style={{ marginBottom: 3, fontSize: '1.1rem' }}>{site.name}</h3>
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -155,6 +314,8 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
             {showBreakdown && <ScoreBreakdown breakdown={breakdown} />}
           </div>
         </div>
+
+        {/* Refresh button */}
         <button
           onClick={() => onRefresh(site)}
           disabled={isLoading}
@@ -226,14 +387,14 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
 }
 
 export default function SeoHealth() {
-  const [sites, setSites]       = useState([]);
+  const [sites, setSites]             = useState([]);
   const [sitesLoading, setSitesLoading] = useState(true);
-  const [sitesError, setSitesError]     = useState(null);
-  const [cache, setCache]       = useState(() => {
+  const [sitesError, setSitesError]   = useState(null);
+  const [cache, setCache]             = useState(() => {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || {}; } catch { return {}; }
   });
-  const [loading, setLoading]   = useState({});
-  const [errors, setErrors]     = useState({});
+  const [loading, setLoading] = useState({});
+  const [errors, setErrors]   = useState({});
 
   useEffect(() => {
     fetch('/api/sheets/sites')
@@ -259,7 +420,16 @@ export default function SeoHealth() {
       if (!res.ok) {
         setErrors(prev => ({ ...prev, [site.id]: data.detail || 'Failed to load data' }));
       } else {
-        setCache(prev => ({ ...prev, [site.id]: { data, ts: Date.now() } }));
+        setCache(prev => {
+          const prevHistory = prev[site.id]?.history || [];
+          const newPoint = (data.score !== null && data.score !== undefined)
+            ? { ts: Date.now(), score: data.score }
+            : null;
+          const newHistory = newPoint
+            ? [...prevHistory, newPoint].slice(-30)
+            : prevHistory;
+          return { ...prev, [site.id]: { data, ts: Date.now(), history: newHistory } };
+        });
       }
     } catch (e) {
       setErrors(prev => ({ ...prev, [site.id]: 'Network error: ' + e.message }));
