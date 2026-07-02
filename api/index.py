@@ -1824,6 +1824,113 @@ def indexation_check(req: IndexationRequest):
     }
 
 
+class SitemapCheckRequest(BaseModel):
+    site_slug: str
+    date: Optional[str] = None
+    search_type: str = "web"
+    sitemap_url: str
+
+
+@app.post("/api/indexation/sitemap-check")
+def indexation_sitemap_check(req: SitemapCheckRequest):
+    import xml.etree.ElementTree as ET
+    from urllib.parse import urlparse as _up
+
+    _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; MoveupSEOBot/1.0)"}
+
+    def _fetch_xml(url: str, timeout: int = 15):
+        try:
+            r = http_requests.get(url, timeout=timeout, headers=_HEADERS)
+            r.raise_for_status()
+            return ET.fromstring(r.content)
+        except ET.ParseError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid XML in {url}: {exc}")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Could not fetch {url}: {exc}")
+
+    def _extract_locs(root):
+        return [
+            el.text.strip()
+            for el in root.iter()
+            if (el.tag.endswith("}loc") or el.tag == "loc") and el.text and el.text.strip()
+        ]
+
+    def _is_sitemap_index(root):
+        return any(el.tag.endswith("}sitemap") or el.tag == "sitemap" for el in root)
+
+    root = _fetch_xml(req.sitemap_url, timeout=20)
+
+    loc_urls: list = []
+    child_sitemaps: list = []
+
+    if _is_sitemap_index(root):
+        for el in root.iter():
+            if el.tag.endswith("}sitemap") or el.tag == "sitemap":
+                for child in el:
+                    if (child.tag.endswith("}loc") or child.tag == "loc") and child.text and child.text.strip():
+                        child_sitemaps.append(child.text.strip())
+        for child_url in child_sitemaps[:20]:
+            try:
+                child_root = _fetch_xml(child_url, timeout=12)
+                loc_urls.extend(_extract_locs(child_root))
+            except Exception:
+                pass
+    else:
+        loc_urls = _extract_locs(root)
+
+    seen: set = set()
+    unique_urls: list = []
+    for u in loc_urls:
+        if u not in seen:
+            seen.add(u)
+            unique_urls.append(u)
+
+    if not unique_urls:
+        raise HTTPException(status_code=400, detail="No URLs found in sitemap")
+
+    params: dict = {}
+    if req.date:
+        params["date"] = req.date
+    if req.search_type:
+        params["search_type"] = req.search_type
+
+    pages = _seo_get(f"gsc/{req.site_slug}/page", params) or []
+
+    def _norm(u: str) -> str:
+        p = _up(u.strip())
+        host = p.netloc.lower().replace("www.", "")
+        path = p.path.rstrip("/") or "/"
+        return host + path
+
+    indexed_map = {_norm(p["page"]): p for p in pages if p.get("page")}
+
+    url_results: list = []
+    for u in unique_urls[:10000]:
+        match = indexed_map.get(_norm(u))
+        url_results.append({
+            "url": u,
+            "in_gsc": match is not None,
+            "clicks":      match["clicks"]      if match else None,
+            "impressions": match["impressions"]  if match else None,
+            "ctr":         match["ctr"]          if match else None,
+            "position":    match["position"]     if match else None,
+        })
+
+    total   = len(url_results)
+    indexed = sum(1 for r in url_results if r["in_gsc"])
+
+    return {
+        "sitemap_url":       req.sitemap_url,
+        "child_sitemaps":    child_sitemaps,
+        "total_urls":        total,
+        "indexed_count":     indexed,
+        "not_indexed_count": total - indexed,
+        "coverage_pct":      round(indexed / total * 100, 1) if total > 0 else 0,
+        "report_date":       pages[0]["report_date"] if pages else req.date,
+        "url_results":       url_results,
+    }
+
+
 # --- Vercel serverless handler (only active when mangum is installed) ---
 try:
     from mangum import Mangum
