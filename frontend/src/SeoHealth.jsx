@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { BarChart2, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, Settings } from 'lucide-react';
 
-const CACHE_KEY = 'seo_health_cache';
+const CACHE_KEY      = 'seo_health_cache';
+const STALE_MS       = 24 * 60 * 60 * 1000; // 24 h
+const SEVEN_DAYS_MS  = 7  * 24 * 60 * 60 * 1000;
 
 const CAT_COLOR = {
   traffic:     '#00f2fe',
@@ -30,9 +32,154 @@ function fmt(val, unit) {
   return n.toLocaleString();
 }
 
+function dayLabel(ts) {
+  const d    = new Date(ts);
+  const now  = new Date();
+  const diff = Math.floor((now - d) / 86_400_000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yest.';
+  return d.toLocaleDateString('en-US', { weekday: 'short' });
+}
+
+// ── Sparkline ─────────────────────────────────────────────────────────────────
+
+function ScoreSparkline({ history }) {
+  const recent = (history || []).filter(h => h.ts >= Date.now() - SEVEN_DAYS_MS);
+  if (!recent.length) return null;
+
+  const W = 168, H = 72;
+  const padT = 12, padB = 20, padL = 6, padR = 6;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const n      = recent.length;
+  const scores = recent.map(h => h.score);
+
+  const minS   = Math.max(0,   Math.min(...scores) - 10);
+  const maxS   = Math.min(100, Math.max(...scores) + 10);
+  const rangeS = maxS - minS || 1;
+
+  const xOf = i => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const yOf = s => padT + ((maxS - s) / rangeS) * plotH;
+
+  const pts   = recent.map((h, i) => ({ x: xOf(i), y: yOf(h.score), s: h.score, ts: h.ts }));
+  const last  = pts[n - 1];
+  const first = pts[0];
+  const color = scoreColor(last.s);
+
+  const line = pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+
+  const area = [
+    `M ${first.x.toFixed(1)},${(padT + plotH).toFixed(1)}`,
+    ...pts.map(p => `L ${p.x.toFixed(1)},${p.y.toFixed(1)}`),
+    `L ${last.x.toFixed(1)},${(padT + plotH).toFixed(1)}`,
+    'Z',
+  ].join(' ');
+
+  const delta     = n >= 2 ? last.s - first.s : null;
+  const deltaClr  = delta === null ? null : delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : '#94a3b8';
+  const thresholds = [90, 75, 55].filter(t => t > minS && t < maxS);
+
+  // Which pts get a bottom day label (first, last, plus mid if ≥ 4 pts)
+  const labeled = new Set([0, n - 1]);
+  if (n >= 4) labeled.add(Math.floor(n / 2));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignSelf: 'flex-start' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Last 7 days
+        </span>
+        {delta !== null && (
+          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: deltaClr }}>
+            {delta > 0 ? '+' : ''}{delta}
+          </span>
+        )}
+      </div>
+
+      <svg width={W} height={H} style={{ overflow: 'visible' }}>
+        {/* threshold gridlines */}
+        {thresholds.map(t => (
+          <line key={t}
+            x1={padL} y1={yOf(t).toFixed(1)}
+            x2={W - padR} y2={yOf(t).toFixed(1)}
+            stroke="rgba(255,255,255,0.06)" strokeDasharray="3,3"
+          />
+        ))}
+
+        {/* area */}
+        <path d={area} fill={color} opacity={0.1} />
+
+        {/* line */}
+        {n > 1 && (
+          <polyline points={line} fill="none"
+            stroke={color} strokeWidth="1.75"
+            strokeLinecap="round" strokeLinejoin="round" />
+        )}
+
+        {/* dots */}
+        {pts.map((p, i) => {
+          const isLast = i === n - 1;
+          return (
+            <circle key={i} cx={p.x.toFixed(1)} cy={p.y.toFixed(1)}
+              r={isLast ? 3.5 : 2}
+              fill={isLast ? color : `${color}80`}
+              stroke={isLast ? 'rgba(10,10,20,0.6)' : 'none'}
+              strokeWidth="1.5"
+            />
+          );
+        })}
+
+        {/* score label above last dot */}
+        <text
+          x={last.x.toFixed(1)} y={(last.y - 6).toFixed(1)}
+          fontSize="9" fontWeight="700" fill={color}
+          textAnchor={last.x > W * 0.75 ? 'end' : last.x < W * 0.25 ? 'start' : 'middle'}
+        >
+          {last.s}
+        </text>
+
+        {/* score label above first dot (only if spread > 24px) */}
+        {n > 1 && Math.abs(last.x - first.x) > 24 && (
+          <text
+            x={first.x.toFixed(1)} y={(first.y - 6).toFixed(1)}
+            fontSize="9" fill="rgba(255,255,255,0.3)"
+            textAnchor={first.x < W * 0.25 ? 'start' : 'middle'}
+          >
+            {first.s}
+          </text>
+        )}
+
+        {/* day labels at bottom */}
+        {pts.map((p, i) => {
+          if (!labeled.has(i)) return null;
+          const anchor = p.x < W * 0.2 ? 'start' : p.x > W * 0.8 ? 'end' : 'middle';
+          const isLast = i === n - 1;
+          return (
+            <text key={i}
+              x={p.x.toFixed(1)} y={H}
+              fontSize="8"
+              fill={isLast ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'}
+              textAnchor={anchor}
+            >
+              {dayLabel(p.ts)}
+            </text>
+          );
+        })}
+      </svg>
+
+      <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.2)', textAlign: 'center' }}>
+        {n} {n === 1 ? 'snapshot' : 'snapshots'}
+      </div>
+    </div>
+  );
+}
+
+// ── Other components (unchanged) ──────────────────────────────────────────────
+
 function TrendBadge({ current, previous, trend }) {
-  if (!trend || trend === 'neutral' || previous === null || previous === undefined) return null;
-  const up = trend === 'up';
+  if (!trend || trend === 'neutral' || previous == null) return null;
+  const up  = trend === 'up';
   const pct = (typeof current === 'number' && typeof previous === 'number' && previous !== 0)
     ? Math.abs(((current - previous) / previous) * 100).toFixed(1)
     : null;
@@ -64,7 +211,7 @@ function MetricCard({ m }) {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <TrendBadge current={m.current} previous={m.previous} trend={m.trend} />
-        {m.previous !== null && m.previous !== undefined && (
+        {m.previous != null && (
           <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>prev {fmt(m.previous, m.unit)}</span>
         )}
       </div>
@@ -73,9 +220,9 @@ function MetricCard({ m }) {
 }
 
 function HealthGauge({ score, label }) {
-  const color = scoreColor(score);
-  const r = 30;
-  const circ = 2 * Math.PI * r;
+  const color  = scoreColor(score);
+  const r      = 30;
+  const circ   = 2 * Math.PI * r;
   const offset = circ - (score / 100) * circ;
   return (
     <div style={{ position: 'relative', width: 80, height: 80, flexShrink: 0 }}>
@@ -93,151 +240,13 @@ function HealthGauge({ score, label }) {
   );
 }
 
-function ScoreSparkline({ history }) {
-  if (!history?.length) return null;
-
-  const W = 160, H = 68;
-  const padT = 10, padB = 18, padL = 6, padR = 6;
-  const plotW = W - padL - padR;
-  const plotH = H - padT - padB;
-
-  const scores = history.map(h => h.score);
-  const n = scores.length;
-
-  const minS = Math.max(0,   Math.min(...scores) - 10);
-  const maxS = Math.min(100, Math.max(...scores) + 10);
-  const rangeS = maxS - minS || 1;
-
-  const xOf = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-  const yOf = (s)  => padT + ((maxS - s) / rangeS) * plotH;
-
-  const pts = scores.map((s, i) => ({ x: xOf(i), y: yOf(s), s, ts: history[i].ts }));
-  const last = pts[n - 1];
-  const first = pts[0];
-  const color = scoreColor(last.s);
-
-  const polyline = pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-
-  const areaPath = [
-    `M ${first.x.toFixed(1)},${(padT + plotH).toFixed(1)}`,
-    ...pts.map(p => `L ${p.x.toFixed(1)},${p.y.toFixed(1)}`),
-    `L ${last.x.toFixed(1)},${(padT + plotH).toFixed(1)}`,
-    'Z',
-  ].join(' ');
-
-  const fmtDate = (ts) => {
-    const d = new Date(ts);
-    return `${d.getDate()}/${d.getMonth() + 1}`;
-  };
-
-  // Delta badge
-  const delta = n >= 2 ? last.s - first.s : null;
-  const deltaColor = delta === null ? null : delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : '#94a3b8';
-
-  // Threshold reference lines to draw (only if in visible range)
-  const thresholds = [90, 75, 55].filter(t => t > minS && t < maxS);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignSelf: 'flex-start' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Score trend
-        </span>
-        {delta !== null && (
-          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: deltaColor }}>
-            {delta > 0 ? '+' : ''}{delta}
-          </span>
-        )}
-      </div>
-      <svg width={W} height={H} style={{ overflow: 'visible' }}>
-        {/* Threshold gridlines */}
-        {thresholds.map(t => (
-          <line key={t}
-            x1={padL} y1={yOf(t)} x2={W - padR} y2={yOf(t)}
-            stroke="rgba(255,255,255,0.06)" strokeDasharray="3,3"
-          />
-        ))}
-
-        {/* Area fill */}
-        <path d={areaPath} fill={color} opacity={0.1} />
-
-        {/* Line */}
-        {n > 1 && (
-          <polyline
-            points={polyline}
-            fill="none"
-            stroke={color}
-            strokeWidth="1.75"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        )}
-
-        {/* Dots */}
-        {pts.map((p, i) => {
-          const isLast = i === n - 1;
-          return (
-            <circle key={i}
-              cx={p.x} cy={p.y}
-              r={isLast ? 3.5 : 2}
-              fill={isLast ? color : `${color}80`}
-              stroke={isLast ? 'rgba(10,10,20,0.6)' : 'none'}
-              strokeWidth="1.5"
-            />
-          );
-        })}
-
-        {/* Score label above last point */}
-        <text
-          x={last.x} y={last.y - 6}
-          fontSize="9" fontWeight="700"
-          fill={color}
-          textAnchor={last.x > W * 0.75 ? 'end' : last.x < W * 0.25 ? 'start' : 'middle'}
-        >
-          {last.s}
-        </text>
-
-        {/* Score label above first point (only if far enough from last) */}
-        {n > 1 && Math.abs(last.x - first.x) > 28 && (
-          <text
-            x={first.x} y={first.y - 6}
-            fontSize="9"
-            fill="rgba(255,255,255,0.35)"
-            textAnchor={first.x < W * 0.25 ? 'start' : 'middle'}
-          >
-            {first.s}
-          </text>
-        )}
-
-        {/* Date labels at bottom */}
-        {n > 1 && (
-          <>
-            <text x={first.x} y={H} fontSize="8" fill="rgba(255,255,255,0.25)" textAnchor={first.x < W * 0.25 ? 'start' : 'middle'}>
-              {fmtDate(first.ts)}
-            </text>
-            <text x={last.x} y={H} fontSize="8" fill="rgba(255,255,255,0.4)" textAnchor={last.x > W * 0.75 ? 'end' : 'middle'}>
-              {fmtDate(last.ts)}
-            </text>
-          </>
-        )}
-        {n === 1 && (
-          <text x={last.x} y={H} fontSize="8" fill="rgba(255,255,255,0.25)" textAnchor="middle">
-            {fmtDate(last.ts)}
-          </text>
-        )}
-      </svg>
-      <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.2)', textAlign: 'center' }}>
-        {n} {n === 1 ? 'snapshot' : 'snapshots'}
-      </div>
-    </div>
-  );
-}
-
 function ScoreBreakdown({ breakdown }) {
   if (!breakdown?.length) return null;
   return (
     <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Score Deductions</div>
+      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>
+        Score Deductions
+      </div>
       {breakdown.map((b, i) => (
         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem' }}>
           <span style={{ color: 'rgba(255,255,255,0.75)' }}>{b.issue}</span>
@@ -250,15 +259,14 @@ function ScoreBreakdown({ breakdown }) {
 
 function SiteCard({ site, cached, isLoading, err, onRefresh }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded]           = useState(false);
 
   const metrics   = cached?.data?.metrics || [];
   const score     = cached?.data?.score;
   const label     = cached?.data?.score_label || '';
   const breakdown = cached?.data?.score_breakdown || [];
   const history   = cached?.history || [];
-
-  const ts = cached?.ts
+  const ts        = cached?.ts
     ? new Date(cached.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null;
 
@@ -271,13 +279,14 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
 
   return (
     <div className="glass-panel">
+      {/* Header row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, gap: 16 }}>
 
-        {/* Left: gauge + sparkline + info */}
+        {/* Gauge + sparkline + site info */}
         <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flex: 1, minWidth: 0 }}>
 
           {/* Gauge */}
-          {score !== undefined && score !== null && (
+          {score != null && (
             <div style={{ flexShrink: 0 }}>
               <HealthGauge score={score} label={label} />
               {breakdown.length > 0 && (
@@ -291,8 +300,8 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
             </div>
           )}
 
-          {/* Sparkline — only when data loaded */}
-          {history.length > 0 && score !== undefined && score !== null && (
+          {/* Sparkline */}
+          {history.length > 0 && score != null && (
             <div style={{
               flexShrink: 0, padding: '6px 10px', borderRadius: 8,
               background: 'rgba(255,255,255,0.025)',
@@ -302,11 +311,12 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
             </div>
           )}
 
-          {/* Site name + metadata */}
+          {/* Name + metadata */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <h3 style={{ marginBottom: 3, fontSize: '1.1rem' }}>{site.name}</h3>
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {ts && <span>Updated {ts}</span>}
+              {isLoading && <span style={{ color: 'var(--primary)' }}>Updating…</span>}
+              {!isLoading && ts && <span>Updated {ts}</span>}
               {cached?.data?.sheets_read?.length > 0 && (
                 <span>Sheets: {cached.data.sheets_read.join(', ')}</span>
               )}
@@ -328,10 +338,11 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
         >
           {isLoading
             ? <><div className="loader" style={{ width: 13, height: 13, borderWidth: 2 }} /> Loading…</>
-            : <><RefreshCw size={13} /> {cached ? 'Refresh' : 'Load Data'}</>}
+            : <><RefreshCw size={13} /> Refresh</>}
         </button>
       </div>
 
+      {/* Error */}
       {err && (
         <div style={{
           padding: '10px 14px', borderRadius: 8, marginBottom: 14,
@@ -342,12 +353,16 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
         </div>
       )}
 
-      {!cached && !isLoading && !err && (
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '4px 0' }}>
-          Click <strong style={{ color: 'white' }}>Load Data</strong> to pull KPIs from this sheet.
-        </p>
+      {/* First-load skeleton */}
+      {!cached && isLoading && (
+        <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+          {[1, 2, 3, 4].map(i => (
+            <div key={i} style={{ flex: 1, height: 72, borderRadius: 8, background: 'rgba(255,255,255,0.04)', animation: 'pulse 1.5s ease-in-out infinite' }} />
+          ))}
+        </div>
       )}
 
+      {/* Metrics accordion */}
       {metrics.length > 0 && (
         <>
           <button
@@ -386,16 +401,27 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
   );
 }
 
+// ── Main page ─────────────────────────────────────────────────────────────────
+
 export default function SeoHealth() {
-  const [sites, setSites]             = useState([]);
+  const [sites, setSites]               = useState([]);
   const [sitesLoading, setSitesLoading] = useState(true);
-  const [sitesError, setSitesError]   = useState(null);
-  const [cache, setCache]             = useState(() => {
+  const [sitesError, setSitesError]     = useState(null);
+  const [cache, setCache]               = useState(() => {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || {}; } catch { return {}; }
   });
   const [loading, setLoading] = useState({});
   const [errors, setErrors]   = useState({});
 
+  // Keep a stable ref to cache so the auto-load effect doesn't re-run when cache updates
+  const cacheRef = useRef(cache);
+  useEffect(() => { cacheRef.current = cache; }, [cache]);
+
+  useEffect(() => {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  }, [cache]);
+
+  // ── fetch site list ────────────────────────────────────────────────────────
   useEffect(() => {
     fetch('/api/sheets/sites')
       .then(r => r.json())
@@ -403,10 +429,7 @@ export default function SeoHealth() {
       .catch(e => { setSitesError(e.message); setSitesLoading(false); });
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
-  }, [cache]);
-
+  // ── refresh helper ─────────────────────────────────────────────────────────
   const refresh = async (site) => {
     setLoading(prev => ({ ...prev, [site.id]: true }));
     setErrors(prev => ({ ...prev, [site.id]: null }));
@@ -421,13 +444,15 @@ export default function SeoHealth() {
         setErrors(prev => ({ ...prev, [site.id]: data.detail || 'Failed to load data' }));
       } else {
         setCache(prev => {
-          const prevHistory = prev[site.id]?.history || [];
-          const newPoint = (data.score !== null && data.score !== undefined)
-            ? { ts: Date.now(), score: data.score }
-            : null;
-          const newHistory = newPoint
-            ? [...prevHistory, newPoint].slice(-30)
+          const prevHistory  = prev[site.id]?.history || [];
+          const todayStr     = new Date().toDateString();
+
+          // One snapshot per calendar day — replace today's entry if it exists
+          const withoutToday = prevHistory.filter(h => new Date(h.ts).toDateString() !== todayStr);
+          const newHistory   = (data.score != null)
+            ? [...withoutToday, { ts: Date.now(), score: data.score }].slice(-30)
             : prevHistory;
+
           return { ...prev, [site.id]: { data, ts: Date.now(), history: newHistory } };
         });
       }
@@ -438,6 +463,17 @@ export default function SeoHealth() {
     }
   };
 
+  // ── auto-load stale sites when the site list arrives ───────────────────────
+  useEffect(() => {
+    if (!sites.length) return;
+    sites.forEach(site => {
+      const cached = cacheRef.current[site.id];
+      const isStale = !cached?.ts || (Date.now() - cached.ts) > STALE_MS;
+      if (isStale) refresh(site);
+    });
+  }, [sites]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── render ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex-col gap-6">
       <div className="glass-panel">
@@ -445,7 +481,7 @@ export default function SeoHealth() {
           <BarChart2 size={22} color="var(--primary)" /> SEO Health
         </h2>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0 }}>
-          KPI overview pulled from your Looker Studio Google Sheets data sources.
+          KPI overview pulled from your Looker Studio Google Sheets data sources. Refreshes automatically every 24 h.
         </p>
       </div>
 
@@ -466,7 +502,7 @@ export default function SeoHealth() {
           <Settings size={48} color="rgba(255,255,255,0.1)" style={{ margin: '0 auto 16px' }} />
           <p style={{ color: 'var(--text-muted)', marginBottom: 8 }}>No sites configured yet.</p>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', lineHeight: 1.6, maxWidth: 480, margin: '0 auto' }}>
-            Add a <code style={{ background: 'rgba(255,255,255,0.07)', padding: '1px 6px', borderRadius: 4 }}>SEO_HEALTH_SITES</code> environment variable in your Vercel project settings with this format:
+            Add a <code style={{ background: 'rgba(255,255,255,0.07)', padding: '1px 6px', borderRadius: 4 }}>SEO_HEALTH_SITES</code> environment variable with this format:
           </p>
           <pre style={{
             marginTop: 16, padding: '12px 16px', borderRadius: 8, textAlign: 'left',
