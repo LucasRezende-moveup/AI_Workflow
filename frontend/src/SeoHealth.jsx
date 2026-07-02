@@ -196,8 +196,17 @@ function TrendBadge({ current, previous, trend }) {
   );
 }
 
-function MetricSparkline({ values, color }) {
-  const recent = (values || []).filter(v => v.ts >= Date.now() - SEVEN_DAYS_MS);
+function MetricSparkline({ values, color, fallbackPrev, fallbackCurrent }) {
+  let recent = (values || []).filter(v => v.ts >= Date.now() - SEVEN_DAYS_MS);
+
+  // Seed from current/previous when real history hasn't built up yet
+  if (recent.length < 2 && fallbackPrev != null && fallbackCurrent != null) {
+    recent = [
+      { ts: Date.now() - SEVEN_DAYS_MS, value: Number(fallbackPrev) },
+      { ts: Date.now(),                  value: Number(fallbackCurrent) },
+    ];
+  }
+
   if (recent.length < 2) return null;
 
   const H = 28;
@@ -246,7 +255,8 @@ function MetricCard({ m, sparkValues }) {
           <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>prev {fmt(m.previous, m.unit)}</span>
         )}
       </div>
-      <MetricSparkline values={sparkValues} color={color} />
+      <MetricSparkline values={sparkValues} color={color}
+        fallbackPrev={m.previous} fallbackCurrent={m.current} />
     </div>
   );
 }
