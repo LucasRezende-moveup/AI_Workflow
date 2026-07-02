@@ -1927,6 +1927,11 @@ def indexation_sitemap_check(req: SitemapCheckRequest):
         "not_indexed_count": total - indexed,
         "coverage_pct":      round(indexed / total * 100, 1) if total > 0 else 0,
         "report_date":       pages[0]["report_date"] if pages else req.date,
+        "gsc_pages_total":   len(pages),
+        "debug_sample": {
+            "gsc_norms":     [_norm(p["page"]) for p in pages[:5] if p.get("page")],
+            "sitemap_norms": [_norm(u) for u in unique_urls[:5]],
+        },
         "url_results":       url_results,
     }
 

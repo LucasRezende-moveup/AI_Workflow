@@ -440,15 +440,41 @@ export default function IndexationControl() {
                   transition: 'width 0.6s ease',
                 }} />
               </div>
-              <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4 }}>
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                   {sitemapResult.child_sitemaps.length > 0 && `Sitemap index → ${sitemapResult.child_sitemaps.length} child sitemaps · `}
-                  Date: {sitemapResult.report_date || '—'}
+                  Matched against {(sitemapResult.gsc_pages_total || 0).toLocaleString()} GSC pages · Date: {sitemapResult.report_date || '—'}
                 </span>
                 <span style={{ fontSize: '0.72rem', fontWeight: 700, color: sitemapResult.coverage_pct >= 80 ? '#4ade80' : sitemapResult.coverage_pct >= 50 ? '#f59e0b' : '#f87171' }}>
                   {sitemapResult.coverage_pct}% indexed
                 </span>
               </div>
+
+              {/* Debug: show when nothing matches so we can diagnose */}
+              {sitemapResult.indexed_count === 0 && sitemapResult.total_urls > 0 && sitemapResult.debug_sample && (
+                <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)', fontSize: '0.75rem', lineHeight: 1.7 }}>
+                  <strong style={{ color: '#f59e0b' }}>Diagnostic — 0 matches found</strong>
+                  <div style={{ marginTop: 6, color: 'rgba(255,255,255,0.6)' }}>
+                    <div><span style={{ color: 'var(--text-muted)' }}>GSC pages fetched:</span> <strong style={{ color: '#d8d8e6' }}>{(sitemapResult.gsc_pages_total || 0).toLocaleString()}</strong></div>
+                    {sitemapResult.debug_sample.gsc_norms.length > 0 && (
+                      <div style={{ marginTop: 4 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Sample GSC normalized:</span>
+                        {sitemapResult.debug_sample.gsc_norms.map((n, i) => (
+                          <div key={i} style={{ fontFamily: 'monospace', fontSize: '0.7rem', color: '#4ade80', paddingLeft: 10 }}>{n}</div>
+                        ))}
+                      </div>
+                    )}
+                    {sitemapResult.debug_sample.sitemap_norms.length > 0 && (
+                      <div style={{ marginTop: 4 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Sample sitemap normalized:</span>
+                        {sitemapResult.debug_sample.sitemap_norms.map((n, i) => (
+                          <div key={i} style={{ fontFamily: 'monospace', fontSize: '0.7rem', color: '#f59e0b', paddingLeft: 10 }}>{n}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
