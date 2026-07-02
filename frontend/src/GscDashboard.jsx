@@ -20,7 +20,7 @@ const SEARCH_TYPES = [
 
 function MetricCard({ icon: Icon, label, value, sub, color = 'var(--primary)' }) {
   return (
-    <div className="glass-panel">
+    <div className="glass-panel interactive">
       <Icon className="mb-2" size={24} color={color} />
       <div className="metric-label">{label}</div>
       <div className="metric-value">{value}</div>
@@ -861,7 +861,7 @@ export default function GscDashboard() {
                 { label: 'Search Volume', value: (kwModal.volume || 0).toLocaleString(), color: '#00f2fe' },
                 { label: 'Difficulty', value: kwModal.difficulty, color: kwModal.difficulty >= 70 ? '#f87171' : kwModal.difficulty >= 40 ? '#f59e0b' : '#4ade80' },
               ].map(({ label, value, color }) => (
-                <div key={label} className="glass-panel" style={{ padding: '12px 14px' }}>
+                <div key={label} className="glass-panel interactive" style={{ padding: '12px 14px' }}>
                   <div className="metric-label" style={{ fontSize: '0.72rem' }}>{label}</div>
                   <div className="metric-value" style={{ fontSize: '1.4rem', color }}>{value}</div>
                 </div>

@@ -172,22 +172,22 @@ export default function ScreamingFrog({ onData } = {}) {
             </button>
           </div>
           <div className="grid grid-cols-4 gap-4">
-            <div className="glass-panel">
+            <div className="glass-panel interactive">
               <Link className="mb-2" size={24} color="#00f2fe" />
               <div className="metric-label">Total URLs</div>
               <div className="metric-value">{result.metrics.total_urls.toLocaleString()}</div>
             </div>
-            <div className="glass-panel">
+            <div className="glass-panel interactive">
               <CheckCircle className="mb-2" size={24} color="#4ade80" />
               <div className="metric-label">200 OK</div>
               <div className="metric-value">{result.metrics.status_200.toLocaleString()}</div>
             </div>
-            <div className="glass-panel">
+            <div className="glass-panel interactive">
               <AlertTriangle className="mb-2" size={24} color="#f59e0b" />
               <div className="metric-label">Missing Titles</div>
               <div className="metric-value">{result.metrics.missing_titles.toLocaleString()}</div>
             </div>
-            <div className="glass-panel">
+            <div className="glass-panel interactive">
               <FileMinus className="mb-2" size={24} color="#ef4444" />
               <div className="metric-label">Missing Meta Desc</div>
               <div className="metric-value">{result.metrics.missing_desc.toLocaleString()}</div>

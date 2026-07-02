@@ -65,7 +65,7 @@ function BrokenRedirectAudit({ sfResult }) {
           { label: '302 Temporary',    value: count302,            color: '#8b5cf6' },
           { label: 'Redirect Chains',  value: chains.length,       color: chains.length > 0 ? '#f87171' : '#4ade80' },
         ].map(m => (
-          <div key={m.label} className="glass-panel" style={{ padding: 16 }}>
+          <div key={m.label} className="glass-panel interactive" style={{ padding: 16 }}>
             <div className="metric-label">{m.label}</div>
             <div className="metric-value" style={{ color: m.color }}>{m.value}</div>
           </div>
@@ -174,7 +174,7 @@ function CrawlBudgetAnalysis({ analytics }) {
           { label: 'Wasted Budget',    value: `${wastedPct}%`,            color: wastedPct > 20 ? '#f87171' : '#f59e0b', sub: `${(errorHits + redirectHits).toLocaleString()} non-200 hits` },
           { label: 'Error Hits',       value: errorHits.toLocaleString(), color: errorHits > 0 ? '#f87171' : '#4ade80', sub: '4xx + 5xx served to Googlebot' },
         ].map(m => (
-          <div key={m.label} className="glass-panel" style={{ padding: 16 }}>
+          <div key={m.label} className="glass-panel interactive" style={{ padding: 16 }}>
             <div className="metric-label">{m.label}</div>
             <div className="metric-value" style={{ color: m.color }}>{m.value}</div>
             {m.sub && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>{m.sub}</div>}

@@ -149,7 +149,7 @@ export default function CwvAnalysis() {
               const m = result.metrics[key];
               const c = scoreColor(m?.score);
               return (
-                <div key={key} className="glass-panel">
+                <div key={key} className="glass-panel interactive">
                   <Icon size={24} color={c} />
                   <div className="metric-label mt-2">{label}</div>
                   <div className="metric-value" style={{ color: c, fontSize: '1.6rem' }}>{m?.value || 'N/A'}</div>

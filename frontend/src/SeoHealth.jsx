@@ -242,7 +242,7 @@ function MetricSparkline({ values, color, fallbackPrev, fallbackCurrent }) {
 function MetricCard({ m, sparkValues }) {
   const color = CAT_COLOR[m.category] || CAT_COLOR.other;
   return (
-    <div className="glass-panel" style={{ padding: '14px 16px', borderTop: `3px solid ${color}` }}>
+    <div className="glass-panel interactive" style={{ padding: '14px 16px', borderTop: `3px solid ${color}` }}>
       <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.6)', marginBottom: 4, lineHeight: 1.2 }}>
         {m.name}
       </div>
