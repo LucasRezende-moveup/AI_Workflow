@@ -115,7 +115,7 @@ export default function UrlComparator() {
 
         <div className="grid grid-cols-3 gap-4 mb-4">
           {[
-            { label: 'URL 1 (Target)', url: url1, setUrl: setUrl1, pos: pos1, setPos: setPos1 },
+            { label: 'URL 1 (Your URL)', url: url1, setUrl: setUrl1, pos: pos1, setPos: setPos1 },
             { label: 'URL 2 (Competitor)', url: url2, setUrl: setUrl2, pos: pos2, setPos: setPos2 },
             { label: 'URL 3 (Optional)', url: url3, setUrl: setUrl3, pos: pos3, setPos: setPos3 },
           ].map((item, i) => (
