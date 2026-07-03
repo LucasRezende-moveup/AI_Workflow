@@ -133,7 +133,7 @@ export default function FsStealer() {
             />
           </div>
           <div>
-            <label className="metric-label mb-2 block">Your Target URL</label>
+            <label className="metric-label mb-2 block">URL you want to have the FS</label>
             <input
               className="glass-input"
               placeholder="https://yoursite.com/page"
