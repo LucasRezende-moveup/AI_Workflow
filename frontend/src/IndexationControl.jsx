@@ -115,120 +115,236 @@ function TimelineTab({ urlResults, dates, dailySummary }) {
     [dailySummary],
   );
 
-  const CELL = 18;
-  const GAP  = 2;
-  const URL_W = 220;
+  // Group dates by month for the two-row header
+  const monthGroups = useMemo(() => {
+    const groups = [];
+    let current = null;
+    dates.forEach((date, i) => {
+      const ym = date.slice(0, 7);
+      if (ym !== current) {
+        const [y, m] = ym.split('-');
+        const label = new Date(Number(y), Number(m) - 1, 1).toLocaleString('en', { month: 'short' }) + ' '' + y.slice(2);
+        groups.push({ ym, start: i, count: 1, label });
+        current = ym;
+      } else {
+        groups[groups.length - 1].count++;
+      }
+    });
+    return groups;
+  }, [dates]);
 
-  const bgPanel = 'rgba(10,18,35,0.95)';
+  const handleEnter = useCallback((e, data) => setTip({ ...data, x: e.clientX, y: e.clientY }), []);
+  const handleMove  = useCallback((e) => setTip(t => t ? { ...t, x: e.clientX, y: e.clientY } : t), []);
+  const handleLeave = useCallback(() => setTip(null), []);
+
+  const CELL  = 16;
+  const GAP   = 2;
+  const URL_W = 240;
+  const BG    = 'rgba(10,18,35,0.95)';
+
+  // Month-start date set for border rendering
+  const monthStarts = useMemo(() => new Set(monthGroups.map(g => dates[g.start])), [monthGroups, dates]);
+
+  function CoverageBar({ pct, color }) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+        <div style={{ width: 52, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 2 }} />
+        </div>
+        <span style={{ fontSize: '0.68rem', fontWeight: 700, color, fontVariantNumeric: 'tabular-nums', minWidth: 28 }}>{pct}%</span>
+      </div>
+    );
+  }
 
   return (
     <div style={{ position: 'relative' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
-        <div>
-          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
-            Each cell is one day — hover for details. Top row shows site-wide totals.
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          {[['rgba(74,222,128,0.28)', 'Low traffic'], ['#4ade80', 'High traffic'], ['rgba(255,255,255,0.07)', 'Not in GSC']].map(([bg, label]) => (
-            <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-              <span style={{ width: 12, height: 12, borderRadius: 2, background: bg, display: 'inline-block', flexShrink: 0 }} />{label}
-            </span>
-          ))}
+
+      {/* ── Legend ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
+        <p style={{ fontSize: '0.73rem', color: 'var(--text-muted)', margin: 0 }}>
+          Each cell is one day — hover for details. Top row shows site-wide totals.
+        </p>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Gradient strip — indexed */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <div style={{ display: 'flex', gap: 1 }}>
+              {[0.18, 0.35, 0.52, 0.7, 1.0].map((op, i) => (
+                <div key={i} style={{ width: 10, height: 10, borderRadius: 2, background: `rgba(74,222,128,${op})` }} />
+              ))}
+            </div>
+            <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Indexed (low → high traffic)</span>
+          </div>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.05)', display: 'inline-block' }} />
+            Not in GSC
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: 'rgba(226,0,113,0.55)', display: 'inline-block' }} />
+            Site-wide
+          </span>
         </div>
       </div>
 
-      {/* Scrollable grid */}
+      {/* ── Scrollable grid ── */}
       <div style={{ overflowX: 'auto' }}>
         <table style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
+            {/* Row 1: Month group labels */}
             <tr>
-              <th style={{
-                position: 'sticky', left: 0, zIndex: 2, background: bgPanel,
-                width: URL_W, minWidth: URL_W, padding: '0 12px 6px 0',
-                textAlign: 'left', fontSize: '0.68rem', fontWeight: 700,
-                textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)',
-                verticalAlign: 'bottom',
-              }}>
-                URL
-              </th>
-              {dates.map(date => (
-                <th key={date} style={{ padding: `0 ${GAP / 2}px 4px`, verticalAlign: 'bottom', width: CELL + GAP }}>
-                  <div style={{
-                    writingMode: 'vertical-rl', transform: 'rotate(180deg)',
-                    fontSize: '0.6rem', color: 'var(--text-muted)',
-                    fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
-                    lineHeight: 1, paddingBottom: 2,
-                  }}>
-                    {date.slice(5).replace('-', '/')}
-                  </div>
+              <th style={{ position: 'sticky', left: 0, zIndex: 2, background: BG, width: URL_W, minWidth: URL_W, padding: '0 12px 3px 0' }} />
+              {monthGroups.map(g => (
+                <th key={g.ym} colSpan={g.count} style={{
+                  padding: '0 0 3px 5px',
+                  textAlign: 'left',
+                  fontSize: '0.6rem', fontWeight: 700,
+                  textTransform: 'uppercase', letterSpacing: '0.07em',
+                  color: 'rgba(255,255,255,0.32)',
+                  borderLeft: '1px solid rgba(255,255,255,0.1)',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {g.label}
                 </th>
               ))}
-              <th style={{ paddingLeft: 14, textAlign: 'left', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>
+              <th />
+            </tr>
+            {/* Row 2: Day numbers */}
+            <tr>
+              <th style={{
+                position: 'sticky', left: 0, zIndex: 2, background: BG,
+                width: URL_W, minWidth: URL_W, padding: '0 12px 8px 0',
+                textAlign: 'left', fontSize: '0.62rem', color: 'rgba(255,255,255,0.25)',
+              }}>
+                {dates.length > 0 && `${dates.length} days`}
+              </th>
+              {dates.map(date => {
+                const day = parseInt(date.slice(8), 10);
+                const isFirst = monthStarts.has(date);
+                const showNum = day === 1 || day % 7 === 1;
+                return (
+                  <th key={date} style={{
+                    padding: `0 ${GAP / 2}px 7px`,
+                    verticalAlign: 'bottom',
+                    width: CELL + GAP,
+                    borderLeft: isFirst ? '1px solid rgba(255,255,255,0.1)' : undefined,
+                  }}>
+                    <div style={{
+                      writingMode: 'vertical-rl', transform: 'rotate(180deg)',
+                      fontSize: '0.52rem', lineHeight: 1, paddingBottom: 2,
+                      fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                      color: day === 1 ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.2)',
+                      fontWeight: day === 1 ? 700 : 400,
+                      opacity: showNum ? 1 : 0,
+                    }}>
+                      {day}
+                    </div>
+                  </th>
+                );
+              })}
+              <th style={{ paddingLeft: 14, paddingBottom: 7, textAlign: 'left', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'rgba(255,255,255,0.32)', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>
                 Coverage
               </th>
             </tr>
           </thead>
           <tbody>
+
             {/* ── Site-level row ── */}
             {dailySummary?.length > 0 && (
               <tr>
                 <td style={{
-                  position: 'sticky', left: 0, zIndex: 1, background: bgPanel,
+                  position: 'sticky', left: 0, zIndex: 1, background: BG,
                   paddingRight: 12, paddingTop: 4, paddingBottom: 4, width: URL_W,
                 }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'rgba(226,0,113,0.9)' }}>All pages (site)</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: 20, height: 20, borderRadius: 5,
+                      background: 'rgba(226,0,113,0.14)', border: '1px solid rgba(226,0,113,0.28)',
+                      flexShrink: 0,
+                    }}>
+                      <Globe size={11} color="rgba(226,0,113,0.9)" />
+                    </span>
+                    <span style={{ fontSize: '0.73rem', fontWeight: 700, color: 'rgba(226,0,113,0.95)' }}>All pages</span>
+                  </div>
                 </td>
                 {dates.map(date => {
                   const d = siteDayMap[date];
                   const pages = d?.total_pages || 0;
-                  const intensity = pages > 0 ? Math.max(0.2, pages / maxSitePages) : 0;
+                  const intensity = pages > 0 ? Math.max(0.15, pages / maxSitePages) : 0;
+                  const isFirst = monthStarts.has(date);
                   return (
-                    <td key={date} style={{ padding: `2px ${GAP / 2}px` }}>
+                    <td key={date} style={{
+                      padding: `4px ${GAP / 2}px`,
+                      borderLeft: isFirst ? '1px solid rgba(255,255,255,0.06)' : undefined,
+                    }}>
                       <div
-                        onMouseEnter={e => setTip({ date, siteDay: d, url: 'site', x: e.clientX, y: e.clientY })}
-                        onMouseMove={e => tip && setTip(t => ({ ...t, x: e.clientX, y: e.clientY }))}
-                        onMouseLeave={() => setTip(null)}
+                        onMouseEnter={e => handleEnter(e, { date, siteDay: d, url: 'site' })}
+                        onMouseMove={handleMove}
+                        onMouseLeave={handleLeave}
                         style={{
-                          width: CELL, height: CELL, borderRadius: 3, cursor: 'default',
-                          background: pages > 0 ? `rgba(226,0,113,${intensity.toFixed(2)})` : 'rgba(255,255,255,0.07)',
-                          border: `1px solid ${pages > 0 ? `rgba(226,0,113,${(intensity * 0.5).toFixed(2)})` : 'rgba(255,255,255,0.04)'}`,
-                          transition: 'transform 0.08s', boxSizing: 'border-box',
+                          width: CELL, height: CELL, borderRadius: 3, cursor: 'default', boxSizing: 'border-box',
+                          background: pages > 0 ? `rgba(226,0,113,${intensity.toFixed(2)})` : 'rgba(255,255,255,0.05)',
+                          border: `1px solid ${pages > 0 ? `rgba(226,0,113,${Math.min(0.45, intensity * 0.55).toFixed(2)})` : 'rgba(255,255,255,0.04)'}`,
+                          transition: 'box-shadow 0.1s, transform 0.1s',
                         }}
-                        onMouseOver={e => { e.currentTarget.style.transform = 'scale(1.35)'; }}
-                        onMouseOut={e => { e.currentTarget.style.transform = 'scale(1)'; }}
+                        onMouseOver={e => {
+                          e.currentTarget.style.boxShadow = pages > 0 ? '0 0 0 2px rgba(226,0,113,0.5)' : '0 0 0 2px rgba(255,255,255,0.18)';
+                          e.currentTarget.style.transform = 'scale(1.18)';
+                        }}
+                        onMouseOut={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
                       />
                     </td>
                   );
                 })}
-                <td style={{ paddingLeft: 14, whiteSpace: 'nowrap', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  site-wide totals
+                <td style={{ paddingLeft: 14, whiteSpace: 'nowrap' }}>
+                  {(() => {
+                    const avg = dailySummary.length > 0
+                      ? Math.round(dailySummary.reduce((s, d) => s + (d.total_pages || 0), 0) / dailySummary.length)
+                      : 0;
+                    return (
+                      <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                        avg <span style={{ color: 'rgba(226,0,113,0.8)', fontWeight: 600 }}>{avg.toLocaleString()}</span> pages/day
+                      </span>
+                    );
+                  })()}
                 </td>
               </tr>
             )}
-            {/* ── Separator ── */}
+
+            {/* ── Thin separator between site row and URL rows ── */}
             {dailySummary?.length > 0 && urlResults?.length > 0 && (
-              <tr><td colSpan={dates.length + 2} style={{ height: 8 }} /></tr>
+              <tr>
+                <td colSpan={dates.length + 2} style={{ padding: 0, height: 1, background: 'rgba(255,255,255,0.07)' }} />
+              </tr>
             )}
+
             {/* ── Per-URL rows ── */}
             {(urlResults || []).map(row => {
               const dayMap = Object.fromEntries(row.daily.map(d => [d.date, d]));
+              const coveragePct = row.coverage_pct != null
+                ? row.coverage_pct
+                : (dates.length > 0 ? Math.round((row.indexed_days / dates.length) * 100) : 0);
+              const coverageColor = coveragePct >= 80 ? '#4ade80' : coveragePct >= 50 ? '#f59e0b' : '#f87171';
+
               return (
                 <tr key={row.url}>
                   {/* Sticky URL label */}
                   <td style={{
-                    position: 'sticky', left: 0, zIndex: 1, background: bgPanel,
-                    paddingRight: 12, paddingTop: 4, paddingBottom: 4,
-                    maxWidth: URL_W, width: URL_W,
+                    position: 'sticky', left: 0, zIndex: 1, background: BG,
+                    paddingRight: 12, paddingTop: 4, paddingBottom: 4, width: URL_W,
                   }}>
-                    <a href={row.url} target="_blank" rel="noopener noreferrer"
-                      style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--primary)', textDecoration: 'none', fontSize: '0.8rem' }}>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.url}>
-                        {shortPath(row.url)}
-                      </span>
-                      <ExternalLink size={9} style={{ flexShrink: 0, opacity: 0.5 }} />
-                    </a>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <span style={{
+                        width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                        background: coverageColor, boxShadow: `0 0 5px ${coverageColor}55`,
+                      }} />
+                      <a href={row.url} target="_blank" rel="noopener noreferrer"
+                        style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'rgba(255,255,255,0.72)', textDecoration: 'none', fontSize: '0.75rem', minWidth: 0 }}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.url}>
+                          {shortPath(row.url)}
+                        </span>
+                        <ExternalLink size={9} style={{ flexShrink: 0, opacity: 0.35 }} />
+                      </a>
+                    </div>
                   </td>
 
                   {/* Day cells */}
@@ -236,50 +352,44 @@ function TimelineTab({ urlResults, dates, dailySummary }) {
                     const d = dayMap[date];
                     const indexed = d?.indexed;
                     const intensity = indexed
-                      ? Math.max(0.22, 0.22 + ((d.impressions || 0) / maxImpressions) * 0.78)
+                      ? Math.max(0.18, 0.18 + ((d.impressions || 0) / maxImpressions) * 0.82)
                       : 0;
-                    const bg = indexed
-                      ? `rgba(74,222,128,${intensity.toFixed(2)})`
-                      : 'rgba(255,255,255,0.07)';
-                    const borderColor = indexed
-                      ? `rgba(74,222,128,${(intensity * 0.55).toFixed(2)})`
-                      : 'rgba(255,255,255,0.04)';
+                    const isFirst = monthStarts.has(date);
 
                     return (
-                      <td key={date} style={{ padding: `2px ${GAP / 2}px` }}>
+                      <td key={date} style={{
+                        padding: `4px ${GAP / 2}px`,
+                        borderLeft: isFirst ? '1px solid rgba(255,255,255,0.06)' : undefined,
+                      }}>
                         <div
-                          onMouseEnter={e => setTip({ date, d, url: row.url, x: e.clientX, y: e.clientY })}
-                          onMouseMove={e => tip && setTip(t => ({ ...t, x: e.clientX, y: e.clientY }))}
-                          onMouseLeave={() => setTip(null)}
+                          onMouseEnter={e => handleEnter(e, { date, d, url: row.url })}
+                          onMouseMove={handleMove}
+                          onMouseLeave={handleLeave}
                           style={{
-                            width: CELL, height: CELL, borderRadius: 3, cursor: 'default',
-                            background: bg, border: `1px solid ${borderColor}`,
-                            transition: 'transform 0.08s',
-                            boxSizing: 'border-box',
+                            width: CELL, height: CELL, borderRadius: 3, cursor: 'default', boxSizing: 'border-box',
+                            background: indexed ? `rgba(74,222,128,${intensity.toFixed(2)})` : 'rgba(255,255,255,0.05)',
+                            border: `1px solid ${indexed ? `rgba(74,222,128,${Math.min(0.42, intensity * 0.5).toFixed(2)})` : 'rgba(255,255,255,0.04)'}`,
+                            transition: 'box-shadow 0.1s, transform 0.1s',
                           }}
-                          onMouseOver={e => { e.currentTarget.style.transform = 'scale(1.35)'; e.currentTarget.style.zIndex = '10'; }}
-                          onMouseOut={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.zIndex = '0'; }}
+                          onMouseOver={e => {
+                            e.currentTarget.style.boxShadow = indexed ? '0 0 0 2px rgba(74,222,128,0.5)' : '0 0 0 2px rgba(255,255,255,0.18)';
+                            e.currentTarget.style.transform = 'scale(1.18)';
+                          }}
+                          onMouseOut={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
                         />
                       </td>
                     );
                   })}
 
-                  {/* Summary */}
-                  <td style={{ paddingLeft: 14, whiteSpace: 'nowrap', fontSize: '0.75rem' }}>
-                    <span style={{ color: row.coverage_pct >= 80 ? '#4ade80' : row.coverage_pct >= 50 ? '#f59e0b' : '#f87171', fontWeight: 700 }}>
-                      {row.indexed_days}
-                    </span>
-                    <span style={{ color: 'var(--text-muted)' }}>/{dates.length} days</span>
-                    {row.first_seen && (
-                      <span style={{ color: 'var(--text-muted)', marginLeft: 10 }}>
-                        first <span style={{ color: '#d8d8e6' }}>{row.first_seen}</span>
+                  {/* Coverage summary */}
+                  <td style={{ paddingLeft: 14, whiteSpace: 'nowrap' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <CoverageBar pct={coveragePct} color={coverageColor} />
+                      <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                        {row.indexed_days}/{dates.length} days
+                        {row.first_seen && <> · first <span style={{ color: '#d8d8e6' }}>{row.first_seen}</span></>}
                       </span>
-                    )}
-                    {row.last_seen && row.last_seen !== row.first_seen && (
-                      <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>
-                        · last <span style={{ color: '#d8d8e6' }}>{row.last_seen}</span>
-                      </span>
-                    )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -288,54 +398,58 @@ function TimelineTab({ urlResults, dates, dailySummary }) {
         </table>
       </div>
 
-      {/* Floating tooltip */}
+      {/* ── Floating tooltip ── */}
       {tip && (
         <div style={{
-          position: 'fixed', left: tip.x + 14, top: tip.y - 14, zIndex: 9999,
-          background: 'rgba(10,18,35,0.97)', border: '1px solid rgba(255,255,255,0.15)',
-          borderRadius: 8, padding: '9px 13px', fontSize: '0.78rem',
-          pointerEvents: 'none', minWidth: 155,
-          boxShadow: '0 10px 32px rgba(0,0,0,0.55)',
+          position: 'fixed', left: tip.x + 14, top: tip.y - 10, zIndex: 9999,
+          background: 'rgba(8,14,28,0.98)', border: '1px solid rgba(255,255,255,0.11)',
+          borderRadius: 10, padding: '10px 13px', fontSize: '0.75rem',
+          pointerEvents: 'none', minWidth: 158,
+          boxShadow: '0 16px 48px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04)',
         }}>
-          <div style={{ fontWeight: 700, color: '#fff', marginBottom: 5, fontVariantNumeric: 'tabular-nums' }}>{tip.date}</div>
+          <div style={{ fontWeight: 700, color: 'rgba(255,255,255,0.85)', marginBottom: 7, fontVariantNumeric: 'tabular-nums', fontSize: '0.72rem' }}>
+            {tip.date}
+          </div>
+
           {tip.siteDay ? (
             <>
-              <div style={{ color: 'rgba(226,0,113,0.9)', fontWeight: 600, marginBottom: 4 }}>Site-wide</div>
-              <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>
-                <span style={{ color: '#d8d8e6', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
-                  {(tip.siteDay.total_pages || 0).toLocaleString()}
-                </span> pages in GSC
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'rgba(226,0,113,0.9)', fontWeight: 600, marginBottom: 7, fontSize: '0.71rem' }}>
+                <Globe size={11} /> Site-wide
               </div>
-              <div style={{ color: 'var(--text-muted)' }}>
-                <span style={{ color: '#4ade80', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
-                  {(tip.siteDay.pages_clicking || 0).toLocaleString()}
-                </span> getting clicks
-              </div>
+              {[
+                ['In GSC', (tip.siteDay?.total_pages || 0).toLocaleString(), '#fff'],
+                ['Getting clicks', (tip.siteDay?.pages_clicking || 0).toLocaleString(), '#4ade80'],
+              ].map(([lbl, val, col]) => (
+                <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, fontSize: '0.7rem', marginBottom: 2 }}>
+                  <span style={{ color: 'rgba(255,255,255,0.4)' }}>{lbl}</span>
+                  <span style={{ color: col, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{val}</span>
+                </div>
+              ))}
             </>
           ) : tip.d?.indexed ? (
             <>
-              <div style={{ color: '#4ade80', fontWeight: 600, marginBottom: 4 }}>✓ In Google Search Console</div>
-              <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>
-                <span style={{ color: '#d8d8e6', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
-                  {(tip.d.impressions || 0).toLocaleString()}
-                </span> impressions
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#4ade80', fontWeight: 600, marginBottom: 7, fontSize: '0.71rem' }}>
+                <CheckCircle size={11} /> Indexed
               </div>
-              <div style={{ color: 'var(--text-muted)', marginBottom: tip.d.position != null ? 2 : 0 }}>
-                <span style={{ color: (tip.d.clicks || 0) > 0 ? '#4ade80' : '#d8d8e6', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
-                  {(tip.d.clicks || 0).toLocaleString()}
-                </span> clicks
-              </div>
-              {tip.d.position != null && (
-                <div style={{ color: 'var(--text-muted)' }}>
-                  avg pos <span style={{ color: '#d8d8e6', fontVariantNumeric: 'tabular-nums' }}>{tip.d.position}</span>
+              {[
+                ['Impressions', (tip.d.impressions || 0).toLocaleString(), '#fff'],
+                ['Clicks', (tip.d.clicks || 0).toLocaleString(), (tip.d.clicks || 0) > 0 ? '#4ade80' : '#fff'],
+                ...(tip.d.position != null ? [['Avg. position', String(tip.d.position), 'rgba(255,255,255,0.65)']] : []),
+              ].map(([lbl, val, col]) => (
+                <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, fontSize: '0.7rem', marginBottom: 2 }}>
+                  <span style={{ color: 'rgba(255,255,255,0.4)' }}>{lbl}</span>
+                  <span style={{ color: col, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{val}</span>
                 </div>
-              )}
+              ))}
             </>
           ) : (
-            <div style={{ color: '#f59e0b', fontWeight: 600 }}>✕ Not in GSC</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#f59e0b', fontWeight: 600, fontSize: '0.71rem' }}>
+              <AlertCircle size={11} /> Not in GSC
+            </div>
           )}
+
           {tip.url !== 'site' && (
-            <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,0.07)', fontSize: '0.68rem', color: 'var(--text-dim)', wordBreak: 'break-all' }}>
+            <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid rgba(255,255,255,0.07)', fontSize: '0.62rem', color: 'rgba(255,255,255,0.28)', wordBreak: 'break-all' }}>
               {shortPath(tip.url)}
             </div>
           )}
