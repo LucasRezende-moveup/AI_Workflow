@@ -99,6 +99,15 @@ function CoverageBar({ pct, width = 80 }) {
 
 function TimelineTab({ urlResults, dates, dailySummary }) {
   const [tip, setTip] = useState(null);
+  const [expandedUrls, setExpandedUrls] = useState(new Set());
+
+  const toggleExpand = useCallback((url) => {
+    setExpandedUrls(prev => {
+      const next = new Set(prev);
+      next.has(url) ? next.delete(url) : next.add(url);
+      return next;
+    });
+  }, []);
 
   const maxImpressions = useMemo(
     () => Math.max(...(urlResults || []).flatMap(r => r.daily.map(d => d.impressions || 0)), 1),
@@ -162,7 +171,7 @@ function TimelineTab({ urlResults, dates, dailySummary }) {
       {/* ── Legend ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
         <p style={{ fontSize: '0.73rem', color: 'var(--text-muted)', margin: 0 }}>
-          Each cell is one day — hover for details. Top row shows site-wide totals.
+          Each cell is one day — hover for details. Top row shows site-wide totals.{urlResults?.length > 0 && ' Click a URL to expand day-by-day stats.'}
         </p>
         <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Gradient strip — indexed */}
@@ -324,74 +333,149 @@ function TimelineTab({ urlResults, dates, dailySummary }) {
                 ? row.coverage_pct
                 : (dates.length > 0 ? Math.round((row.indexed_days / dates.length) * 100) : 0);
               const coverageColor = coveragePct >= 80 ? '#4ade80' : coveragePct >= 50 ? '#f59e0b' : '#f87171';
+              const expanded = expandedUrls.has(row.url);
 
               return (
-                <tr key={row.url}>
-                  {/* Sticky URL label */}
-                  <td style={{
-                    position: 'sticky', left: 0, zIndex: 1, background: BG,
-                    paddingRight: 12, paddingTop: 4, paddingBottom: 4, width: URL_W,
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                      <span style={{
-                        width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                        background: coverageColor, boxShadow: `0 0 5px ${coverageColor}55`,
-                      }} />
-                      <a href={row.url} target="_blank" rel="noopener noreferrer"
-                        style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'rgba(255,255,255,0.72)', textDecoration: 'none', fontSize: '0.75rem', minWidth: 0 }}>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.url}>
+                <React.Fragment key={row.url}>
+                  <tr
+                    onClick={() => toggleExpand(row.url)}
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
+                    onMouseLeave={e => e.currentTarget.style.background = ''}
+                  >
+                    {/* Sticky URL label */}
+                    <td style={{
+                      position: 'sticky', left: 0, zIndex: 1, background: expanded ? 'rgba(255,255,255,0.03)' : BG,
+                      paddingRight: 12, paddingTop: 4, paddingBottom: 4, width: URL_W,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                          background: coverageColor, boxShadow: `0 0 5px ${coverageColor}55`,
+                        }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'rgba(255,255,255,0.72)', fontSize: '0.75rem', flex: 1, minWidth: 0 }} title={row.url}>
                           {shortPath(row.url)}
                         </span>
-                        <ExternalLink size={9} style={{ flexShrink: 0, opacity: 0.35 }} />
-                      </a>
-                    </div>
-                  </td>
+                        <span style={{ flexShrink: 0, color: 'rgba(255,255,255,0.25)', transition: 'transform 0.15s', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                          <ChevronDown size={12} />
+                        </span>
+                      </div>
+                    </td>
 
-                  {/* Day cells */}
-                  {dates.map(date => {
-                    const d = dayMap[date];
-                    const indexed = d?.indexed;
-                    const intensity = indexed
-                      ? Math.max(0.18, 0.18 + ((d.impressions || 0) / maxImpressions) * 0.82)
-                      : 0;
-                    const isFirst = monthStarts.has(date);
+                    {/* Day cells */}
+                    {dates.map(date => {
+                      const d = dayMap[date];
+                      const indexed = d?.indexed;
+                      const intensity = indexed
+                        ? Math.max(0.18, 0.18 + ((d.impressions || 0) / maxImpressions) * 0.82)
+                        : 0;
+                      const isFirst = monthStarts.has(date);
 
-                    return (
-                      <td key={date} style={{
-                        padding: `4px ${GAP / 2}px`,
-                        borderLeft: isFirst ? '1px solid rgba(255,255,255,0.06)' : undefined,
-                      }}>
-                        <div
-                          onMouseEnter={e => handleEnter(e, { date, d, url: row.url })}
-                          onMouseMove={handleMove}
-                          onMouseLeave={handleLeave}
-                          style={{
-                            width: CELL, height: CELL, borderRadius: 3, cursor: 'default', boxSizing: 'border-box',
-                            background: indexed ? `rgba(74,222,128,${intensity.toFixed(2)})` : 'rgba(255,255,255,0.05)',
-                            border: `1px solid ${indexed ? `rgba(74,222,128,${Math.min(0.42, intensity * 0.5).toFixed(2)})` : 'rgba(255,255,255,0.04)'}`,
-                            transition: 'box-shadow 0.1s, transform 0.1s',
-                          }}
-                          onMouseOver={e => {
-                            e.currentTarget.style.boxShadow = indexed ? '0 0 0 2px rgba(74,222,128,0.5)' : '0 0 0 2px rgba(255,255,255,0.18)';
-                            e.currentTarget.style.transform = 'scale(1.18)';
-                          }}
-                          onMouseOut={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
-                        />
+                      return (
+                        <td key={date} style={{
+                          padding: `4px ${GAP / 2}px`,
+                          borderLeft: isFirst ? '1px solid rgba(255,255,255,0.06)' : undefined,
+                        }}>
+                          <div
+                            onMouseEnter={e => { e.stopPropagation(); handleEnter(e, { date, d, url: row.url }); }}
+                            onMouseMove={e => { e.stopPropagation(); handleMove(e); }}
+                            onMouseLeave={e => { e.stopPropagation(); handleLeave(); }}
+                            onClick={e => e.stopPropagation()}
+                            style={{
+                              width: CELL, height: CELL, borderRadius: 3, cursor: 'default', boxSizing: 'border-box',
+                              background: indexed ? `rgba(74,222,128,${intensity.toFixed(2)})` : 'rgba(255,255,255,0.05)',
+                              border: `1px solid ${indexed ? `rgba(74,222,128,${Math.min(0.42, intensity * 0.5).toFixed(2)})` : 'rgba(255,255,255,0.04)'}`,
+                              transition: 'box-shadow 0.1s, transform 0.1s',
+                            }}
+                            onMouseOver={e => {
+                              e.currentTarget.style.boxShadow = indexed ? '0 0 0 2px rgba(74,222,128,0.5)' : '0 0 0 2px rgba(255,255,255,0.18)';
+                              e.currentTarget.style.transform = 'scale(1.18)';
+                            }}
+                            onMouseOut={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
+                          />
+                        </td>
+                      );
+                    })}
+
+                    {/* Coverage summary */}
+                    <td style={{ paddingLeft: 14, whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        <CoverageBar pct={coveragePct} color={coverageColor} />
+                        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                          {row.indexed_days}/{dates.length} days
+                          {row.first_seen && <> · first <span style={{ color: '#d8d8e6' }}>{row.first_seen}</span></>}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+
+                  {/* ── Expanded detail row ── */}
+                  {expanded && (
+                    <tr style={{ background: 'rgba(0,0,0,0.18)' }}>
+                      <td colSpan={dates.length + 2} style={{ padding: '0 0 0 20px' }}>
+                        <div style={{ padding: '14px 20px 14px 0' }}>
+                          {/* URL header */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                            <a href={row.url} target="_blank" rel="noopener noreferrer"
+                              style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--primary)', textDecoration: 'none', fontSize: '0.78rem', fontWeight: 600 }}>
+                              {row.url}
+                              <ExternalLink size={11} style={{ opacity: 0.6 }} />
+                            </a>
+                          </div>
+
+                          {/* Summary chips */}
+                          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+                            {[
+                              { label: 'Indexed days', value: row.indexed_days, color: coverageColor },
+                              { label: 'Not in GSC', value: (dates.length - row.indexed_days), color: '#94a3b8' },
+                              { label: 'Coverage', value: `${coveragePct}%`, color: coverageColor },
+                              ...(row.first_seen ? [{ label: 'First seen', value: row.first_seen, color: '#d8d8e6' }] : []),
+                              ...(row.last_seen ? [{ label: 'Last seen', value: row.last_seen, color: '#d8d8e6' }] : []),
+                            ].map(chip => (
+                              <div key={chip.label} style={{
+                                padding: '4px 10px', borderRadius: 6,
+                                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                                fontSize: '0.72rem',
+                              }}>
+                                <span style={{ color: 'var(--text-muted)', marginRight: 5 }}>{chip.label}</span>
+                                <span style={{ color: chip.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{chip.value}</span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Day-by-day table */}
+                          <div style={{ overflowX: 'auto', maxHeight: 320, overflowY: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+                                  {['Date', 'Status', 'Impressions', 'Clicks', 'CTR', 'Avg. Pos'].map(h => (
+                                    <th key={h} style={{ padding: '5px 12px 5px 0', textAlign: h === 'Date' ? 'left' : 'center', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {row.daily.map(d => (
+                                  <tr key={d.date} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                    <td style={{ padding: '5px 12px 5px 0', color: '#d8d8e6', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{d.date}</td>
+                                    <td style={{ textAlign: 'center', padding: '5px 12px' }}>
+                                      {d.indexed
+                                        ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 700, color: '#4ade80' }}><CheckCircle size={10} /> Indexed</span>
+                                        : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: 'rgba(245,158,11,0.75)' }}><AlertCircle size={10} /> Not in GSC</span>}
+                                    </td>
+                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: d.indexed ? '#d8d8e6' : 'var(--text-dim)' }}>{d.indexed ? (d.impressions || 0).toLocaleString() : '—'}</td>
+                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: (d.clicks || 0) > 0 ? '#4ade80' : 'var(--text-dim)', fontWeight: (d.clicks || 0) > 0 ? 700 : 400 }}>{d.indexed ? (d.clicks || 0).toLocaleString() : '—'}</td>
+                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{d.indexed && d.impressions > 0 ? `${((d.clicks || 0) / d.impressions * 100).toFixed(1)}%` : '—'}</td>
+                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{d.indexed && d.position != null ? d.position : '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
                       </td>
-                    );
-                  })}
-
-                  {/* Coverage summary */}
-                  <td style={{ paddingLeft: 14, whiteSpace: 'nowrap' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      <CoverageBar pct={coveragePct} color={coverageColor} />
-                      <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-                        {row.indexed_days}/{dates.length} days
-                        {row.first_seen && <> · first <span style={{ color: '#d8d8e6' }}>{row.first_seen}</span></>}
-                      </span>
-                    </div>
-                  </td>
-                </tr>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </tbody>
