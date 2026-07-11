@@ -2697,7 +2697,7 @@ def indexation_range_check(req: RangeCheckRequest):
                     continue
                 if norm_url not in page_totals:
                     page_totals[norm_url] = {"url": raw_url, "total_impressions": 0}
-                page_totals[norm_url]["total_impressions"] += int(p.get("impressions", 0) or 0)
+                page_totals[norm_url]["total_impressions"] += int(float(p.get("impressions") or 0))
         top_pages = sorted(page_totals.values(), key=lambda x: x["total_impressions"], reverse=True)[:100]
         urls_to_check = [pg["url"] for pg in top_pages]
 
@@ -2720,9 +2720,9 @@ def indexation_range_check(req: RangeCheckRequest):
             daily.append({
                 "date":        d,
                 "indexed":     indexed,
-                "impressions": int(match.get("impressions", 0)) if match else 0,
-                "clicks":      int(match.get("clicks", 0))      if match else 0,
-                "position":    round(float(match.get("position", 0)), 1) if match else None,
+                "impressions": int(float(match.get("impressions") or 0)) if match else 0,
+                "clicks":      int(float(match.get("clicks") or 0))      if match else 0,
+                "position":    round(float(match.get("position") or 0), 1) if match and match.get("position") else None,
             })
         url_results.append({
             "url":              url,
