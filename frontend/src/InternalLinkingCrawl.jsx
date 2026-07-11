@@ -120,10 +120,10 @@ const EXCLUDED_ANCHORS = new Set(['confira também', 'perguntas frequentes']);
 
 function isExcludedAnchor(anchor) {
   const a = anchor.trim().toLowerCase();
-  // Phrase match anywhere (handles a leading section number, e.g. "9 confira também")
+  // Any anchor that starts with a number (section numbers, "9 confira também", etc.)
+  if (/^\d/.test(a)) return true;
+  // Phrase match anywhere
   for (const p of EXCLUDED_ANCHORS) if (a.includes(p)) return true;
-  // Bare section numbers: 5, 5.1, 5.2, 5.1.2, …
-  if (/^\d+(\.\d+)*$/.test(a.replace(/[:.\s]+$/, ''))) return true;
   return false;
 }
 
