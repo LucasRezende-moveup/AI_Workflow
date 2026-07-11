@@ -123,7 +123,7 @@ function TimelineTab({ urlResults, dates, dailySummary }) {
       const ym = date.slice(0, 7);
       if (ym !== current) {
         const [y, m] = ym.split('-');
-        const label = new Date(Number(y), Number(m) - 1, 1).toLocaleString('en', { month: 'short' }) + ' '' + y.slice(2);
+        const label = new Date(Number(y), Number(m) - 1, 1).toLocaleString('en', { month: 'short' }) + " '" + y.slice(2);
         groups.push({ ym, start: i, count: 1, label });
         current = ym;
       } else {
