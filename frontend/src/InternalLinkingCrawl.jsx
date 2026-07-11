@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Upload, Link2, Users as UsersIcon, Target, AlertTriangle, Download, Search, X } from 'lucide-react';
+import { Upload, Link2, Users as UsersIcon, Target, AlertTriangle, Download, Search, X, ChevronDown, ChevronUp, Filter } from 'lucide-react';
 import Papa from 'papaparse';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -114,6 +114,18 @@ function shortLabel(url) {
   }
 }
 
+// Normalize a URL so trailing-slash / fragment / case differences don't count as distinct destinations
+function normUrl(u) {
+  if (!u) return '';
+  try {
+    const x = new URL(u);
+    x.hash = '';
+    return x.href.replace(/\/$/, '').toLowerCase();
+  } catch {
+    return String(u).replace(/#.*$/, '').replace(/\/$/, '').toLowerCase();
+  }
+}
+
 function statusStyle(code) {
   const n = parseInt(code, 10);
   if (!code || Number.isNaN(n)) return { bg: 'rgba(255,255,255,.06)', color: 'var(--text-muted)' };
@@ -163,6 +175,8 @@ export default function InternalLinkingCrawl() {
   const [originFilter, setOriginFilter]     = useState('all');
   const [pathQuery, setPathQuery]           = useState('');
   const [page, setPage]           = useState(1);
+  const [openConflicts, setOpenConflicts]   = useState({});
+  const [showAllConflicts, setShowAllConflicts] = useState(false);
 
   const onDrop = (e) => {
     e.preventDefault();
@@ -179,6 +193,8 @@ export default function InternalLinkingCrawl() {
     setOriginFilter('all');
     setPathQuery('');
     setPage(1);
+    setOpenConflicts({});
+    setShowAllConflicts(false);
   };
 
   const handleUpload = async () => {
@@ -269,7 +285,39 @@ export default function InternalLinkingCrawl() {
     setOriginFilter('all');
     setPathQuery('');
     setPage(1);
+    setOpenConflicts({});
+    setShowAllConflicts(false);
   };
+
+  // ── validation: same anchor text → different destination URLs ─────────────────
+  const anchorConflicts = useMemo(() => {
+    if (!result) return [];
+    const map = new Map(); // lowercased anchor → { display, total, dests: Map(normUrl → {url, count}) }
+    result.rows.forEach(r => {
+      const a = (r.anchor || '').trim();
+      if (!a) return;
+      const key = a.toLowerCase();
+      let e = map.get(key);
+      if (!e) { e = { display: a, total: 0, dests: new Map() }; map.set(key, e); }
+      e.total++;
+      const nk = normUrl(r.to);
+      const d = e.dests.get(nk);
+      if (d) d.count++;
+      else e.dests.set(nk, { url: r.to, count: 1 });
+    });
+    const conflicts = [];
+    map.forEach(e => {
+      if (e.dests.size >= 2) {
+        conflicts.push({
+          anchor: e.display,
+          total: e.total,
+          destinations: [...e.dests.values()].sort((a, b) => b.count - a.count),
+        });
+      }
+    });
+    conflicts.sort((a, b) => b.destinations.length - a.destinations.length || b.total - a.total);
+    return conflicts;
+  }, [result]);
 
   // ── render ────────────────────────────────────────────────────────────────────
   return (
@@ -345,6 +393,86 @@ export default function InternalLinkingCrawl() {
           {result.truncated && (
             <div className="glass-panel" style={{ padding: '10px 16px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
               Showing the first {result.returned.toLocaleString()} of {result.total_links.toLocaleString()} hyperlinks. Refine with the filters below or export the full set.
+            </div>
+          )}
+
+          {/* ── Validation: anchor consistency ── */}
+          {result.has_anchor && (
+            <div className="glass-panel">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0 }}>
+                  <h3 style={{ fontSize: '1rem', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <AlertTriangle size={16} color={anchorConflicts.length ? '#f59e0b' : '#4ade80'} />
+                    Anchor Consistency
+                  </h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '6px 0 0', maxWidth: 620 }}>
+                    Anchors with identical text that link to <strong>different destination URLs</strong> — often a sign of inconsistent
+                    or cannibalizing internal links. Trailing-slash / fragment differences are ignored.
+                  </p>
+                </div>
+                <span style={{
+                  fontSize: '0.72rem', fontWeight: 700, padding: '3px 10px', borderRadius: 20, flexShrink: 0,
+                  background: anchorConflicts.length ? 'rgba(245,158,11,.1)' : 'rgba(34,197,94,.1)',
+                  color: anchorConflicts.length ? '#f59e0b' : '#4ade80',
+                }}>
+                  {anchorConflicts.length} {anchorConflicts.length === 1 ? 'conflict' : 'conflicts'}
+                </span>
+              </div>
+
+              {anchorConflicts.length === 0 ? (
+                <p style={{ fontSize: '0.85rem', color: '#4ade80', marginTop: 14 }}>✓ Every anchor points to a single destination.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+                  {anchorConflicts.slice(0, showAllConflicts ? anchorConflicts.length : 15).map((c, i) => {
+                    const open = !!openConflicts[c.anchor];
+                    return (
+                      <div key={i} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(245,158,11,0.15)', borderRadius: 8, overflow: 'hidden' }}>
+                        <button
+                          onClick={() => setOpenConflicts(p => ({ ...p, [c.anchor]: !p[c.anchor] }))}
+                          style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', textAlign: 'left' }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#d8d8e6' }}>"{c.anchor}"</span>
+                            <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '1px 8px', borderRadius: 10, background: 'rgba(245,158,11,.1)', color: '#f59e0b' }}>
+                              {c.destinations.length} destinations
+                            </span>
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{c.total} links</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                            <span
+                              role="button"
+                              title="Filter the table by this anchor"
+                              onClick={(e) => { e.stopPropagation(); setQuery(c.anchor); setPage(1); }}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: 'var(--text-muted)' }}
+                            >
+                              <Filter size={12} /> isolate
+                            </span>
+                            {open ? <ChevronUp size={14} color="var(--text-muted)" /> : <ChevronDown size={14} color="var(--text-muted)" />}
+                          </div>
+                        </button>
+                        {open && (
+                          <div style={{ padding: '0 14px 12px' }}>
+                            {c.destinations.map((d, j) => (
+                              <div key={j} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                                <a href={d.url} target="_blank" rel="noopener noreferrer" title={d.url}
+                                  style={{ fontSize: '0.8rem', color: 'var(--primary)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {shortLabel(d.url)}
+                                </a>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', flexShrink: 0 }}>{d.count} link{d.count !== 1 ? 's' : ''}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {anchorConflicts.length > 15 && !showAllConflicts && (
+                    <button className="btn-secondary" style={{ alignSelf: 'center', padding: '6px 14px', marginTop: 4 }} onClick={() => setShowAllConflicts(true)}>
+                      Show all {anchorConflicts.length} conflicts
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
