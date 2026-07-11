@@ -187,6 +187,7 @@ export default function InternalLinkingCrawl() {
   const [positionFilter, setPositionFilter] = useState('all');
   const [originFilter, setOriginFilter]     = useState('all');
   const [pathQuery, setPathQuery]           = useState('');
+  const [anchorExact, setAnchorExact]       = useState('');   // exact-anchor filter set by "isolate"
   const [page, setPage]           = useState(1);
   const [openConflicts, setOpenConflicts]   = useState({});
   const [showAllConflicts, setShowAllConflicts] = useState(false);
@@ -205,6 +206,7 @@ export default function InternalLinkingCrawl() {
     setPositionFilter('all');
     setOriginFilter('all');
     setPathQuery('');
+    setAnchorExact('');
     setPage(1);
     setOpenConflicts({});
     setShowAllConflicts(false);
@@ -269,11 +271,12 @@ export default function InternalLinkingCrawl() {
       }
       if (positionFilter !== 'all' && r.link_position !== positionFilter) return false;
       if (originFilter !== 'all' && r.link_origin !== originFilter) return false;
+      if (anchorExact && (r.anchor || '').trim().toLowerCase() !== anchorExact.toLowerCase()) return false;
       if (pq && !(r.link_path || '').toLowerCase().includes(pq)) return false;
       if (q && !(`${r.from} ${r.to} ${r.anchor}`.toLowerCase().includes(q))) return false;
       return true;
     });
-  }, [result, query, statusFilter, positionFilter, originFilter, pathQuery]);
+  }, [result, query, statusFilter, positionFilter, originFilter, pathQuery, anchorExact]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage  = Math.min(page, pageCount);
@@ -297,6 +300,7 @@ export default function InternalLinkingCrawl() {
     setPositionFilter('all');
     setOriginFilter('all');
     setPathQuery('');
+    setAnchorExact('');
     setPage(1);
     setOpenConflicts({});
     setShowAllConflicts(false);
@@ -454,8 +458,17 @@ export default function InternalLinkingCrawl() {
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                             <span
                               role="button"
-                              title="Filter the table by this anchor"
-                              onClick={(e) => { e.stopPropagation(); setQuery(c.anchor); setPage(1); }}
+                              title="Show only this anchor's links in the table"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setAnchorExact(c.anchor);
+                                setQuery('');
+                                setStatusFilter('all');
+                                setPositionFilter('all');
+                                setOriginFilter('all');
+                                setPathQuery('');
+                                setPage(1);
+                              }}
                               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: 'var(--text-muted)' }}
                             >
                               <Filter size={12} /> isolate
@@ -492,11 +505,17 @@ export default function InternalLinkingCrawl() {
           {/* ── Toolbar ── */}
           <div className="glass-panel">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
-              <h3 style={{ fontSize: '1rem', margin: 0 }}>
+              <h3 style={{ fontSize: '1rem', margin: 0, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 Internal Hyperlinks
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>
                   {filtered.length.toLocaleString()} shown
                 </span>
+                {anchorExact && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, padding: '3px 6px 3px 10px', borderRadius: 20, background: 'rgba(245,158,11,.12)', color: '#f59e0b' }}>
+                    anchor = "{anchorExact}"
+                    <X size={13} style={{ cursor: 'pointer' }} onClick={() => { setAnchorExact(''); setPage(1); }} />
+                  </span>
+                )}
               </h3>
               <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px' }} onClick={downloadCsv}>
                 <Download size={15} /> Export CSV
