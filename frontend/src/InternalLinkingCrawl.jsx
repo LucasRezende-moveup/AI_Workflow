@@ -233,11 +233,21 @@ export default function InternalLinkingCrawl() {
     URL.revokeObjectURL(a.href);
   };
 
+  const reset = () => {
+    setFile(null);
+    setResult(null);
+    setError('');
+    setQuery('');
+    setStatusFilter('all');
+    setPage(1);
+  };
+
   // ── render ────────────────────────────────────────────────────────────────────
   return (
     <div className="flex-col gap-6">
 
-      {/* ── Upload panel ── */}
+      {/* ── Upload panel (hidden once a crawl is loaded) ── */}
+      {!result && (
       <div
         className="glass-panel flex flex-col items-center justify-center"
         style={{
@@ -269,9 +279,25 @@ export default function InternalLinkingCrawl() {
         )}
         {error && <p style={{ marginTop: 14, color: '#f87171', fontSize: '0.85rem', textAlign: 'center', maxWidth: 480 }}>{error}</p>}
       </div>
+      )}
 
       {result && (
         <>
+          {/* ── Header: loaded file + upload-new button ── */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#d8d8e6', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {file?.name || 'Crawl loaded'}
+              </div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                {result.total_rows_in_file.toLocaleString()} rows in file · {result.total_links.toLocaleString()} hyperlinks
+              </div>
+            </div>
+            <button className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 16px', flexShrink: 0 }} onClick={reset}>
+              <Upload size={15} /> Upload New File
+            </button>
+          </div>
+
           {/* ── Stats ── */}
           <div className="grid grid-cols-4 gap-4">
             <StatCard icon={<Link2 size={16} color="#00f2fe" />}     label="Hyperlinks"      value={result.total_links.toLocaleString()} />
