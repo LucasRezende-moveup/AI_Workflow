@@ -136,7 +136,7 @@ def compare_urls(kw, data1, data2, data3=None, pos1=None, pos2=None, pos3=None):
         # Model Selection
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         target_model = 'models/gemini-1.5-flash' # Default
-        for alias in ['models/gemini-1.5-flash', 'models/gemini-flash-latest', 'models/gemini-2.0-flash']:
+        for alias in ['models/gemini-2.5-flash', 'models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']:
             if alias in available_models:
                 target_model = alias
                 break

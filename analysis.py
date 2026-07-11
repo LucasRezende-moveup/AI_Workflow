@@ -79,7 +79,7 @@ def ask_agent(query, rows):
         
         # Preference: 1.5 flash aliases -> 2.0 flash -> any flash -> first available
         target_model = None
-        for alias in ['models/gemini-1.5-flash', 'models/gemini-flash-latest', 'models/gemini-2.0-flash']:
+        for alias in ['models/gemini-2.5-flash', 'models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']:
             if alias in available_models:
                 target_model = alias
                 break

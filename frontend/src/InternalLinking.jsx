@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { LayoutDashboard, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { LayoutDashboard, ChevronDown, ChevronUp, ExternalLink, Globe, FileSpreadsheet } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import InternalLinkingCrawl from './InternalLinkingCrawl';
 
 function shortLabel(url) {
   try {
@@ -107,6 +108,7 @@ function MatrixCell({ cell, targetLabel }) {
 // ─── main component ─────────────────────────────────────────────────────────
 
 export default function InternalLinking() {
+  const [mode, setMode]           = useState('live');   // 'live' | 'crawl'
   const [urlsText, setUrlsText]   = useState('');
   const [authUser, setAuthUser]   = useState('');
   const [authPass, setAuthPass]   = useState('');
@@ -181,9 +183,35 @@ export default function InternalLinking() {
 
   // ── render ────────────────────────────────────────────────────────────────
 
+  const TABS = [
+    { key: 'live',  label: 'Live URL Scan',       icon: <Globe size={15} /> },
+    { key: 'crawl', label: 'Screaming Frog Crawl', icon: <FileSpreadsheet size={15} /> },
+  ];
+
   return (
     <div className="flex-col gap-6">
 
+      {/* ── Mode toggle ── */}
+      <div style={{ display: 'flex', gap: 6, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: 5, width: 'fit-content' }}>
+        {TABS.map(t => (
+          <button
+            key={t.key}
+            onClick={() => setMode(t.key)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 7, padding: '8px 16px', borderRadius: 7,
+              border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+              background: mode === t.key ? 'var(--primary)' : 'transparent',
+              color: mode === t.key ? 'white' : 'var(--text-muted)',
+              transition: 'background .15s, color .15s',
+            }}
+          >
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'crawl' ? <InternalLinkingCrawl /> : (
+      <>
       {/* ── Input panel ── */}
       <div className="glass-panel">
         <h2 className="flex items-center gap-2 mb-4">
@@ -515,6 +543,8 @@ export default function InternalLinking() {
             )}
           </div>
         </>
+      )}
+      </>
       )}
     </div>
   );

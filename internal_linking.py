@@ -92,7 +92,7 @@ def analyze_linking_strategy(scraped_data, target_urls):
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
         target_model = None
-        for alias in ['models/gemini-1.5-flash', 'models/gemini-flash-latest', 'models/gemini-2.0-flash']:
+        for alias in ['models/gemini-2.5-flash', 'models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']:
             if alias in available_models:
                 target_model = alias
                 break

@@ -123,17 +123,69 @@ def fetch_serp_duckduckgo(query, location_name="Global (No Geolocation)"):
         return {"organic": [], "related_keywords": [], "error": str(e)}
 
 
-def fetch_serp_results(query, location_name="Global (No Geolocation)", hl="en"):
+def fetch_serp_via_serpapi(query, location_name="Global (No Geolocation)"):
     """
-    SERP fetcher: tries DuckDuckGo first (fast, cloud-IP-friendly), falls back to
-    Googlebot Mobile emulation if DDG returns no results.
+    Fetches real Google SERP via SerpAPI. Returns the standard shape:
+    {organic: [{title, link, snippet}], related_keywords: [...], paa: [{question, answer}]}
     """
-    # Fast path — DDG works reliably from cloud IPs with no artificial delays
+    api_key = os.getenv("SERPAPI_KEY")
+    if not api_key:
+        return {"error": "SERPAPI_KEY not configured"}
+
+    loc_data = next((l for l in GEOLOCATIONS if l["name"] == location_name), GEOLOCATIONS[0])
+
+    params = {
+        "q": query,
+        "num": 10,
+        "api_key": api_key,
+        "engine": "google",
+    }
+    if loc_data["gl"]:
+        params["gl"] = loc_data["gl"]
+    if loc_data.get("hl"):
+        params["hl"] = loc_data["hl"]
+    if loc_data["domain"] != "google.com":
+        params["google_domain"] = loc_data["domain"]
+
+    try:
+        resp = requests.get("https://serpapi.com/search", params=params, timeout=30)
+        if not resp.ok:
+            return {"error": f"SerpAPI error {resp.status_code}: {resp.text[:200]}"}
+
+        data = resp.json()
+
+        organic = [
+            {"title": r.get("title", ""), "link": r.get("link", ""), "snippet": r.get("snippet", "N/A")}
+            for r in data.get("organic_results", [])[:10]
+        ]
+        related_keywords = [r["query"] for r in data.get("related_searches", [])[:8] if r.get("query")]
+        paa = [
+            {"question": p.get("question", ""), "answer": p.get("snippet", p.get("answer", ""))}
+            for p in data.get("people_also_ask", [])[:5]
+        ]
+
+        return {"organic": organic, "related_keywords": related_keywords, "paa": paa}
+    except Exception as e:
+        return {"error": f"SerpAPI request failed: {e}"}
+
+
+def fetch_serp_results(query, location_name="Global (No Geolocation)", hl="en", provider="auto"):
+    """
+    SERP fetcher. Priority: SerpAPI (real Google) → DuckDuckGo → Google scraper.
+    Fallback chain always runs in full — SerpAPI failure never blocks DDG.
+    """
+    # SerpAPI — real Google data, used whenever the key is configured
+    serpapi_result = fetch_serp_via_serpapi(query, location_name)
+    if serpapi_result.get("organic"):
+        return serpapi_result
+    serpapi_error = serpapi_result.get("error", "")
+
+    # DuckDuckGo — reliable from cloud IPs, used as fallback when SerpAPI fails
     ddg = fetch_serp_duckduckgo(query, location_name)
     if ddg.get("organic"):
         return ddg
 
-    # Slow path — Google (often blocked from Vercel IPs, kept as last resort)
+    # Google path — Googlebot Mobile emulation (last resort)
     sleep_min = float(os.getenv("SCRAPER_SLEEP_MIN", 3))
     sleep_max = float(os.getenv("SCRAPER_SLEEP_MAX", 7))
     
@@ -141,9 +193,10 @@ def fetch_serp_results(query, location_name="Global (No Geolocation)", hl="en"):
     proxies = {"http": proxy, "https": proxy} if proxy else None
     
     loc_data = next((l for l in GEOLOCATIONS if l["name"] == location_name), GEOLOCATIONS[0])
-    
+
     domain = loc_data["domain"]
     gl = loc_data["gl"]
+    hl = loc_data.get("hl", "en")  # use location's language, not the default parameter
     uule = generate_uule(loc_data.get("uule_name", ""))
     cr = loc_data.get("cr", "")
     
@@ -224,7 +277,8 @@ def fetch_serp_results(query, location_name="Global (No Geolocation)", hl="en"):
         except:
             continue
             
-    return {"error": "SERP fetch failed (Google blocked, DuckDuckGo returned no results). Try again in a few minutes."}
+    detail = f" (SerpAPI: {serpapi_error})" if serpapi_error and "not configured" not in serpapi_error else ""
+    return {"error": f"All SERP sources failed{detail}. Google server IP may be blocked — try again in a few minutes."}
 
 def parse_google_results(html):
     soup = BeautifulSoup(html, "html.parser")

@@ -3,8 +3,11 @@
   "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
   "functions": {
-    "api/index.py": { "maxDuration": 60 }
+    "api/index.py": { "maxDuration": 120 }
   },
+  "crons": [
+    { "path": "/api/cron/check-all", "schedule": "0 8 * * *" }
+  ],
   "routes": [
     { "src": "/api(.*)", "dest": "/api/index.py" },
     { "handle": "filesystem" },

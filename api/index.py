@@ -1587,6 +1587,111 @@ def internal_linking_analyze(req: InternalLinkingRequest):
     return {"summary": summary, "matrix": matrix, "matrix_cols": req.urls, "analysis": analysis}
 
 
+@app.post("/api/internal-linking/crawl-audit")
+async def internal_linking_crawl_audit(file: UploadFile = File(...)):
+    """
+    Audit internal links from a Screaming Frog crawl export (Bulk Export → Links → All Inlinks).
+    Filters exclusively for Type == 'Hyperlink' and returns a From / To / Anchor Text / Status Code table.
+    """
+    content = await file.read()
+    filename = (file.filename or "").lower()
+
+    try:
+        if filename.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(content), dtype=str, keep_default_na=False, encoding_errors="replace")
+        elif filename.endswith(".xlsx"):
+            df = pd.read_excel(io.BytesIO(content), dtype=str)
+        else:
+            raise HTTPException(status_code=400, detail="Please upload a Screaming Frog CSV or XLSX export.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+
+    if df.empty:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    # Case-insensitive column lookup
+    lower_map = {str(c).strip().lower(): c for c in df.columns}
+
+    def pick(*cands):
+        for cand in cands:
+            if cand in lower_map:
+                return lower_map[cand]
+        return None
+
+    type_col   = pick("type")
+    from_col   = pick("source", "from")
+    to_col     = pick("destination", "to")
+    anchor_col = pick("anchor text", "anchor", "anchor_text", "anchortext")
+    status_col = pick("status code", "status_code", "statuscode")
+
+    if not from_col or not to_col:
+        raise HTTPException(
+            status_code=400,
+            detail=("This does not look like a Screaming Frog inlinks export. Expected 'Source' and "
+                    "'Destination' columns — use Bulk Export → Links → All Inlinks."),
+        )
+
+    total_rows = len(df)
+
+    # Filter exclusively for hyperlink types
+    type_filtered = False
+    if type_col:
+        df = df[df[type_col].astype(str).str.strip().str.lower() == "hyperlink"]
+        type_filtered = True
+
+    # Build the normalized From / To / Anchor Text / Status Code table (vectorized)
+    def _clean(series):
+        return series.astype(str).str.strip().replace({"nan": "", "None": ""})
+
+    sub = pd.DataFrame({
+        "from": _clean(df[from_col]),
+        "to": _clean(df[to_col]),
+        "anchor": _clean(df[anchor_col]) if anchor_col else "",
+    })
+
+    if status_col:
+        codes = pd.to_numeric(df[status_col], errors="coerce")
+        sub["status_code"] = [("" if pd.isna(x) else str(int(x))) for x in codes]
+        numeric_codes = codes
+    else:
+        sub["status_code"] = ""
+        numeric_codes = pd.Series([float("nan")] * len(sub))
+
+    total_links   = len(sub)
+    broken_links  = int(((numeric_codes >= 400) & numeric_codes.notna()).sum())
+    redirect_links = int(((numeric_codes >= 300) & (numeric_codes < 400)).sum())
+
+    breakdown = (
+        sub["status_code"].replace("", "Unknown").value_counts().to_dict()
+    )
+    status_breakdown = sorted(
+        [{"code": k, "count": int(v)} for k, v in breakdown.items()],
+        key=lambda x: (x["code"] == "Unknown", x["code"]),
+    )
+
+    CAP = 5000
+    truncated = total_links > CAP
+    rows = sub.head(CAP).to_dict(orient="records")
+
+    return {
+        "rows": rows,
+        "total_links": total_links,
+        "returned": len(rows),
+        "truncated": truncated,
+        "total_rows_in_file": total_rows,
+        "unique_sources": int(sub["from"].nunique()) if total_links else 0,
+        "unique_targets": int(sub["to"].nunique()) if total_links else 0,
+        "broken_links": broken_links,
+        "redirect_links": redirect_links,
+        "status_breakdown": status_breakdown,
+        "type_filtered": type_filtered,
+        "has_status": bool(status_col),
+        "has_anchor": bool(anchor_col),
+    }
+
+
 # --- Image Alt Analysis Endpoints ---
 from PIL import Image as _PIL_Image
 
