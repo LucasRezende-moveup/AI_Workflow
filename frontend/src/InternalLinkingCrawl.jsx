@@ -1,7 +1,91 @@
 import { useState, useMemo } from 'react';
 import { Upload, Link2, Users as UsersIcon, Target, AlertTriangle, Download, Search, X } from 'lucide-react';
+import Papa from 'papaparse';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
+
+// Case-insensitive column picker against Papa's header field list
+function pickCol(fields, cands) {
+  const lower = {};
+  fields.forEach(f => { lower[String(f).trim().toLowerCase()] = f; });
+  for (const c of cands) if (lower[c] !== undefined) return lower[c];
+  return null;
+}
+
+// Build the audit result (same shape as the backend) from parsed CSV records
+function buildResult(records, fields) {
+  const typeCol   = pickCol(fields, ['type']);
+  const fromCol   = pickCol(fields, ['source', 'from']);
+  const toCol     = pickCol(fields, ['destination', 'to']);
+  const anchorCol = pickCol(fields, ['anchor text', 'anchor', 'anchor_text', 'anchortext']);
+  const statusCol = pickCol(fields, ['status code', 'status_code', 'statuscode']);
+
+  if (!fromCol || !toCol) {
+    throw new Error("This does not look like a Screaming Frog inlinks export. Expected 'Source' and " +
+      "'Destination' columns — use Bulk Export → Links → All Inlinks.");
+  }
+
+  const totalRows = records.length;
+
+  // Filter exclusively for hyperlink types
+  let typeFiltered = false;
+  let src = records;
+  if (typeCol) {
+    typeFiltered = true;
+    src = records.filter(r => String(r[typeCol] ?? '').trim().toLowerCase() === 'hyperlink');
+  }
+
+  const clean = (v) => {
+    const s = String(v ?? '').trim();
+    return (s === 'nan' || s === 'None') ? '' : s;
+  };
+
+  const rows = src.map(r => {
+    let code = '';
+    if (statusCol) {
+      const n = parseInt(String(r[statusCol] ?? '').trim(), 10);
+      code = Number.isNaN(n) ? '' : String(n);
+    }
+    return {
+      from: clean(r[fromCol]),
+      to: clean(r[toCol]),
+      anchor: anchorCol ? clean(r[anchorCol]) : '',
+      status_code: code,
+    };
+  });
+
+  const sources = new Set(), targets = new Set(), breakdown = {};
+  let broken = 0, redirect = 0;
+  rows.forEach(r => {
+    if (r.from) sources.add(r.from);
+    if (r.to) targets.add(r.to);
+    const n = parseInt(r.status_code, 10);
+    if (!Number.isNaN(n)) { if (n >= 400) broken++; else if (n >= 300) redirect++; }
+    const key = r.status_code || 'Unknown';
+    breakdown[key] = (breakdown[key] || 0) + 1;
+  });
+
+  const status_breakdown = Object.entries(breakdown)
+    .map(([code, count]) => ({ code, count }))
+    .sort((a, b) => (a.code === 'Unknown') - (b.code === 'Unknown') || a.code.localeCompare(b.code, undefined, { numeric: true }));
+
+  return {
+    rows,
+    total_links: rows.length,
+    returned: rows.length,
+    truncated: false,
+    total_rows_in_file: totalRows,
+    unique_sources: sources.size,
+    unique_targets: targets.size,
+    broken_links: broken,
+    redirect_links: redirect,
+    status_breakdown,
+    type_filtered: typeFiltered,
+    has_status: !!statusCol,
+    has_anchor: !!anchorCol,
+  };
+}
+
 
 function shortLabel(url) {
   if (!url) return '—';
@@ -68,25 +152,52 @@ export default function InternalLinkingCrawl() {
     if (f) { setFile(f); setResult(null); setError(''); }
   };
 
+  const applyResult = (data) => {
+    setResult(data);
+    setQuery('');
+    setStatusFilter('all');
+    setPage(1);
+  };
+
   const handleUpload = async () => {
     if (!file) return;
     setLoading(true);
     setError('');
     setResult(null);
-    const form = new FormData();
-    form.append('file', file);
+    const name = (file.name || '').toLowerCase();
     try {
-      const res = await fetch('/api/internal-linking/crawl-audit', { method: 'POST', body: form });
-      const data = await res.json();
-      if (!res.ok) setError(data.detail || 'Could not parse the crawl file.');
-      else {
-        setResult(data);
-        setQuery('');
-        setStatusFilter('all');
-        setPage(1);
+      if (name.endsWith('.csv')) {
+        // Parse entirely in the browser — avoids Vercel's ~4.5 MB request-body limit
+        const parsed = await new Promise((resolve, reject) => {
+          Papa.parse(file, {
+            header: true,
+            skipEmptyLines: 'greedy',
+            complete: resolve,
+            error: reject,
+          });
+        });
+        const fields = parsed.meta?.fields || [];
+        applyResult(buildResult(parsed.data, fields));
+      } else if (name.endsWith('.xlsx')) {
+        // XLSX is binary and usually small — parse server-side
+        if (file.size > 4_400_000) {
+          throw new Error('This XLSX is over ~4.4 MB and would exceed the upload limit. ' +
+            'Re-export as CSV — CSV is parsed locally with no size cap.');
+        }
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch('/api/internal-linking/crawl-audit', { method: 'POST', body: form });
+        if (!res.ok) {
+          let detail = 'Could not parse the crawl file.';
+          try { detail = (await res.json()).detail || detail; } catch { /* non-JSON error body */ }
+          throw new Error(detail);
+        }
+        applyResult(await res.json());
+      } else {
+        throw new Error('Please upload a Screaming Frog CSV or XLSX export.');
       }
     } catch (e) {
-      setError('Network error: ' + e.message);
+      setError(e.message || 'Could not parse the crawl file.');
     } finally {
       setLoading(false);
     }
@@ -143,8 +254,9 @@ export default function InternalLinkingCrawl() {
         </div>
         <h3 className="mb-2">Upload a Screaming Frog Crawl</h3>
         <p className="text-center" style={{ color: 'var(--text-muted)', fontSize: '0.85rem', maxWidth: 480, marginBottom: 18 }}>
-          Export <strong>Bulk Export → Links → All Inlinks</strong> as CSV or XLSX and drop it here.
+          Export <strong>Bulk Export → Links → All Inlinks</strong> as CSV and drop it here.
           Only rows of type <strong>Hyperlink</strong> are kept — CSS, JS, redirect and image links are filtered out.
+          CSV is parsed locally in your browser, so there's no file-size limit (recommended for large crawls).
         </p>
         <input type="file" id="sf-inlinks-upload" accept=".csv,.xlsx" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) { setFile(f); setResult(null); setError(''); } }} />
