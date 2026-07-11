@@ -114,6 +114,17 @@ function shortLabel(url) {
   }
 }
 
+// Anchors ignored by the consistency check — generic TOC/navigation labels that
+// legitimately point to many destinations, plus bare section numbers (5.1, 5.2, …)
+const EXCLUDED_ANCHORS = new Set(['confira também', 'perguntas frequentes']);
+
+function isExcludedAnchor(anchor) {
+  const a = anchor.trim().toLowerCase().replace(/[:.\s]+$/, '');
+  if (EXCLUDED_ANCHORS.has(a)) return true;
+  if (/^\d+(\.\d+)*$/.test(a)) return true; // 5, 5.1, 5.2, 5.1.2, …
+  return false;
+}
+
 // Normalize a URL so trailing-slash / fragment / case differences don't count as distinct destinations
 function normUrl(u) {
   if (!u) return '';
@@ -295,7 +306,7 @@ export default function InternalLinkingCrawl() {
     const map = new Map(); // lowercased anchor → { display, total, dests: Map(normUrl → {url, count}) }
     result.rows.forEach(r => {
       const a = (r.anchor || '').trim();
-      if (!a) return;
+      if (!a || isExcludedAnchor(a)) return;
       const key = a.toLowerCase();
       let e = map.get(key);
       if (!e) { e = { display: a, total: 0, dests: new Map() }; map.set(key, e); }
