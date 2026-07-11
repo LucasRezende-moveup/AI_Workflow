@@ -19,6 +19,9 @@ function buildResult(records, fields) {
   const toCol     = pickCol(fields, ['destination', 'to']);
   const anchorCol = pickCol(fields, ['anchor text', 'anchor', 'anchor_text', 'anchortext']);
   const statusCol = pickCol(fields, ['status code', 'status_code', 'statuscode']);
+  const posCol    = pickCol(fields, ['link position', 'link_position', 'linkposition']);
+  const pathCol   = pickCol(fields, ['link path', 'link_path', 'linkpath']);
+  const originCol = pickCol(fields, ['link origin', 'link_origin', 'linkorigin']);
 
   if (!fromCol || !toCol) {
     throw new Error("This does not look like a Screaming Frog inlinks export. Expected 'Source' and " +
@@ -51,14 +54,20 @@ function buildResult(records, fields) {
       to: clean(r[toCol]),
       anchor: anchorCol ? clean(r[anchorCol]) : '',
       status_code: code,
+      link_position: posCol ? clean(r[posCol]) : '',
+      link_path: pathCol ? clean(r[pathCol]) : '',
+      link_origin: originCol ? clean(r[originCol]) : '',
     };
   });
 
   const sources = new Set(), targets = new Set(), breakdown = {};
+  const posSet = new Set(), originSet = new Set();
   let broken = 0, redirect = 0;
   rows.forEach(r => {
     if (r.from) sources.add(r.from);
     if (r.to) targets.add(r.to);
+    if (r.link_position) posSet.add(r.link_position);
+    if (r.link_origin) originSet.add(r.link_origin);
     const n = parseInt(r.status_code, 10);
     if (!Number.isNaN(n)) { if (n >= 400) broken++; else if (n >= 300) redirect++; }
     const key = r.status_code || 'Unknown';
@@ -68,6 +77,8 @@ function buildResult(records, fields) {
   const status_breakdown = Object.entries(breakdown)
     .map(([code, count]) => ({ code, count }))
     .sort((a, b) => (a.code === 'Unknown') - (b.code === 'Unknown') || a.code.localeCompare(b.code, undefined, { numeric: true }));
+
+  const sortVals = (set) => [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
   return {
     rows,
@@ -80,9 +91,14 @@ function buildResult(records, fields) {
     broken_links: broken,
     redirect_links: redirect,
     status_breakdown,
+    position_options: sortVals(posSet),
+    origin_options: sortVals(originSet),
     type_filtered: typeFiltered,
     has_status: !!statusCol,
     has_anchor: !!anchorCol,
+    has_position: !!posCol,
+    has_link_path: !!pathCol,
+    has_origin: !!originCol,
   };
 }
 
@@ -143,6 +159,9 @@ export default function InternalLinkingCrawl() {
 
   const [query, setQuery]         = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [positionFilter, setPositionFilter] = useState('all');
+  const [originFilter, setOriginFilter]     = useState('all');
+  const [pathQuery, setPathQuery]           = useState('');
   const [page, setPage]           = useState(1);
 
   const onDrop = (e) => {
@@ -156,6 +175,9 @@ export default function InternalLinkingCrawl() {
     setResult(data);
     setQuery('');
     setStatusFilter('all');
+    setPositionFilter('all');
+    setOriginFilter('all');
+    setPathQuery('');
     setPage(1);
   };
 
@@ -207,6 +229,7 @@ export default function InternalLinkingCrawl() {
   const filtered = useMemo(() => {
     if (!result) return [];
     const q = query.trim().toLowerCase();
+    const pq = pathQuery.trim().toLowerCase();
     return result.rows.filter(r => {
       if (statusFilter !== 'all') {
         const code = r.status_code || 'Unknown';
@@ -215,10 +238,13 @@ export default function InternalLinkingCrawl() {
           if (!(n >= 400)) return false;
         } else if (code !== statusFilter) return false;
       }
+      if (positionFilter !== 'all' && r.link_position !== positionFilter) return false;
+      if (originFilter !== 'all' && r.link_origin !== originFilter) return false;
+      if (pq && !(r.link_path || '').toLowerCase().includes(pq)) return false;
       if (q && !(`${r.from} ${r.to} ${r.anchor}`.toLowerCase().includes(q))) return false;
       return true;
     });
-  }, [result, query, statusFilter]);
+  }, [result, query, statusFilter, positionFilter, originFilter, pathQuery]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage  = Math.min(page, pageCount);
@@ -239,6 +265,9 @@ export default function InternalLinkingCrawl() {
     setError('');
     setQuery('');
     setStatusFilter('all');
+    setPositionFilter('all');
+    setOriginFilter('all');
+    setPathQuery('');
     setPage(1);
   };
 
@@ -360,6 +389,51 @@ export default function InternalLinkingCrawl() {
                   <option key={s.code} value={s.code}>{s.code} · {s.count.toLocaleString()}</option>
                 ))}
               </select>
+
+              {result.has_position && (
+                <select
+                  className="glass-input glass-select"
+                  style={{ maxWidth: 220 }}
+                  value={positionFilter}
+                  onChange={(e) => { setPositionFilter(e.target.value); setPage(1); }}
+                >
+                  <option value="all">All link positions</option>
+                  {result.position_options.map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              )}
+
+              {result.has_origin && (
+                <select
+                  className="glass-input glass-select"
+                  style={{ maxWidth: 220 }}
+                  value={originFilter}
+                  onChange={(e) => { setOriginFilter(e.target.value); setPage(1); }}
+                >
+                  <option value="all">All link origins</option>
+                  {result.origin_options.map(o => (
+                    <option key={o} value={o}>{o}</option>
+                  ))}
+                </select>
+              )}
+
+              {result.has_link_path && (
+                <div style={{ position: 'relative', flex: 1, minWidth: 220 }}>
+                  <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <input
+                    className="glass-input"
+                    style={{ paddingLeft: 34 }}
+                    placeholder="Filter by link path…"
+                    value={pathQuery}
+                    onChange={(e) => { setPathQuery(e.target.value); setPage(1); }}
+                  />
+                  {pathQuery && (
+                    <X size={14} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                      onClick={() => { setPathQuery(''); setPage(1); }} />
+                  )}
+                </div>
+              )}
             </div>
 
             {/* ── Table ── */}

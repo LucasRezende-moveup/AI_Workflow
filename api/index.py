@@ -1625,6 +1625,9 @@ async def internal_linking_crawl_audit(file: UploadFile = File(...)):
     to_col     = pick("destination", "to")
     anchor_col = pick("anchor text", "anchor", "anchor_text", "anchortext")
     status_col = pick("status code", "status_code", "statuscode")
+    pos_col    = pick("link position", "link_position", "linkposition")
+    path_col   = pick("link path", "link_path", "linkpath")
+    origin_col = pick("link origin", "link_origin", "linkorigin")
 
     if not from_col or not to_col:
         raise HTTPException(
@@ -1649,6 +1652,9 @@ async def internal_linking_crawl_audit(file: UploadFile = File(...)):
         "from": _clean(df[from_col]),
         "to": _clean(df[to_col]),
         "anchor": _clean(df[anchor_col]) if anchor_col else "",
+        "link_position": _clean(df[pos_col]) if pos_col else "",
+        "link_path": _clean(df[path_col]) if path_col else "",
+        "link_origin": _clean(df[origin_col]) if origin_col else "",
     })
 
     if status_col:
@@ -1671,6 +1677,12 @@ async def internal_linking_crawl_audit(file: UploadFile = File(...)):
         key=lambda x: (x["code"] == "Unknown", x["code"]),
     )
 
+    def _distinct(col):
+        if not col:
+            return []
+        vals = [v for v in sub[col].unique().tolist() if v]
+        return sorted(vals, key=lambda s: s.lower())
+
     CAP = 5000
     truncated = total_links > CAP
     rows = sub.head(CAP).to_dict(orient="records")
@@ -1686,9 +1698,14 @@ async def internal_linking_crawl_audit(file: UploadFile = File(...)):
         "broken_links": broken_links,
         "redirect_links": redirect_links,
         "status_breakdown": status_breakdown,
+        "position_options": _distinct("link_position") if pos_col else [],
+        "origin_options": _distinct("link_origin") if origin_col else [],
         "type_filtered": type_filtered,
         "has_status": bool(status_col),
         "has_anchor": bool(anchor_col),
+        "has_position": bool(pos_col),
+        "has_link_path": bool(path_col),
+        "has_origin": bool(origin_col),
     }
 
 
