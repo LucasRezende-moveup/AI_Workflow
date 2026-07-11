@@ -119,9 +119,11 @@ function shortLabel(url) {
 const EXCLUDED_ANCHORS = new Set(['confira também', 'perguntas frequentes']);
 
 function isExcludedAnchor(anchor) {
-  const a = anchor.trim().toLowerCase().replace(/[:.\s]+$/, '');
-  if (EXCLUDED_ANCHORS.has(a)) return true;
-  if (/^\d+(\.\d+)*$/.test(a)) return true; // 5, 5.1, 5.2, 5.1.2, …
+  const a = anchor.trim().toLowerCase();
+  // Phrase match anywhere (handles a leading section number, e.g. "9 confira também")
+  for (const p of EXCLUDED_ANCHORS) if (a.includes(p)) return true;
+  // Bare section numbers: 5, 5.1, 5.2, 5.1.2, …
+  if (/^\d+(\.\d+)*$/.test(a.replace(/[:.\s]+$/, ''))) return true;
   return false;
 }
 
