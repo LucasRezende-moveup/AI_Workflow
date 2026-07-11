@@ -97,9 +97,11 @@ function CoverageBar({ pct, width = 80 }) {
 
 // ── Timeline tab ─────────────────────────────────────────────────────────────
 
-function TimelineTab({ urlResults, dates, dailySummary }) {
+function TimelineTab({ urlResults, dates, dailySummary, pages }) {
   const [tip, setTip] = useState(null);
   const [expandedUrls, setExpandedUrls] = useState(new Set());
+  const [siteExpanded, setSiteExpanded] = useState(false);
+  const [siteFilter, setSiteFilter] = useState('');
 
   const toggleExpand = useCallback((url) => {
     setExpandedUrls(prev => {
@@ -257,67 +259,148 @@ function TimelineTab({ urlResults, dates, dailySummary }) {
           <tbody>
 
             {/* ── Site-level row ── */}
-            {dailySummary?.length > 0 && (
-              <tr>
-                <td style={{
-                  position: 'sticky', left: 0, zIndex: 1, background: BG,
-                  paddingRight: 12, paddingTop: 4, paddingBottom: 4, width: URL_W,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      width: 20, height: 20, borderRadius: 5,
-                      background: 'rgba(226,0,113,0.14)', border: '1px solid rgba(226,0,113,0.28)',
-                      flexShrink: 0,
+            {dailySummary?.length > 0 && (() => {
+              const avg = dailySummary.length > 0
+                ? Math.round(dailySummary.reduce((s, d) => s + (d.total_pages || 0), 0) / dailySummary.length)
+                : 0;
+              const filteredPages = siteFilter
+                ? pages.filter(p => p.page?.toLowerCase().includes(siteFilter.toLowerCase()))
+                : pages;
+              return (
+                <React.Fragment>
+                  <tr
+                    onClick={() => setSiteExpanded(v => !v)}
+                    style={{ cursor: pages.length > 0 ? 'pointer' : 'default' }}
+                    onMouseEnter={e => { if (pages.length > 0) e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; }}
+                    onMouseLeave={e => e.currentTarget.style.background = ''}
+                  >
+                    <td style={{
+                      position: 'sticky', left: 0, zIndex: 1, background: siteExpanded ? 'rgba(255,255,255,0.03)' : BG,
+                      paddingRight: 12, paddingTop: 4, paddingBottom: 4, width: URL_W,
                     }}>
-                      <Globe size={11} color="rgba(226,0,113,0.9)" />
-                    </span>
-                    <span style={{ fontSize: '0.73rem', fontWeight: 700, color: 'rgba(226,0,113,0.95)' }}>All pages</span>
-                  </div>
-                </td>
-                {dates.map(date => {
-                  const d = siteDayMap[date];
-                  const pages = d?.total_pages || 0;
-                  const intensity = pages > 0 ? Math.max(0.15, pages / maxSitePages) : 0;
-                  const isFirst = monthStarts.has(date);
-                  return (
-                    <td key={date} style={{
-                      padding: `4px ${GAP / 2}px`,
-                      borderLeft: isFirst ? '1px solid rgba(255,255,255,0.06)' : undefined,
-                    }}>
-                      <div
-                        onMouseEnter={e => handleEnter(e, { date, siteDay: d, url: 'site' })}
-                        onMouseMove={handleMove}
-                        onMouseLeave={handleLeave}
-                        style={{
-                          width: CELL, height: CELL, borderRadius: 3, cursor: 'default', boxSizing: 'border-box',
-                          background: pages > 0 ? `rgba(226,0,113,${intensity.toFixed(2)})` : 'rgba(255,255,255,0.05)',
-                          border: `1px solid ${pages > 0 ? `rgba(226,0,113,${Math.min(0.45, intensity * 0.55).toFixed(2)})` : 'rgba(255,255,255,0.04)'}`,
-                          transition: 'box-shadow 0.1s, transform 0.1s',
-                        }}
-                        onMouseOver={e => {
-                          e.currentTarget.style.boxShadow = pages > 0 ? '0 0 0 2px rgba(226,0,113,0.5)' : '0 0 0 2px rgba(255,255,255,0.18)';
-                          e.currentTarget.style.transform = 'scale(1.18)';
-                        }}
-                        onMouseOut={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
-                      />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <span style={{
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          width: 20, height: 20, borderRadius: 5,
+                          background: 'rgba(226,0,113,0.14)', border: '1px solid rgba(226,0,113,0.28)',
+                          flexShrink: 0,
+                        }}>
+                          <Globe size={11} color="rgba(226,0,113,0.9)" />
+                        </span>
+                        <span style={{ fontSize: '0.73rem', fontWeight: 700, color: 'rgba(226,0,113,0.95)', flex: 1 }}>All pages</span>
+                        {pages.length > 0 && (
+                          <span style={{ flexShrink: 0, color: 'rgba(255,255,255,0.25)', transition: 'transform 0.15s', transform: siteExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                            <ChevronDown size={12} />
+                          </span>
+                        )}
+                      </div>
                     </td>
-                  );
-                })}
-                <td style={{ paddingLeft: 14, whiteSpace: 'nowrap' }}>
-                  {(() => {
-                    const avg = dailySummary.length > 0
-                      ? Math.round(dailySummary.reduce((s, d) => s + (d.total_pages || 0), 0) / dailySummary.length)
-                      : 0;
-                    return (
+                    {dates.map(date => {
+                      const d = siteDayMap[date];
+                      const pg = d?.total_pages || 0;
+                      const intensity = pg > 0 ? Math.max(0.15, pg / maxSitePages) : 0;
+                      const isFirst = monthStarts.has(date);
+                      return (
+                        <td key={date} style={{
+                          padding: `4px ${GAP / 2}px`,
+                          borderLeft: isFirst ? '1px solid rgba(255,255,255,0.06)' : undefined,
+                        }}>
+                          <div
+                            onMouseEnter={e => { e.stopPropagation(); handleEnter(e, { date, siteDay: d, url: 'site' }); }}
+                            onMouseMove={e => { e.stopPropagation(); handleMove(e); }}
+                            onMouseLeave={e => { e.stopPropagation(); handleLeave(); }}
+                            onClick={e => e.stopPropagation()}
+                            style={{
+                              width: CELL, height: CELL, borderRadius: 3, cursor: 'default', boxSizing: 'border-box',
+                              background: pg > 0 ? `rgba(226,0,113,${intensity.toFixed(2)})` : 'rgba(255,255,255,0.05)',
+                              border: `1px solid ${pg > 0 ? `rgba(226,0,113,${Math.min(0.45, intensity * 0.55).toFixed(2)})` : 'rgba(255,255,255,0.04)'}`,
+                              transition: 'box-shadow 0.1s, transform 0.1s',
+                            }}
+                            onMouseOver={e => {
+                              e.currentTarget.style.boxShadow = pg > 0 ? '0 0 0 2px rgba(226,0,113,0.5)' : '0 0 0 2px rgba(255,255,255,0.18)';
+                              e.currentTarget.style.transform = 'scale(1.18)';
+                            }}
+                            onMouseOut={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
+                          />
+                        </td>
+                      );
+                    })}
+                    <td style={{ paddingLeft: 14, whiteSpace: 'nowrap' }}>
                       <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
                         avg <span style={{ color: 'rgba(226,0,113,0.8)', fontWeight: 600 }}>{avg.toLocaleString()}</span> pages/day
+                        {pages.length > 0 && <span style={{ marginLeft: 8, color: 'rgba(255,255,255,0.25)' }}>· {pages.length.toLocaleString()} pages</span>}
                       </span>
-                    );
-                  })()}
-                </td>
-              </tr>
-            )}
+                    </td>
+                  </tr>
+
+                  {/* ── Expanded site page list ── */}
+                  {siteExpanded && pages.length > 0 && (
+                    <tr style={{ background: 'rgba(0,0,0,0.18)' }}>
+                      <td colSpan={dates.length + 2} style={{ padding: '0 0 0 20px' }}>
+                        <div style={{ padding: '14px 20px 14px 0' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'rgba(226,0,113,0.9)' }}>
+                              All indexed pages
+                            </span>
+                            <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{pages.length.toLocaleString()} total</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+                              <Filter size={12} color="var(--text-muted)" />
+                              <input
+                                className="glass-input"
+                                placeholder="Filter by URL…"
+                                value={siteFilter}
+                                onChange={e => setSiteFilter(e.target.value)}
+                                onClick={e => e.stopPropagation()}
+                                style={{ fontSize: '0.75rem', padding: '4px 8px', width: 200 }}
+                              />
+                              {siteFilter && (
+                                <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                                  {filteredPages.length.toLocaleString()} shown
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div style={{ overflowX: 'auto', maxHeight: 380, overflowY: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+                                  {['Page URL', 'Clicks', 'Impressions', 'CTR', 'Avg. Pos'].map(h => (
+                                    <th key={h} style={{ padding: '5px 12px 5px 0', textAlign: h === 'Page URL' ? 'left' : 'center', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filteredPages.slice(0, 200).map((p, i) => (
+                                  <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                    <td style={{ padding: '5px 12px 5px 0', maxWidth: 360 }}>
+                                      <a href={p.page} target="_blank" rel="noopener noreferrer"
+                                        onClick={e => e.stopPropagation()}
+                                        style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--primary)', textDecoration: 'none', fontSize: '0.73rem' }}>
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.page}>{shortPath(p.page)}</span>
+                                        <ExternalLink size={9} style={{ flexShrink: 0, opacity: 0.4 }} />
+                                      </a>
+                                    </td>
+                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: (p.clicks || 0) > 0 ? '#4ade80' : 'var(--text-dim)', fontWeight: (p.clicks || 0) > 0 ? 700 : 400 }}>{(p.clicks || 0).toLocaleString()}</td>
+                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{(p.impressions || 0).toLocaleString()}</td>
+                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{p.impressions > 0 ? `${((p.clicks || 0) / p.impressions * 100).toFixed(1)}%` : '—'}</td>
+                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{p.position != null ? Number(p.position).toFixed(1) : '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          {filteredPages.length > 200 && (
+                            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: 10 }}>
+                              Showing 200 of {filteredPages.length.toLocaleString()} — use the filter to narrow down
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })()}
 
             {/* ── Thin separator between site row and URL rows ── */}
             {dailySummary?.length > 0 && urlResults?.length > 0 && (
@@ -1216,6 +1299,7 @@ export default function IndexationControl() {
                 urlResults={result.url_results || []}
                 dates={result.dates || []}
                 dailySummary={result.daily_summary || []}
+                pages={result.pages || []}
               />
             )}
 
