@@ -2158,14 +2158,14 @@ def _extract_metrics_deterministic(all_data):
     return metrics
 
 
-@app.post("/api/sheets/analyze")
-def sheets_analyze(req: SheetAnalyzeRequest):
+def _compute_seo_health(spreadsheet_id: str, site_name: str = "") -> dict:
+    """Fetch a Looker Studio sheet, compute metrics + health score, persist a run. Returns the result dict."""
     # Prefer a dedicated unrestricted server key; fall back to the shared key
     api_key = os.getenv("GOOGLE_SHEETS_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise HTTPException(status_code=503, detail="No Google API key configured. Set GOOGLE_SHEETS_API_KEY in Vercel env vars.")
 
-    sheet_id = _extract_spreadsheet_id(req.spreadsheet_id)
+    sheet_id = _extract_spreadsheet_id(spreadsheet_id)
 
     try:
         meta_r = http_requests.get(
@@ -2177,7 +2177,7 @@ def sheets_analyze(req: SheetAnalyzeRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Cannot access spreadsheet: {e}. Ensure it is set to 'Anyone with the link can view'.")
 
-    spreadsheet_title = meta.get("properties", {}).get("title", req.site_name or "Unknown")
+    spreadsheet_title = meta.get("properties", {}).get("title", site_name or "Unknown")
     sheets = meta.get("sheets", [])
 
     all_data = []
@@ -2206,7 +2206,7 @@ def sheets_analyze(req: SheetAnalyzeRequest):
     health  = _calculate_health_score(all_data)
 
     out = {
-        "site_name": req.site_name or spreadsheet_title,
+        "site_name": site_name or spreadsheet_title,
         "spreadsheet_title": spreadsheet_title,
         "metrics": metrics,
         "sheets_read": [d["sheet"] for d in all_data],
@@ -2217,10 +2217,87 @@ def sheets_analyze(req: SheetAnalyzeRequest):
     _save_run(
         tool="seo_health",
         result=out,
-        target_url=req.site_name or spreadsheet_title,
+        target_url=site_name or spreadsheet_title,
         summary=f"Score: {health['score']}/100 ({health['label']})",
     )
     return out
+
+
+@app.post("/api/sheets/analyze")
+def sheets_analyze(req: SheetAnalyzeRequest):
+    return _compute_seo_health(req.spreadsheet_id, req.site_name)
+
+
+@app.get("/api/seo-health/history")
+def seo_health_history(site: str, days: int = 30):
+    """Return one SEO-health snapshot per calendar day for a site, pulled from analysis_runs."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT ON (created_at::date) created_at, result
+                    FROM analysis_runs
+                    WHERE tool = 'seo_health' AND target_url = %s
+                    ORDER BY created_at::date DESC, created_at DESC
+                    LIMIT %s
+                    """,
+                    (site, min(max(days, 1), 90)),
+                )
+                rows = cur.fetchall()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    history = []
+    for r in rows:
+        result = r.get("result") or {}
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except Exception:
+                result = {}
+        score = result.get("score")
+        if score is None:
+            continue
+        metrics_snapshot = {}
+        for m in (result.get("metrics") or []):
+            name = m.get("name")
+            cur_val = m.get("current")
+            if name and cur_val is not None:
+                metrics_snapshot[name] = cur_val
+        ts = r.get("created_at")
+        if not ts:
+            continue
+        history.append({
+            "ts": int(ts.timestamp() * 1000),
+            "score": score,
+            "metrics": metrics_snapshot,
+        })
+    history.reverse()  # chronological ascending
+    return {"history": history}
+
+
+@app.post("/api/cron/seo-health-snapshot")
+def cron_seo_health_snapshot(authorization: str = Header(None)):
+    """Daily job: record a SEO-health snapshot for every configured site so history accrues without opening the app."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret and authorization != f"Bearer {cron_secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    raw = os.getenv("SEO_HEALTH_SITES", "[]")
+    try:
+        sites = _json_mod.loads(raw)
+    except Exception:
+        sites = []
+    results = []
+    for s in sites:
+        name = s.get("name", "")
+        url = s.get("url", "")
+        try:
+            out = _compute_seo_health(url, name)
+            results.append({"site": name, "score": out.get("score")})
+        except Exception as e:
+            results.append({"site": name, "error": str(e)})
+    return {"recorded": len(results), "results": results}
 
 
 # --- CWV Analysis Endpoints ---

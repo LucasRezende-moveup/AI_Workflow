@@ -6,7 +6,8 @@
     "api/index.py": { "maxDuration": 120 }
   },
   "crons": [
-    { "path": "/api/cron/check-all", "schedule": "0 8 * * *" }
+    { "path": "/api/cron/check-all", "schedule": "0 8 * * *" },
+    { "path": "/api/cron/seo-health-snapshot", "schedule": "0 7 * * *" }
   ],
   "routes": [
     { "src": "/api(.*)", "dest": "/api/index.py" },

@@ -483,6 +483,25 @@ export default function SeoHealth() {
       .catch(e => { setSitesError(e.message); setSitesLoading(false); });
   }, []);
 
+  // ── load persisted snapshot history from the database ──────────────────────
+  const loadHistory = async (site) => {
+    try {
+      const res = await fetch(`/api/seo-health/history?site=${encodeURIComponent(site.name)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const dbHist = (data.history || []).filter(h => h.ts && h.score != null);
+      if (!dbHist.length) return;
+      setCache(prev => {
+        const existing = prev[site.id]?.history || [];
+        // Merge by calendar day — DB rows win over any local-only entry for the same day
+        const byDay = new Map();
+        [...existing, ...dbHist].forEach(h => byDay.set(new Date(h.ts).toDateString(), h));
+        const merged = [...byDay.values()].sort((a, b) => a.ts - b.ts).slice(-30);
+        return { ...prev, [site.id]: { ...(prev[site.id] || {}), history: merged } };
+      });
+    } catch { /* history is best-effort */ }
+  };
+
   // ── refresh helper ─────────────────────────────────────────────────────────
   const refresh = async (site) => {
     setLoading(prev => ({ ...prev, [site.id]: true }));
@@ -515,6 +534,8 @@ export default function SeoHealth() {
 
           return { ...prev, [site.id]: { data, ts: Date.now(), history: newHistory } };
         });
+        // Pull the full persisted history (this run is already saved server-side)
+        loadHistory(site);
       }
     } catch (e) {
       setErrors(prev => ({ ...prev, [site.id]: 'Network error: ' + e.message }));
@@ -527,6 +548,7 @@ export default function SeoHealth() {
   useEffect(() => {
     if (!sites.length) return;
     sites.forEach(site => {
+      loadHistory(site); // always hydrate the sparkline from the database
       const cached = cacheRef.current[site.id];
       const isStale = !cached?.ts || (Date.now() - cached.ts) > STALE_MS;
       if (isStale) refresh(site);
