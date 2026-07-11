@@ -12,6 +12,12 @@ import bcrypt
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
 import requests as _http
+try:
+    import psycopg2
+    import psycopg2.extras
+    _PSYCOPG2 = True
+except ImportError:
+    _PSYCOPG2 = False
 
 # Credential bootstrap: reconstruct files from env vars on read-only filesystems (e.g. Vercel)
 def _bootstrap_credentials():
@@ -105,10 +111,134 @@ _JWT_SECRET  = os.getenv("JWT_SECRET", "CHANGE_ME_set_JWT_SECRET_env_var")
 _JWT_ALGO    = "HS256"
 _JWT_HOURS   = 24
 
-# In-memory cache so reads within the same warm instance are fast
-_users_cache: Optional[list] = None
-_users_cache_ts: float = 0.0
-_CACHE_TTL = 120  # seconds
+# ── Database helpers ──────────────────────────────────────────────────────────
+
+def _db_connect():
+    url = os.environ.get("DATABASE_URL")
+    if not url or not _PSYCOPG2:
+        raise RuntimeError("DATABASE_URL not configured or psycopg2 unavailable")
+    if "sslmode" not in url:
+        url += ("&" if "?" in url else "?") + "sslmode=require"
+    return psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
+
+
+def _ensure_schema():
+    """Create tables on cold start; auto-migrate from USERS_JSON if empty."""
+    if not _PSYCOPG2:
+        return
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id            TEXT PRIMARY KEY,
+                        email         TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        name          TEXT NOT NULL DEFAULT '',
+                        role          TEXT NOT NULL DEFAULT 'editor',
+                        created_at    TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at    TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS analysis_runs (
+                        id         TEXT PRIMARY KEY,
+                        tool       TEXT NOT NULL,
+                        keyword    TEXT,
+                        target_url TEXT,
+                        location   TEXT,
+                        summary    TEXT,
+                        result     JSONB,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS analysis_runs_tool_idx
+                    ON analysis_runs (tool, created_at DESC)
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS keyword_tracking (
+                        id         TEXT PRIMARY KEY,
+                        keyword    TEXT NOT NULL,
+                        target_url TEXT,
+                        location   TEXT NOT NULL DEFAULT 'Global (No Geolocation)',
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS keyword_rankings (
+                        id               TEXT PRIMARY KEY,
+                        tracking_id      TEXT REFERENCES keyword_tracking(id) ON DELETE CASCADE,
+                        position         INTEGER,
+                        ranking_url      TEXT,
+                        fs_holder_url    TEXT,
+                        fs_holder_domain TEXT,
+                        total_results    INTEGER,
+                        checked_at       TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS keyword_rankings_tid_idx
+                    ON keyword_rankings (tracking_id, checked_at DESC)
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS alerts (
+                        id          TEXT PRIMARY KEY,
+                        tracking_id TEXT REFERENCES keyword_tracking(id) ON DELETE CASCADE,
+                        keyword     TEXT NOT NULL,
+                        alert_type  TEXT NOT NULL,
+                        severity    TEXT NOT NULL DEFAULT 'info',
+                        message     TEXT,
+                        prev_value  TEXT,
+                        curr_value  TEXT,
+                        seen        BOOLEAN DEFAULT false,
+                        created_at  TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS alerts_seen_idx ON alerts (seen, created_at DESC)
+                """)
+                cur.execute("SELECT COUNT(*) AS cnt FROM users")
+                row = cur.fetchone()
+                if row["cnt"] == 0:
+                    legacy = os.getenv("USERS_JSON", "[]")
+                    try:
+                        for u in json.loads(legacy):
+                            cur.execute(
+                                """INSERT INTO users (id, email, password_hash, name, role, created_at)
+                                   VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                                (u["id"], u["email"].lower(), u["password_hash"],
+                                 u.get("name", ""), u.get("role", "editor"),
+                                 u.get("created_at"))
+                            )
+                    except Exception:
+                        pass
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _save_run(tool: str, result: dict, keyword: str = None,
+              target_url: str = None, location: str = None, summary: str = None):
+    """Persist an analysis result — never raises, never blocks the response."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO analysis_runs (id, tool, keyword, target_url, location, summary, result)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    (str(uuid.uuid4()), tool, keyword, target_url, location, summary,
+                     json.dumps(result))
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+
+try:
+    _ensure_schema()
+except Exception:
+    pass
 
 class LoginRequest(BaseModel):
     email: str
@@ -127,56 +257,20 @@ class UserUpdate(BaseModel):
 
 
 def _load_users() -> list:
-    global _users_cache, _users_cache_ts
-    now = time.time()
-    if _users_cache is None or (now - _users_cache_ts) > _CACHE_TTL:
+    """Load all users from DB; falls back to USERS_JSON if DB is unavailable."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, email, password_hash, name, role, created_at FROM users ORDER BY created_at"
+                )
+                return [dict(r) for r in cur.fetchall()]
+    except Exception:
         raw = os.getenv("USERS_JSON", "[]")
         try:
-            _users_cache = json.loads(raw)
+            return json.loads(raw)
         except Exception:
-            _users_cache = []
-        _users_cache_ts = now
-    return list(_users_cache)
-
-
-def _persist_users(users: list) -> dict:
-    """Write users back to the USERS_JSON Vercel env var via REST API."""
-    global _users_cache, _users_cache_ts
-    _users_cache = users          # update in-memory immediately
-    _users_cache_ts = time.time()
-
-    token      = os.getenv("VERCEL_TOKEN")
-    project_id = os.getenv("VERCEL_PROJECT_ID", "prj_qYG4BB62fzbzP3iRhzFxewUxKxSD")
-    team_id    = os.getenv("VERCEL_TEAM_ID",    "team_5PPnZmu0JrbtGrxvP1RznhzF")
-
-    if not token:
-        return {"persisted": False, "reason": "VERCEL_TOKEN not configured"}
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    qs      = f"?teamId={team_id}"
-    list_url = f"https://api.vercel.com/v9/projects/{project_id}/env{qs}"
-
-    try:
-        resp   = _http.get(list_url, headers=headers, timeout=10)
-        envs   = resp.json().get("envs", [])
-        target = next((e for e in envs if e["key"] == "USERS_JSON"), None)
-        value  = json.dumps(users)
-
-        if target:
-            patch_url = f"https://api.vercel.com/v9/projects/{project_id}/env/{target['id']}{qs}"
-            r = _http.patch(patch_url, headers=headers,
-                            json={"value": value}, timeout=10)
-        else:
-            r = _http.post(list_url, headers=headers, json={
-                "key": "USERS_JSON", "value": value,
-                "type": "sensitive", "target": ["production", "preview", "development"]
-            }, timeout=10)
-
-        if r.status_code in (200, 201):
-            return {"persisted": True}
-        return {"persisted": False, "reason": f"Vercel API {r.status_code}: {r.text[:200]}"}
-    except Exception as exc:
-        return {"persisted": False, "reason": str(exc)}
+            return []
 
 
 def _decode_token(authorization: str = Header(None)):
@@ -240,65 +334,436 @@ def list_users(current_user=Depends(_require_super_admin)):
 
 @app.post("/api/users")
 def create_user(req: UserCreate, current_user=Depends(_require_super_admin)):
-    users = _load_users()
-    if any(u["email"].lower() == req.email.strip().lower() for u in users):
-        raise HTTPException(status_code=409, detail="Email already exists")
     if req.role not in ("super-admin", "editor"):
         raise HTTPException(status_code=400, detail="Role must be super-admin or editor")
-
-    pw_hash  = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt(12)).decode()
-    new_user = {
-        "id":            str(uuid.uuid4()),
-        "email":         req.email.strip().lower(),
-        "name":          req.name or req.email.split("@")[0],
-        "role":          req.role,
-        "password_hash": pw_hash,
-        "created_at":    datetime.now(timezone.utc).isoformat(),
-    }
-    users.append(new_user)
-    result = _persist_users(users)
-    return {"user": {"id": new_user["id"], "email": new_user["email"],
-                     "name": new_user["name"], "role": new_user["role"]},
-            **result}
+    uid     = str(uuid.uuid4())
+    email   = req.email.strip().lower()
+    name    = req.name or email.split("@")[0]
+    pw_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt(12)).decode()
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO users (id, email, password_hash, name, role) VALUES (%s,%s,%s,%s,%s)",
+                    (uid, email, pw_hash, name, req.role)
+                )
+            conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(status_code=409, detail="Email already exists")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"user": {"id": uid, "email": email, "name": name, "role": req.role}, "persisted": True}
 
 
 @app.put("/api/users/{user_id}")
 def update_user(user_id: str, req: UserUpdate, current_user=Depends(_require_super_admin)):
-    users   = _load_users()
-    user    = next((u for u in users if u["id"] == user_id), None)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
     if req.role and req.role not in ("super-admin", "editor"):
         raise HTTPException(status_code=400, detail="Role must be super-admin or editor")
-
-    if req.name     is not None: user["name"] = req.name
-    if req.role     is not None: user["role"] = req.role
+    sets, params = [], []
+    if req.name     is not None: sets.append("name = %s");          params.append(req.name)
+    if req.role     is not None: sets.append("role = %s");          params.append(req.role)
     if req.password is not None:
-        user["password_hash"] = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt(12)).decode()
-
-    result = _persist_users(users)
-    return {"user": {"id": user["id"], "email": user["email"],
-                     "name": user["name"], "role": user["role"]},
-            **result}
+        ph = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt(12)).decode()
+        sets.append("password_hash = %s"); params.append(ph)
+    if not sets:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    sets.append("updated_at = NOW()")
+    params.append(user_id)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE users SET {', '.join(sets)} WHERE id = %s RETURNING id, email, name, role",
+                    params
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"user": dict(row), "persisted": True}
 
 
 @app.delete("/api/users/{user_id}")
 def delete_user(user_id: str, current_user=Depends(_require_super_admin)):
     if user_id == current_user["sub"]:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
-    users   = _load_users()
-    updated = [u for u in users if u["id"] != user_id]
-    if len(updated) == len(users):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM users WHERE id = %s RETURNING id", (user_id,))
+                row = cur.fetchone()
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not row:
         raise HTTPException(status_code=404, detail="User not found")
-    result = _persist_users(updated)
-    return {"deleted": True, **result}
+    return {"deleted": True, "persisted": True}
 
 
 @app.get("/api/users/management-status")
 def management_status(current_user=Depends(_require_super_admin)):
-    has_token = bool(os.getenv("VERCEL_TOKEN"))
-    return {"vercel_token_configured": has_token,
-            "user_count": len(_load_users())}
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS cnt FROM users")
+                count = cur.fetchone()["cnt"]
+    except Exception:
+        count = len(_load_users())
+    return {"vercel_token_configured": bool(os.getenv("VERCEL_TOKEN")), "user_count": count}
+
+
+@app.get("/api/history")
+def get_history(tool: str = None, limit: int = 50, current_user=Depends(_decode_token)):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                if tool:
+                    cur.execute(
+                        """SELECT id, tool, keyword, target_url, location, summary, created_at
+                           FROM analysis_runs WHERE tool = %s
+                           ORDER BY created_at DESC LIMIT %s""",
+                        (tool, min(limit, 200))
+                    )
+                else:
+                    cur.execute(
+                        """SELECT id, tool, keyword, target_url, location, summary, created_at
+                           FROM analysis_runs ORDER BY created_at DESC LIMIT %s""",
+                        (min(limit, 200),)
+                    )
+                rows = [dict(r) for r in cur.fetchall()]
+                for r in rows:
+                    if r.get("created_at"):
+                        r["created_at"] = r["created_at"].isoformat()
+                return {"runs": rows}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/history/{run_id}")
+def get_history_run(run_id: str, current_user=Depends(_decode_token)):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM analysis_runs WHERE id = %s", (run_id,))
+                row = cur.fetchone()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not row:
+        raise HTTPException(status_code=404, detail="Run not found")
+    out = dict(row)
+    if out.get("created_at"):
+        out["created_at"] = out["created_at"].isoformat()
+    return out
+
+
+# ── Keyword Tracking ──────────────────────────────────────────────────────────
+
+class TrackingAddRequest(BaseModel):
+    keyword: str
+    target_url: Optional[str] = None
+    location: str = "Global (No Geolocation)"
+
+
+def _fire_alerts(tracking_id: str, keyword: str, prev: dict, curr: dict):
+    """Compare two ranking snapshots and insert alert rows for significant changes."""
+    from urllib.parse import urlparse
+    alerts_to_insert = []
+
+    prev_pos  = prev.get("position")
+    curr_pos  = curr.get("position")
+    prev_fs   = prev.get("fs_holder_domain", "")
+    curr_fs   = curr.get("fs_holder_domain", "")
+
+    # FS holder changed
+    if prev_fs and curr_fs and prev_fs != curr_fs:
+        alerts_to_insert.append((
+            "fs_changed", "warning",
+            f"FS holder changed: {prev_fs} → {curr_fs}",
+            prev_fs, curr_fs,
+        ))
+
+    # Started ranking
+    if prev_pos is None and curr_pos is not None:
+        alerts_to_insert.append((
+            "started_ranking", "info",
+            f"Now ranking at #{curr_pos}",
+            None, str(curr_pos),
+        ))
+    # Lost ranking
+    elif prev_pos is not None and curr_pos is None:
+        alerts_to_insert.append((
+            "lost_ranking", "warning",
+            f"Dropped out of top 10 (was #{prev_pos})",
+            str(prev_pos), None,
+        ))
+    elif prev_pos is not None and curr_pos is not None:
+        delta = curr_pos - prev_pos  # positive = dropped, negative = gained
+        if delta >= 5:
+            alerts_to_insert.append((
+                "position_drop", "critical",
+                f"Position dropped #{prev_pos} → #{curr_pos}",
+                str(prev_pos), str(curr_pos),
+            ))
+        elif delta >= 3:
+            alerts_to_insert.append((
+                "position_drop", "warning",
+                f"Position dropped #{prev_pos} → #{curr_pos}",
+                str(prev_pos), str(curr_pos),
+            ))
+        elif delta <= -3:
+            alerts_to_insert.append((
+                "position_gain", "info",
+                f"Position improved #{prev_pos} → #{curr_pos}",
+                str(prev_pos), str(curr_pos),
+            ))
+
+    if not alerts_to_insert:
+        return
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                for (alert_type, severity, message, prev_val, curr_val) in alerts_to_insert:
+                    cur.execute(
+                        """INSERT INTO alerts (id, tracking_id, keyword, alert_type, severity, message, prev_value, curr_value)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (str(uuid.uuid4()), tracking_id, keyword, alert_type, severity, message, prev_val, curr_val)
+                    )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str], location: str) -> dict:
+    """Fetch live SERP, save a ranking snapshot, fire alerts on changes."""
+    from urllib.parse import urlparse
+    serp = fetch_serp_results(keyword, location_name=location)
+    organic = serp.get("organic", [])
+    position = None
+    ranking_url = None
+    if target_url and organic:
+        target_host = ""
+        try:
+            target_host = urlparse(target_url).netloc.replace("www.", "")
+        except Exception:
+            pass
+        for i, r in enumerate(organic):
+            try:
+                link_host = urlparse(r.get("link", "")).netloc.replace("www.", "")
+            except Exception:
+                link_host = ""
+            if target_host and target_host in link_host:
+                position = i + 1
+                ranking_url = r.get("link")
+                break
+    fs = organic[0] if organic else {}
+    fs_url = fs.get("link", "")
+    fs_domain = ""
+    try:
+        fs_domain = urlparse(fs_url).netloc.replace("www.", "")
+    except Exception:
+        pass
+
+    # Load previous snapshot before saving new one
+    prev_snapshot = {}
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT position, fs_holder_domain FROM keyword_rankings
+                       WHERE tracking_id = %s ORDER BY checked_at DESC LIMIT 1""",
+                    (tracking_id,)
+                )
+                row = cur.fetchone()
+                if row:
+                    prev_snapshot = dict(row)
+    except Exception:
+        pass
+
+    row_id = str(uuid.uuid4())
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO keyword_rankings
+                       (id, tracking_id, position, ranking_url, fs_holder_url, fs_holder_domain, total_results)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                    (row_id, tracking_id, position, ranking_url, fs_url, fs_domain, len(organic))
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+    curr_snapshot = {"position": position, "fs_holder_domain": fs_domain}
+    if prev_snapshot:
+        _fire_alerts(tracking_id, keyword, prev_snapshot, curr_snapshot)
+
+    return {
+        "position": position,
+        "ranking_url": ranking_url,
+        "fs_holder_url": fs_url,
+        "fs_holder_domain": fs_domain,
+        "total_results": len(organic),
+    }
+
+
+@app.post("/api/tracking")
+def tracking_add(req: TrackingAddRequest, current_user=Depends(_decode_token)):
+    tid = str(uuid.uuid4())
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO keyword_tracking (id, keyword, target_url, location) VALUES (%s,%s,%s,%s)",
+                    (tid, req.keyword.strip(), req.target_url or None, req.location)
+                )
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    ranking = _run_tracking_check(tid, req.keyword.strip(), req.target_url, req.location)
+    return {"id": tid, "keyword": req.keyword.strip(), **ranking}
+
+
+@app.get("/api/tracking")
+def tracking_list(current_user=Depends(_decode_token)):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT kt.id, kt.keyword, kt.target_url, kt.location, kt.created_at,
+                           kr.position, kr.fs_holder_domain, kr.checked_at as last_checked
+                    FROM keyword_tracking kt
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM keyword_rankings
+                        WHERE tracking_id = kt.id
+                        ORDER BY checked_at DESC LIMIT 1
+                    ) kr ON true
+                    ORDER BY kt.created_at DESC
+                """)
+                rows = [dict(r) for r in cur.fetchall()]
+                for r in rows:
+                    for k in ("created_at", "last_checked"):
+                        if r.get(k):
+                            r[k] = r[k].isoformat()
+                return {"tracked": rows}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/tracking/{tracking_id}/history")
+def tracking_history(tracking_id: str, current_user=Depends(_decode_token)):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT position, fs_holder_domain, checked_at
+                       FROM keyword_rankings WHERE tracking_id = %s
+                       ORDER BY checked_at ASC LIMIT 90""",
+                    (tracking_id,)
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+                for r in rows:
+                    if r.get("checked_at"):
+                        r["checked_at"] = r["checked_at"].isoformat()
+                return {"history": rows}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/tracking/{tracking_id}/check")
+def tracking_check(tracking_id: str, current_user=Depends(_decode_token)):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM keyword_tracking WHERE id = %s", (tracking_id,))
+                row = cur.fetchone()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not row:
+        raise HTTPException(status_code=404, detail="Tracked keyword not found")
+    row = dict(row)
+    ranking = _run_tracking_check(tracking_id, row["keyword"], row.get("target_url"), row["location"])
+    return ranking
+
+
+@app.delete("/api/tracking/{tracking_id}")
+def tracking_delete(tracking_id: str, current_user=Depends(_decode_token)):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM keyword_tracking WHERE id = %s RETURNING id", (tracking_id,))
+                gone = cur.fetchone()
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not gone:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"deleted": True}
+
+
+# ── Alerts ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/alerts")
+def get_alerts(unseen_only: bool = False, limit: int = 50, current_user=Depends(_decode_token)):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                if unseen_only:
+                    cur.execute(
+                        "SELECT * FROM alerts WHERE seen = false ORDER BY created_at DESC LIMIT %s",
+                        (min(limit, 200),)
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM alerts ORDER BY created_at DESC LIMIT %s",
+                        (min(limit, 200),)
+                    )
+                rows = [dict(r) for r in cur.fetchall()]
+                for r in rows:
+                    if r.get("created_at"):
+                        r["created_at"] = r["created_at"].isoformat()
+                return {"alerts": rows}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/alerts/seen")
+def mark_alerts_seen(current_user=Depends(_decode_token)):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE alerts SET seen = true WHERE seen = false")
+            conn.commit()
+        return {"ok": True}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Cron: daily auto-check all tracked keywords ───────────────────────────────
+
+@app.post("/api/cron/check-all")
+def cron_check_all(authorization: str = Header(None)):
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret and authorization != f"Bearer {cron_secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, keyword, target_url, location FROM keyword_tracking ORDER BY created_at")
+                tracked = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    results = []
+    for item in tracked:
+        try:
+            ranking = _run_tracking_check(item["id"], item["keyword"], item.get("target_url"), item["location"])
+            results.append({"id": item["id"], "keyword": item["keyword"], **ranking})
+        except Exception as e:
+            results.append({"id": item["id"], "keyword": item["keyword"], "error": str(e)})
+
+    return {"checked": len(results), "results": results}
 
 
 class SiteConfig(BaseModel):
@@ -753,15 +1218,15 @@ def _get_flash_model():
         return _flash_model_cache
     try:
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        for target in ['models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']:
+        for target in ['models/gemini-2.5-flash', 'models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']:
             if target in available_models:
                 _flash_model_cache = target
                 return _flash_model_cache
         flash_models = [m for m in available_models if 'flash' in m.lower()]
-        _flash_model_cache = flash_models[0] if flash_models else 'models/gemini-2.0-flash'
+        _flash_model_cache = flash_models[0] if flash_models else 'models/gemini-2.5-flash'
         return _flash_model_cache
     except:
-        _flash_model_cache = 'models/gemini-2.0-flash'
+        _flash_model_cache = 'models/gemini-2.5-flash'
         return _flash_model_cache
 
 def _fetch_page_text(url, auth=None):
@@ -1004,11 +1469,20 @@ Format in clear Markdown."""
     except Exception as e:
         analysis = f"AI analysis failed: {e}"
 
-    return {
+    out = {
         "organic": serp_results,
         "related_keywords": related,
         "analysis": analysis
     }
+    _save_run(
+        tool="serp_analyzer",
+        result=out,
+        keyword=req.keyword,
+        target_url=req.target_url or None,
+        location=req.location_name,
+        summary=f"{len(serp_results)} results",
+    )
+    return out
 
 @app.get("/api/serp/geolocations")
 def serp_geolocations():
@@ -1609,7 +2083,7 @@ def sheets_analyze(req: SheetAnalyzeRequest):
     metrics = _extract_metrics_deterministic(all_data)
     health  = _calculate_health_score(all_data)
 
-    return {
+    out = {
         "site_name": req.site_name or spreadsheet_title,
         "spreadsheet_title": spreadsheet_title,
         "metrics": metrics,
@@ -1618,6 +2092,13 @@ def sheets_analyze(req: SheetAnalyzeRequest):
         "score_label": health["label"],
         "score_breakdown": health["breakdown"],
     }
+    _save_run(
+        tool="seo_health",
+        result=out,
+        target_url=req.site_name or spreadsheet_title,
+        summary=f"Score: {health['score']}/100 ({health['label']})",
+    )
+    return out
 
 
 # --- CWV Analysis Endpoints ---
@@ -1833,10 +2314,10 @@ def fs_stealer_analyze(req: FsStealerRequest):
     target_url = req.target_url if req.target_url.startswith("http") else "https://" + req.target_url
     intent = _classify_intent(req.keyword)
 
-    # Step 1 — Gemini simulates the SERP (~3s, no scraping, no IP blocks)
-    serp = _fetch_serp_via_gemini(req.keyword, req.location_name)
+    # Step 1 — fetch SERP: SerpAPI (real Google) → DuckDuckGo → Google scraper
+    serp = fetch_serp_results(req.keyword, location_name=req.location_name)
     if not serp.get("organic"):
-        raise HTTPException(status_code=502, detail=serp.get("error", "SERP simulation failed. Please try again."))
+        raise HTTPException(status_code=502, detail=serp.get("error", "SERP fetch failed. Please try again."))
 
     organic = serp.get("organic", [])
     related_keywords = serp.get("related_keywords", [])
@@ -1848,17 +2329,16 @@ def fs_stealer_analyze(req: FsStealerRequest):
     )
     related_context = ", ".join(related_keywords) if related_keywords else "None detected."
 
-    # Step 2 — Gemini generates the full action plan (~5-8s)
-    # No page fetching — Gemini uses its own knowledge of the FS holder and target domain.
+    # Step 2 — Gemini generates the full action plan from real SERP data (~5-8s)
     prompt = f"""You are an elite SEO strategist specializing in Featured Snippet (FS) optimization.
-SERP data is AI-simulated. Use your knowledge of the FS holder domain and target page to make recommendations specific and copy-paste ready.
+The SERP data below is real and current. Use it alongside your knowledge of the FS holder domain and target page to make recommendations specific and copy-paste ready.
 
 KEYWORD: "{req.keyword}"
 DETECTED INTENT: {intent}
 TARGET PAGE: {target_url}
 GEOLOCATION: {req.location_name}
 
-═══ SIMULATED SERP (top 5) ═══
+═══ REAL SERP (top 5) ═══
 {serp_context}
 
 ═══ RELATED SEARCHES (semantic cluster) ═══
@@ -1917,7 +2397,7 @@ Be ruthlessly specific — tie every recommendation to what {fs_holder["link"]} 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {e}")
 
-    return {
+    out = {
         "keyword": req.keyword,
         "target_url": target_url,
         "intent": intent,
@@ -1927,6 +2407,15 @@ Be ruthlessly specific — tie every recommendation to what {fs_holder["link"]} 
         "paa": serp.get("paa", []),
         "analysis": analysis,
     }
+    _save_run(
+        tool="fs_stealer",
+        result=out,
+        keyword=req.keyword,
+        target_url=target_url,
+        location=req.location_name,
+        summary=f"FS held by {fs_holder.get('domain', fs_holder.get('link', '')[:40])}",
+    )
+    return out
 
 
 # --- SEO Data API proxy (indexation control) ---
@@ -2145,6 +2634,184 @@ def indexation_sitemap_check(req: SitemapCheckRequest):
         },
         "url_results":       url_results,
     }
+
+
+class RangeCheckRequest(BaseModel):
+    site_slug: str
+    start_date: str
+    end_date: str
+    search_type: str = "web"
+    urls: Optional[List[str]] = None
+    sitemap_url: Optional[str] = None
+
+
+@app.post("/api/indexation/range-check")
+def indexation_range_check(req: RangeCheckRequest):
+    from datetime import date as _date, timedelta
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from urllib.parse import urlparse as _up
+
+    try:
+        start = _date.fromisoformat(req.start_date)
+        end   = _date.fromisoformat(req.end_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format — use YYYY-MM-DD")
+
+    if end < start:
+        raise HTTPException(status_code=400, detail="end_date must be >= start_date")
+    if (end - start).days > 31:
+        raise HTTPException(status_code=400, detail="Date range cannot exceed 31 days")
+
+    dates = [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+
+    def _norm(u: str) -> str:
+        p = _up(u.strip())
+        host = p.netloc.lower().replace("www.", "")
+        path = p.path.rstrip("/") or "/"
+        return host + path
+
+    def _fetch_date(d: str):
+        pages = _seo_get(f"gsc/{req.site_slug}/page", {"date": d, "search_type": req.search_type}) or []
+        return d, pages
+
+    daily_pages: dict = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        for d, pages in pool.map(lambda d: _fetch_date(d), dates):
+            daily_pages[d] = pages
+
+    daily_maps = {
+        d: {_norm(p["page"]): p for p in pages if p.get("page")}
+        for d, pages in daily_pages.items()
+    }
+
+    # ── Per-URL date-range results ────────────────────────────────────────────
+    urls_to_check = [u.strip() for u in (req.urls or []) if u.strip()]
+
+    # When no specific URLs given, use top 100 pages by total impressions across the range
+    if not urls_to_check:
+        page_totals: dict = {}
+        for d, pmap in daily_maps.items():
+            for norm_url, p in pmap.items():
+                raw_url = p.get("page", "")
+                if not raw_url:
+                    continue
+                if norm_url not in page_totals:
+                    page_totals[norm_url] = {"url": raw_url, "total_impressions": 0}
+                page_totals[norm_url]["total_impressions"] += int(p.get("impressions", 0) or 0)
+        top_pages = sorted(page_totals.values(), key=lambda x: x["total_impressions"], reverse=True)[:100]
+        urls_to_check = [pg["url"] for pg in top_pages]
+
+    url_results = []
+    for url in urls_to_check:
+        norm = _norm(url)
+        daily = []
+        indexed_days = not_indexed_days = 0
+        first_seen = last_seen = None
+        for d in dates:
+            match   = daily_maps.get(d, {}).get(norm)
+            indexed = match is not None
+            if indexed:
+                indexed_days += 1
+                if not first_seen:
+                    first_seen = d
+                last_seen = d
+            else:
+                not_indexed_days += 1
+            daily.append({
+                "date":        d,
+                "indexed":     indexed,
+                "impressions": int(match.get("impressions", 0)) if match else 0,
+                "clicks":      int(match.get("clicks", 0))      if match else 0,
+                "position":    round(float(match.get("position", 0)), 1) if match else None,
+            })
+        url_results.append({
+            "url":              url,
+            "indexed_days":     indexed_days,
+            "not_indexed_days": not_indexed_days,
+            "first_seen":       first_seen,
+            "last_seen":        last_seen,
+            "coverage_pct":     round(indexed_days / len(dates) * 100, 1) if dates else 0,
+            "daily":            daily,
+        })
+
+    # ── Daily site summary ────────────────────────────────────────────────────
+    daily_summary = [
+        {
+            "date":           d,
+            "total_pages":    len(daily_pages.get(d, [])),
+            "pages_clicking": sum(1 for p in daily_pages.get(d, []) if (p.get("clicks") or 0) > 0),
+        }
+        for d in dates
+    ]
+
+    # ── All pages + sitemaps on end_date (for tabs) ────────────────────────────
+    end_pages    = daily_pages.get(req.end_date, [])
+    pages_sorted = sorted(end_pages, key=lambda x: x.get("impressions") or 0, reverse=True)[:2000]
+
+    sitemaps: list = []
+    try:
+        sitemaps = _seo_get(f"gsc/{req.site_slug}/sitemaps", {"date": req.end_date}) or []
+    except Exception:
+        pass
+
+    stats = {
+        "total_pages":  len(end_pages),
+        "with_clicks":  sum(1 for p in end_pages if (p.get("clicks") or 0) > 0),
+        "no_clicks":    sum(1 for p in end_pages if (p.get("clicks") or 0) == 0),
+        "sitemap_count": len(sitemaps),
+        "report_date":  end_pages[0]["report_date"] if end_pages else req.end_date,
+    }
+
+    # ── Optional sitemap coverage on end_date ─────────────────────────────────
+    sitemap_result = None
+    if req.sitemap_url and req.sitemap_url.strip():
+        try:
+            sm_req = SitemapCheckRequest(
+                site_slug=req.site_slug,
+                date=req.end_date,
+                search_type=req.search_type,
+                sitemap_url=req.sitemap_url.strip(),
+            )
+            sitemap_result = indexation_sitemap_check(sm_req)
+        except Exception:
+            pass
+
+    return {
+        "start_date":    req.start_date,
+        "end_date":      req.end_date,
+        "dates":         dates,
+        "url_results":   url_results,
+        "daily_summary": daily_summary,
+        "stats":         stats,
+        "pages":         pages_sorted,
+        "sitemaps":      sitemaps,
+        "sitemap_result": sitemap_result,
+    }
+
+
+# --- URL Inspection API (data-api worker, per-page Google verdicts) ---
+
+@app.get("/api/indexation/url-inspection-dates")
+def url_inspection_dates():
+    data = _seo_get("gsc/url-inspection/dates")
+    return data or {}
+
+
+@app.get("/api/indexation/url-inspection-site")
+def url_inspection_site(site_slug: str, date: Optional[str] = None):
+    params = {}
+    if date:
+        params["date"] = date
+    data = _seo_get(f"gsc/{site_slug}/url-inspection", params=params)
+    return data or []
+
+
+@app.get("/api/indexation/url-inspection")
+def url_inspection_single(url: str):
+    data = _seo_get("gsc/url-inspection", params={"url": url})
+    if data is None:
+        raise HTTPException(status_code=404, detail="URL not found in inspection data")
+    return data
 
 
 # --- Vercel serverless handler (only active when mangum is installed) ---

@@ -333,67 +333,114 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                     </td>
                   </tr>
 
-                  {/* ── Expanded site page list ── */}
-                  {siteExpanded && pages.length > 0 && (
+                  {/* ── Expanded URL×day indexed matrix ── */}
+                  {siteExpanded && urlResults?.length > 0 && (
                     <tr style={{ background: 'rgba(0,0,0,0.18)' }}>
-                      <td colSpan={dates.length + 2} style={{ padding: '0 0 0 20px' }}>
-                        <div style={{ padding: '14px 20px 14px 0' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'rgba(226,0,113,0.9)' }}>
-                              All indexed pages
+                      <td colSpan={dates.length + 2} style={{ padding: '0 0 0 4px' }}>
+                        <div style={{ padding: '12px 20px 16px 0' }}>
+                          {/* Header row */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'rgba(226,0,113,0.9)' }}>
+                              URL × day indexed matrix
                             </span>
-                            <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{pages.length.toLocaleString()} total</span>
+                            <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                              {urlResults.length} pages · {dates.length} days
+                            </span>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-                              <Filter size={12} color="var(--text-muted)" />
+                              <Filter size={11} color="var(--text-muted)" />
                               <input
                                 className="glass-input"
                                 placeholder="Filter by URL…"
                                 value={siteFilter}
                                 onChange={e => setSiteFilter(e.target.value)}
                                 onClick={e => e.stopPropagation()}
-                                style={{ fontSize: '0.75rem', padding: '4px 8px', width: 200 }}
+                                style={{ fontSize: '0.72rem', padding: '4px 8px', width: 190 }}
                               />
-                              {siteFilter && (
-                                <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                                  {filteredPages.length.toLocaleString()} shown
-                                </span>
-                              )}
                             </div>
                           </div>
-                          <div style={{ overflowX: 'auto', maxHeight: 380, overflowY: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
-                              <thead>
-                                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-                                  {['Page URL', 'Clicks', 'Impressions', 'CTR', 'Avg. Pos'].map(h => (
-                                    <th key={h} style={{ padding: '5px 12px 5px 0', textAlign: h === 'Page URL' ? 'left' : 'center', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>{h}</th>
+
+                          {/* Scrollable matrix */}
+                          <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 420 }}>
+                            <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.72rem' }}>
+                              <thead style={{ position: 'sticky', top: 0, zIndex: 3 }}>
+                                <tr>
+                                  <th style={{
+                                    position: 'sticky', left: 0, zIndex: 4, background: 'rgba(8,14,28,0.98)',
+                                    padding: '4px 12px 4px 0', textAlign: 'left', minWidth: 220, whiteSpace: 'nowrap',
+                                    fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(255,255,255,0.3)',
+                                    borderBottom: '1px solid rgba(255,255,255,0.08)',
+                                  }}>
+                                    URL
+                                  </th>
+                                  {dates.map(date => (
+                                    <th key={date} style={{
+                                      background: 'rgba(8,14,28,0.98)',
+                                      padding: '0 2px 4px', verticalAlign: 'bottom', width: 22,
+                                      borderBottom: '1px solid rgba(255,255,255,0.08)',
+                                    }}>
+                                      <div style={{
+                                        writingMode: 'vertical-rl', transform: 'rotate(180deg)',
+                                        fontSize: '0.5rem', color: 'rgba(255,255,255,0.25)',
+                                        fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                                        lineHeight: 1, paddingBottom: 2,
+                                      }}>
+                                        {date.slice(5).replace('-', '/')}
+                                      </div>
+                                    </th>
                                   ))}
+                                  <th style={{
+                                    background: 'rgba(8,14,28,0.98)',
+                                    padding: '4px 0 4px 10px', whiteSpace: 'nowrap',
+                                    fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(255,255,255,0.3)',
+                                    borderBottom: '1px solid rgba(255,255,255,0.08)',
+                                  }}>
+                                    Coverage
+                                  </th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {filteredPages.slice(0, 200).map((p, i) => (
-                                  <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                                    <td style={{ padding: '5px 12px 5px 0', maxWidth: 360 }}>
-                                      <a href={p.page} target="_blank" rel="noopener noreferrer"
-                                        onClick={e => e.stopPropagation()}
-                                        style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--primary)', textDecoration: 'none', fontSize: '0.73rem' }}>
-                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.page}>{shortPath(p.page)}</span>
-                                        <ExternalLink size={9} style={{ flexShrink: 0, opacity: 0.4 }} />
-                                      </a>
-                                    </td>
-                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: (p.clicks || 0) > 0 ? '#4ade80' : 'var(--text-dim)', fontWeight: (p.clicks || 0) > 0 ? 700 : 400 }}>{(p.clicks || 0).toLocaleString()}</td>
-                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{(p.impressions || 0).toLocaleString()}</td>
-                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{p.impressions > 0 ? `${((p.clicks || 0) / p.impressions * 100).toFixed(1)}%` : '—'}</td>
-                                    <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{p.position != null ? Number(p.position).toFixed(1) : '—'}</td>
-                                  </tr>
-                                ))}
+                                {urlResults
+                                  .filter(r => !siteFilter || r.url.toLowerCase().includes(siteFilter.toLowerCase()))
+                                  .map((row, ri) => {
+                                    const dayMap = Object.fromEntries(row.daily.map(d => [d.date, d]));
+                                    const coverageColor = row.coverage_pct >= 80 ? '#4ade80' : row.coverage_pct >= 50 ? '#f59e0b' : '#f87171';
+                                    return (
+                                      <tr key={row.url} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                        <td style={{
+                                          position: 'sticky', left: 0, zIndex: 1, background: ri % 2 === 0 ? 'rgba(8,14,28,0.98)' : 'rgba(15,22,40,0.98)',
+                                          padding: '3px 12px 3px 0', maxWidth: 240,
+                                        }}>
+                                          <a href={row.url} target="_blank" rel="noopener noreferrer"
+                                            onClick={e => e.stopPropagation()}
+                                            style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--primary)', textDecoration: 'none' }}>
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.url}>{shortPath(row.url)}</span>
+                                            <ExternalLink size={8} style={{ flexShrink: 0, opacity: 0.4 }} />
+                                          </a>
+                                        </td>
+                                        {dates.map(date => {
+                                          const d = dayMap[date];
+                                          return (
+                                            <td key={date} style={{ padding: '3px 2px', textAlign: 'center' }}>
+                                              {d?.indexed
+                                                ? <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 3, background: 'rgba(74,222,128,0.75)', border: '1px solid rgba(74,222,128,0.4)' }} title={`${date} — indexed`} />
+                                                : <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 3, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.04)' }} title={`${date} — not in GSC`} />}
+                                            </td>
+                                          );
+                                        })}
+                                        <td style={{ padding: '3px 0 3px 10px', whiteSpace: 'nowrap' }}>
+                                          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: coverageColor, fontVariantNumeric: 'tabular-nums' }}>
+                                            {row.coverage_pct}%
+                                          </span>
+                                          <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginLeft: 5, fontVariantNumeric: 'tabular-nums' }}>
+                                            {row.indexed_days}/{dates.length}d
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
                               </tbody>
                             </table>
                           </div>
-                          {filteredPages.length > 200 && (
-                            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: 10 }}>
-                              Showing 200 of {filteredPages.length.toLocaleString()} — use the filter to narrow down
-                            </p>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -922,7 +969,7 @@ export default function IndexationControl() {
   const [sites, setSites]                   = useState([]);
   const [siteSearch, setSiteSearch]         = useState('');
   const [selectedSite, setSelectedSite]     = useState('');
-  const [searchType, setSearchType]         = useState('web');
+  const [urlsEnabled, setUrlsEnabled]       = useState(false);
   const [urlsText, setUrlsText]             = useState('');
   const [loading, setLoading]               = useState(false);
   const [catalogLoading, setCatalogLoading] = useState(true);
@@ -986,7 +1033,7 @@ export default function IndexationControl() {
           site_slug:   selectedSite,
           start_date:  startDate,
           end_date:    endDate,
-          search_type: searchType,
+          search_type: 'web',
           urls:        urls.length > 0 ? urls : null,
           sitemap_url: smUrl,
         }),
@@ -1108,19 +1155,6 @@ export default function IndexationControl() {
               {sites.length > 40 && <option disabled>… {sites.length - 40} more (refine search)</option>}
             </select>
           </div>
-          <div>
-            <label className="metric-label mb-2 block">Search type</label>
-            <select
-              className="glass-input"
-              value={searchType}
-              onChange={e => setSearchType(e.target.value)}
-              style={{ fontSize: '0.82rem' }}
-            >
-              {['web', 'image', 'video', 'news', 'discover', 'googleNews'].map(t => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-          </div>
         </div>
 
         {/* Date range */}
@@ -1147,16 +1181,35 @@ export default function IndexationControl() {
           </div>
         </div>
 
-        {/* URLs textarea */}
-        <label className="metric-label mb-2 block">URLs to check (optional — one per line)</label>
-        <textarea
-          className="glass-input mb-4"
-          rows={4}
-          placeholder={"https://example.com/page1\nhttps://example.com/page2\nLeave empty to see daily totals for the site"}
-          value={urlsText}
-          onChange={e => setUrlsText(e.target.value)}
-          style={{ resize: 'vertical', fontSize: '0.82rem' }}
-        />
+        {/* Specific URLs toggle */}
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 16, marginBottom: 16 }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none', marginBottom: urlsEnabled ? 12 : 0 }}
+            onClick={() => { setUrlsEnabled(v => !v); if (urlsEnabled) setUrlsText(''); }}
+          >
+            {urlsEnabled
+              ? <ToggleRight size={22} color="var(--primary)" />
+              : <ToggleLeft  size={22} color="rgba(255,255,255,0.3)" />}
+            <div>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: urlsEnabled ? 'white' : 'var(--text-muted)' }}>
+                Check specific URLs
+              </span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginLeft: 8 }}>
+                {urlsEnabled ? 'enabled — one URL per line' : 'disabled — shows top 100 pages'}
+              </span>
+            </div>
+          </div>
+          {urlsEnabled && (
+            <textarea
+              className="glass-input"
+              rows={4}
+              placeholder={"https://example.com/page1\nhttps://example.com/page2"}
+              value={urlsText}
+              onChange={e => setUrlsText(e.target.value)}
+              style={{ resize: 'vertical', fontSize: '0.82rem', width: '100%' }}
+            />
+          )}
+        </div>
 
         {/* Sitemap toggle section */}
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 16, marginBottom: 20 }}>
