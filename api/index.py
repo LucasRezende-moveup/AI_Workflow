@@ -2672,16 +2672,26 @@ def indexation_range_check(req: RangeCheckRequest):
 
     def _fetch_date(d: str):
         pages = _seo_get(f"gsc/{req.site_slug}/page", {"date": d, "search_type": req.search_type}) or []
-        return d, pages
+        try:
+            insp = _seo_get(f"gsc/{req.site_slug}/url-inspection", {"date": d}) or []
+        except Exception:
+            insp = []
+        return d, pages, insp
 
     daily_pages: dict = {}
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        for d, pages in pool.map(lambda d: _fetch_date(d), dates):
+    daily_inspections: dict = {}
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        for d, pages, insp in pool.map(lambda d: _fetch_date(d), dates):
             daily_pages[d] = pages
+            daily_inspections[d] = insp
 
     daily_maps = {
         d: {_norm(p["page"]): p for p in pages if p.get("page")}
         for d, pages in daily_pages.items()
+    }
+    daily_inspection_maps = {
+        d: {_norm(row["page_url"]): row for row in insp if row.get("page_url")}
+        for d, insp in daily_inspections.items()
     }
 
     # ── Per-URL date-range results ────────────────────────────────────────────
@@ -2708,8 +2718,13 @@ def indexation_range_check(req: RangeCheckRequest):
         indexed_days = not_indexed_days = 0
         first_seen = last_seen = None
         for d in dates:
-            match   = daily_maps.get(d, {}).get(norm)
-            indexed = match is not None
+            perf  = daily_maps.get(d, {}).get(norm)
+            insp  = daily_inspection_maps.get(d, {}).get(norm)
+            # Use URL Inspection API for indexed status when available; fall back to GSC performance
+            if insp is not None:
+                indexed = bool(insp.get("is_indexed", False))
+            else:
+                indexed = perf is not None
             if indexed:
                 indexed_days += 1
                 if not first_seen:
@@ -2718,11 +2733,13 @@ def indexation_range_check(req: RangeCheckRequest):
             else:
                 not_indexed_days += 1
             daily.append({
-                "date":        d,
-                "indexed":     indexed,
-                "impressions": int(float(match.get("impressions") or 0)) if match else 0,
-                "clicks":      int(float(match.get("clicks") or 0))      if match else 0,
-                "position":    round(float(match.get("position") or 0), 1) if match and match.get("position") else None,
+                "date":           d,
+                "indexed":        indexed,
+                "verdict":        insp.get("verdict")        if insp else None,
+                "coverage_state": insp.get("coverage_state") if insp else None,
+                "impressions":    int(float(perf.get("impressions") or 0)) if perf else 0,
+                "clicks":         int(float(perf.get("clicks") or 0))      if perf else 0,
+                "position":       round(float(perf.get("position") or 0), 1) if perf and perf.get("position") else None,
             })
         url_results.append({
             "url":              url,
