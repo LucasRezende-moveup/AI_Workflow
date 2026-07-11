@@ -102,6 +102,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
   const [expandedUrls, setExpandedUrls] = useState(new Set());
   const [siteExpanded, setSiteExpanded] = useState(false);
   const [siteFilter, setSiteFilter] = useState('');
+  const [urlFilter, setUrlFilter] = useState('');
 
   const toggleExpand = useCallback((url) => {
     setExpandedUrls(prev => {
@@ -172,9 +173,24 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
 
       {/* ── Legend ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
-        <p style={{ fontSize: '0.73rem', color: 'var(--text-muted)', margin: 0 }}>
-          Each cell is one day — hover for details. Top row shows site-wide totals.{urlResults?.length > 0 && ' Click a URL to expand day-by-day stats.'}
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <p style={{ fontSize: '0.73rem', color: 'var(--text-muted)', margin: 0 }}>
+            Each cell is one day — hover for details. Top row shows site-wide totals.{urlResults?.length > 0 && ' Click a URL to expand day-by-day stats.'}
+          </p>
+          {urlResults?.length > 0 && (
+            <input
+              type="text"
+              placeholder="Filter URLs…"
+              value={urlFilter}
+              onChange={e => setUrlFilter(e.target.value)}
+              style={{
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 6, padding: '4px 10px', fontSize: '0.75rem', color: '#d8d8e6',
+                outline: 'none', width: 200,
+              }}
+            />
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
           {[
             { bg: 'rgba(74,222,128,0.8)',    label: 'PASS' },
@@ -459,7 +475,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
             )}
 
             {/* ── Per-URL rows ── */}
-            {(urlResults || []).map(row => {
+            {(urlResults || []).filter(r => !urlFilter || r.url.toLowerCase().includes(urlFilter.toLowerCase())).map(row => {
               const dayMap = Object.fromEntries(row.daily.map(d => [d.date, d]));
               const coveragePct = row.coverage_pct != null
                 ? row.coverage_pct
