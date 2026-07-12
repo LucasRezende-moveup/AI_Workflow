@@ -2297,13 +2297,22 @@ def _run_cwv(url: str, strategy: str = "mobile") -> dict:
     """Run PageSpeed Insights for a URL, persist a snapshot to analysis_runs, and return the result."""
     url = url if url.startswith("http") else "https://" + url
     strategy = (strategy or "mobile").lower()
-    api_key = os.getenv("GOOGLE_API_KEY")
-    params = {"url": url, "strategy": strategy, "category": "performance"}
-    if api_key:
-        params["key"] = api_key
+    # Prefer a dedicated PageSpeed key; GOOGLE_API_KEY (often a Gemini key) may not be authorized for PSI
+    api_key = os.getenv("PAGESPEED_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    endpoint = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+    base_params = {"url": url, "strategy": strategy, "category": "performance"}
+
+    def _call(with_key: bool):
+        p = dict(base_params)
+        if with_key and api_key:
+            p["key"] = api_key
+        return http_requests.get(endpoint, params=p, timeout=90)
+
     try:
-        r = http_requests.get("https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
-                              params=params, timeout=90)
+        r = _call(with_key=True)
+        # An unauthorized/invalid key shouldn't hard-block — PSI allows keyless (rate-limited) calls
+        if r.status_code in (401, 403) and api_key:
+            r = _call(with_key=False)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
