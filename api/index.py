@@ -1210,24 +1210,8 @@ _google_api_key = os.getenv("GOOGLE_API_KEY")
 if _google_api_key:
     genai.configure(api_key=_google_api_key)
 
-_flash_model_cache = None
-
-def _get_flash_model():
-    global _flash_model_cache
-    if _flash_model_cache:
-        return _flash_model_cache
-    try:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        for target in ['models/gemini-2.5-flash', 'models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']:
-            if target in available_models:
-                _flash_model_cache = target
-                return _flash_model_cache
-        flash_models = [m for m in available_models if 'flash' in m.lower()]
-        _flash_model_cache = flash_models[0] if flash_models else 'models/gemini-2.5-flash'
-        return _flash_model_cache
-    except:
-        _flash_model_cache = 'models/gemini-2.5-flash'
-        return _flash_model_cache
+# Cached model selection lives in gemini_utils so every module shares one list_models() call
+from gemini_utils import get_flash_model as _get_flash_model
 
 def _fetch_page_text(url, auth=None):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/91.0 Safari/537.36"}

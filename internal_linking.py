@@ -6,7 +6,6 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import os
-import google.generativeai as genai
 from urllib.parse import urlparse, urljoin
 
 def scrape_internal_links(url, auth=None):
@@ -88,20 +87,8 @@ def analyze_linking_strategy(scraped_data, target_urls):
         return "Gemini API key not found."
 
     try:
-        genai.configure(api_key=api_key)
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        target_model = None
-        for alias in ['models/gemini-2.5-flash', 'models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']:
-            if alias in available_models:
-                target_model = alias
-                break
-        
-        if not target_model:
-            target_model = available_models[0]
+        from gemini_utils import gemini_generate
 
-        model = genai.GenerativeModel(target_model)
-        
         prompt = f"""
         You are a Technical SEO Analyst. Analyze the following internal linking data for a set of URLs.
         
@@ -124,8 +111,7 @@ def analyze_linking_strategy(scraped_data, target_urls):
         - Actionable Recommendations.
         """
         
-        response = model.generate_content(prompt)
-        return response.text
+        return gemini_generate(prompt)
     except Exception as e:
         return f"Analysis failed: {e}"
 

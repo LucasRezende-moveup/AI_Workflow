@@ -62,51 +62,26 @@ def ask_agent(query, rows):
     Uses Gemini to answer a natural language query based on the provided GSC data.
     """
     import os
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        return "The `google-generativeai` library is not installed. Please install it using `pip install google-generativeai`."
-
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
+    if not os.getenv("GOOGLE_API_KEY"):
         return "Gemini API key not found. Please provide it in the sidebar."
 
-    try:
-        genai.configure(api_key=api_key)
-        
-        # Robust Model Selection: Try to find any available 'flash' model
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # Preference: 1.5 flash aliases -> 2.0 flash -> any flash -> first available
-        target_model = None
-        for alias in ['models/gemini-2.5-flash', 'models/gemini-2.0-flash', 'models/gemini-1.5-flash', 'models/gemini-flash-latest']:
-            if alias in available_models:
-                target_model = alias
-                break
-        
-        if not target_model:
-            # Fallback to anything with 'flash'
-            flash_models = [m for m in available_models if 'flash' in m.lower()]
-            target_model = flash_models[0] if flash_models else available_models[0]
+    # Prepare data context (limit rows to avoid token limits if necessary)
+    context_rows = rows[:100]  # Send first 100 rows as context
 
-        model = genai.GenerativeModel(target_model)
-        
-        # Prepare data context (limit rows to avoid token limits if necessary)
-        context_rows = rows[:100] # Send first 100 rows as context
-        
-        prompt = f"""
-        You are an SEO expert AI agent. Use the following Google Search Console data (aggregated by Keyword and URL) to answer the user's request.
-        
-        Data (JSON):
-        {context_rows}
-        
-        User Request: {query}
-        
-        Provide a concise, professional, and actionable response. If the data doesn't contain the answer, say so.
-        """
-        
-        response = model.generate_content(prompt)
-        return response.text
+    prompt = f"""
+    You are an SEO expert AI agent. Use the following Google Search Console data (aggregated by Keyword and URL) to answer the user's request.
+
+    Data (JSON):
+    {context_rows}
+
+    User Request: {query}
+
+    Provide a concise, professional, and actionable response. If the data doesn't contain the answer, say so.
+    """
+
+    try:
+        from gemini_utils import gemini_generate
+        return gemini_generate(prompt)
     except Exception as e:
         return f"Error communicating with Gemini: {e}\n\nTroubleshooting: Ensure your API key is active and has access to Gemini Flash/Pro in Google AI Studio."
 
