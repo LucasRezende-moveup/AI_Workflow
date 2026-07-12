@@ -2281,7 +2281,9 @@ def cron_seo_health_snapshot(authorization: str = Header(None)):
             results.append({"site": name, "score": out.get("score")})
         except Exception as e:
             results.append({"site": name, "error": str(e)})
-    return {"recorded": len(results), "results": results}
+    # Piggyback the daily Core Web Vitals snapshots here to stay within Vercel's cron limit
+    cwv_results = _snapshot_cwv_all()
+    return {"recorded": len(results), "results": results, "cwv": cwv_results}
 
 
 # --- CWV Analysis Endpoints ---
@@ -2291,11 +2293,12 @@ class CwvRequest(BaseModel):
     auth_user: Optional[str] = None
     auth_pass: Optional[str] = None
 
-@app.post("/api/cwv/analyze")
-def cwv_analyze(req: CwvRequest):
-    url = req.url if req.url.startswith("http") else "https://" + req.url
+def _run_cwv(url: str, strategy: str = "mobile") -> dict:
+    """Run PageSpeed Insights for a URL, persist a snapshot to analysis_runs, and return the result."""
+    url = url if url.startswith("http") else "https://" + url
+    strategy = (strategy or "mobile").lower()
     api_key = os.getenv("GOOGLE_API_KEY")
-    params = {"url": url, "strategy": req.strategy.lower(), "category": "performance"}
+    params = {"url": url, "strategy": strategy, "category": "performance"}
     if api_key:
         params["key"] = api_key
     try:
@@ -2327,7 +2330,103 @@ def cwv_analyze(req: CwvRequest):
             opps.append({"title": v.get("title"), "description": v.get("description"),
                          "savings_ms": v.get("details", {}).get("overallSavingsMs", 0)})
     opps = sorted(opps, key=lambda x: x["savings_ms"], reverse=True)[:5]
-    return {"performance_score": perf_score, "metrics": metrics, "opportunities": opps, "strategy": req.strategy}
+
+    out = {"performance_score": perf_score, "metrics": metrics, "opportunities": opps, "strategy": strategy}
+    _save_run(
+        tool="cwv",
+        result=out,
+        target_url=url,
+        location=strategy,  # repurposed to distinguish mobile vs desktop history
+        summary=f"Perf {perf_score}/100 ({strategy})",
+    )
+    return out
+
+
+@app.post("/api/cwv/analyze")
+def cwv_analyze(req: CwvRequest):
+    return _run_cwv(req.url, req.strategy)
+
+
+@app.get("/api/cwv/history")
+def cwv_history(url: str, strategy: str = "mobile", days: int = 30):
+    """Return one Core Web Vitals snapshot per calendar day for a URL+strategy, from analysis_runs."""
+    url = url if url.startswith("http") else "https://" + url
+    strategy = (strategy or "mobile").lower()
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT ON (created_at::date) created_at, result
+                    FROM analysis_runs
+                    WHERE tool = 'cwv' AND target_url = %s AND location = %s
+                    ORDER BY created_at::date DESC, created_at DESC
+                    LIMIT %s
+                    """,
+                    (url, strategy, min(max(days, 1), 90)),
+                )
+                rows = cur.fetchall()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    history = []
+    for r in rows:
+        result = r.get("result") or {}
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except Exception:
+                result = {}
+        score = result.get("performance_score")
+        ts = r.get("created_at")
+        if score is None or not ts:
+            continue
+        metric_scores = {}
+        for k, m in (result.get("metrics") or {}).items():
+            if isinstance(m, dict):
+                metric_scores[k] = m.get("value")
+        history.append({
+            "ts": int(ts.timestamp() * 1000),
+            "score": score,
+            "metrics": metric_scores,
+        })
+    history.reverse()  # chronological ascending
+    return {"history": history}
+
+
+def _snapshot_cwv_all() -> list:
+    """Record a CWV snapshot for every URL in the CWV_URLS env var. Best-effort per URL."""
+    raw = os.getenv("CWV_URLS", "[]")
+    try:
+        entries = _json_mod.loads(raw)
+    except Exception:
+        entries = []
+    results = []
+    for e in entries:
+        if isinstance(e, str):
+            url, strat = e, "mobile"
+        elif isinstance(e, dict):
+            url, strat = e.get("url", ""), e.get("strategy", "mobile")
+        else:
+            continue
+        if not url:
+            continue
+        try:
+            out = _run_cwv(url, strat)
+            results.append({"url": url, "strategy": strat, "score": out.get("performance_score")})
+        except Exception as ex:
+            results.append({"url": url, "strategy": strat, "error": str(ex)})
+    return results
+
+
+@app.post("/api/cron/cwv-snapshot")
+def cron_cwv_snapshot(authorization: str = Header(None)):
+    """Daily job: snapshot Core Web Vitals for every CWV_URLS entry so history accrues automatically."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret and authorization != f"Bearer {cron_secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    results = _snapshot_cwv_all()
+    return {"recorded": len(results), "results": results}
 
 
 # --- SEO Data API Proxy (moveupx) ---

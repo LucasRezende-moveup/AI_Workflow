@@ -1,6 +1,76 @@
 import { useState } from 'react';
 import { Zap, Layout, Clock, Move, TrendingUp, Gauge, AlertTriangle } from 'lucide-react';
 
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+function perfColorScore(s) {
+  return s >= 90 ? '#4ade80' : s >= 50 ? '#f59e0b' : '#ef4444';
+}
+
+function dayLabel(ts) {
+  const diff = Math.floor((Date.now() - ts) / 86_400_000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yest.';
+  return new Date(ts).toLocaleDateString('en-US', { weekday: 'short' });
+}
+
+// Performance-score history sparkline (mirrors the SEO Health chart)
+function ScoreSparkline({ history }) {
+  const pts0 = (history || []).slice(-14);
+  if (pts0.length < 2) return null;
+
+  const W = 220, H = 80, padT = 14, padB = 20, padL = 8, padR = 8;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = pts0.length;
+  const scores = pts0.map(h => h.score);
+  const minS = Math.max(0, Math.min(...scores) - 8);
+  const maxS = Math.min(100, Math.max(...scores) + 8);
+  const rangeS = maxS - minS || 1;
+  const xOf = i => padL + (i / (n - 1)) * plotW;
+  const yOf = s => padT + ((maxS - s) / rangeS) * plotH;
+  const pts = pts0.map((h, i) => ({ x: xOf(i), y: yOf(h.score), s: h.score, ts: h.ts }));
+  const last = pts[n - 1], first = pts[0];
+  const color = perfColorScore(last.s);
+  const line = pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const area = `M ${first.x.toFixed(1)},${(padT + plotH).toFixed(1)} ${pts.map(p => `L ${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')} L ${last.x.toFixed(1)},${(padT + plotH).toFixed(1)} Z`;
+  const delta = last.s - first.s;
+  const deltaClr = delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : '#94a3b8';
+  const labeled = new Set([0, n - 1]);
+  if (n >= 4) labeled.add(Math.floor(n / 2));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Score history
+        </span>
+        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: deltaClr }}>{delta > 0 ? '+' : ''}{delta}</span>
+      </div>
+      <svg width={W} height={H} style={{ overflow: 'visible' }}>
+        {[90, 50].filter(t => t > minS && t < maxS).map(t => (
+          <line key={t} x1={padL} y1={yOf(t).toFixed(1)} x2={W - padR} y2={yOf(t).toFixed(1)} stroke="rgba(255,255,255,0.06)" strokeDasharray="3,3" />
+        ))}
+        <path d={area} fill={color} opacity={0.1} />
+        <polyline points={line} fill="none" stroke={color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+        {pts.map((p, i) => (
+          <circle key={i} cx={p.x.toFixed(1)} cy={p.y.toFixed(1)} r={i === n - 1 ? 3.5 : 2}
+            fill={i === n - 1 ? color : `${color}80`} stroke={i === n - 1 ? 'rgba(10,10,20,0.6)' : 'none'} strokeWidth="1.5" />
+        ))}
+        <text x={last.x.toFixed(1)} y={(last.y - 6).toFixed(1)} fontSize="9" fontWeight="700" fill={color}
+          textAnchor={last.x > W * 0.75 ? 'end' : 'middle'}>{last.s}</text>
+        {pts.map((p, i) => labeled.has(i) ? (
+          <text key={i} x={p.x.toFixed(1)} y={H} fontSize="8"
+            fill={i === n - 1 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'}
+            textAnchor={p.x < W * 0.2 ? 'start' : p.x > W * 0.8 ? 'end' : 'middle'}>{dayLabel(p.ts)}</text>
+        ) : null)}
+      </svg>
+      <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.25)', textAlign: 'center' }}>
+        {n} snapshot{n !== 1 ? 's' : ''}
+      </div>
+    </div>
+  );
+}
+
 const METRICS_CONFIG = [
   { key: 'lcp', label: 'LCP', desc: 'Largest Contentful Paint', icon: Layout },
   { key: 'fcp', label: 'FCP', desc: 'First Contentful Paint',   icon: Zap },
@@ -32,12 +102,23 @@ export default function CwvAnalysis() {
   const [loading, setLoading]   = useState(false);
   const [result, setResult]     = useState(null);
   const [error, setError]       = useState('');
+  const [history, setHistory]   = useState([]);
+
+  const loadHistory = async (u, strat) => {
+    try {
+      const res = await fetch(`/api/cwv/history?url=${encodeURIComponent(u)}&strategy=${strat}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setHistory((data.history || []).filter(h => h.ts && h.score != null));
+    } catch { /* history is best-effort */ }
+  };
 
   const handleAnalyze = async () => {
     if (!url) return;
     setLoading(true);
     setResult(null);
     setError('');
+    setHistory([]);
     try {
       const res = await fetch('/api/cwv/analyze', {
         method: 'POST',
@@ -46,7 +127,11 @@ export default function CwvAnalysis() {
       });
       const data = await res.json();
       if (!res.ok) setError(data.detail || 'Unknown error');
-      else setResult(data);
+      else {
+        setResult(data);
+        // This run is already persisted server-side — pull the full daily history for the sparkline
+        loadHistory(url, strategy);
+      }
     } catch (e) {
       setError('Network error: ' + e.message);
     } finally {
@@ -130,7 +215,7 @@ export default function CwvAnalysis() {
               </div>
               <div className="mt-2" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{result.strategy}</div>
             </div>
-            <div>
+            <div style={{ flex: 1 }}>
               <h3 className="mb-2">Performance Score</h3>
               <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
                 {result.performance_score >= 90
@@ -141,6 +226,15 @@ export default function CwvAnalysis() {
               </p>
               <p className="mt-2" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Powered by Google PageSpeed Insights v5</p>
             </div>
+
+            {history.length >= 2 && (
+              <div style={{
+                flexShrink: 0, padding: '10px 14px', borderRadius: 10,
+                background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)',
+              }}>
+                <ScoreSparkline history={history} />
+              </div>
+            )}
           </div>
 
           {/* Metrics Grid */}
