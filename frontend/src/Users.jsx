@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { UserPlus, Trash2, Edit2, Check, X, Shield, User, AlertCircle, RefreshCw, KeyRound } from 'lucide-react';
 
 // ── Self-service password change (shown to editors; also usable by anyone) ──────
-function ChangePasswordPanel() {
+function PasswordForm() {
   const [cur, setCur]         = useState('');
   const [nw, setNw]           = useState('');
   const [confirm, setConfirm] = useState('');
@@ -38,6 +38,48 @@ function ChangePasswordPanel() {
   const label = { fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 5 };
 
   return (
+    <form className="glass-panel" style={{ padding: '18px 20px', maxWidth: 460 }} onSubmit={submit}>
+      <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 14 }}>Change Password</h3>
+
+      <div style={field}>
+        <label style={label}>Current password *</label>
+        <input className="glass-input" type="password" required autoComplete="current-password"
+          value={cur} onChange={e => setCur(e.target.value)} placeholder="Your current password" />
+      </div>
+      <div style={field}>
+        <label style={label}>New password *</label>
+        <input className="glass-input" type="password" required autoComplete="new-password"
+          value={nw} onChange={e => setNw(e.target.value)} placeholder="At least 8 characters" />
+      </div>
+      <div style={field}>
+        <label style={label}>Confirm new password *</label>
+        <input className="glass-input" type="password" required autoComplete="new-password"
+          value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="Re-enter new password" />
+      </div>
+
+      {msg && (
+        <div style={{
+          padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem', marginBottom: 12,
+          background: msg.type === 'ok' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
+          border: `1px solid ${msg.type === 'ok' ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
+          color: msg.type === 'ok' ? '#4ade80' : '#f87171',
+        }}>
+          {msg.text}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button type="submit" className="btn-primary" disabled={loading || !cur || !nw || !confirm}>
+          {loading ? 'Updating…' : 'Update Password'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// Editor standalone page: the form plus a page header
+function ChangePasswordPanel() {
+  return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 460 }}>
       <div>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -47,43 +89,7 @@ function ChangePasswordPanel() {
           Change your password. You'll keep using the same email to sign in.
         </p>
       </div>
-
-      <form className="glass-panel" style={{ padding: '18px 20px' }} onSubmit={submit}>
-        <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 14 }}>Change Password</h3>
-
-        <div style={field}>
-          <label style={label}>Current password *</label>
-          <input className="glass-input" type="password" required autoComplete="current-password"
-            value={cur} onChange={e => setCur(e.target.value)} placeholder="Your current password" />
-        </div>
-        <div style={field}>
-          <label style={label}>New password *</label>
-          <input className="glass-input" type="password" required autoComplete="new-password"
-            value={nw} onChange={e => setNw(e.target.value)} placeholder="At least 8 characters" />
-        </div>
-        <div style={field}>
-          <label style={label}>Confirm new password *</label>
-          <input className="glass-input" type="password" required autoComplete="new-password"
-            value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="Re-enter new password" />
-        </div>
-
-        {msg && (
-          <div style={{
-            padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem', marginBottom: 12,
-            background: msg.type === 'ok' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
-            border: `1px solid ${msg.type === 'ok' ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
-            color: msg.type === 'ok' ? '#4ade80' : '#f87171',
-          }}>
-            {msg.text}
-          </div>
-        )}
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <button type="submit" className="btn-primary" disabled={loading || !cur || !nw || !confirm}>
-            {loading ? 'Updating…' : 'Update Password'}
-          </button>
-        </div>
-      </form>
+      <PasswordForm />
     </div>
   );
 }
@@ -126,6 +132,9 @@ export default function Users({ currentUser }) {
   // Delete state
   const [deleteId, setDeleteId]     = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Super-admin's own password panel
+  const [showPw, setShowPw]         = useState(false);
 
   const isAdmin = currentUser?.role === 'super-admin';
   const token = localStorage.getItem('auth_token');
@@ -231,11 +240,17 @@ export default function Users({ currentUser }) {
           <button className="btn-secondary" onClick={fetchUsers} disabled={loading}>
             <RefreshCw size={14} />
           </button>
+          <button className="btn-secondary" onClick={() => setShowPw(v => !v)}>
+            <KeyRound size={14} /> My password
+          </button>
           <button className="btn-primary" onClick={() => setShowAdd(v => !v)}>
             <UserPlus size={15} /> Add User
           </button>
         </div>
       </div>
+
+      {/* Super-admin's own password change */}
+      {showPw && <PasswordForm />}
 
       {/* Persistence warning */}
       {mgmtStatus && !mgmtStatus.vercel_token_configured && (
