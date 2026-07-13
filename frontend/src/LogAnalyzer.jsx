@@ -303,6 +303,15 @@ export default function LogAnalyzer({ onData } = {}) {
             <MetricCard icon={TrendingUp}    label="Bot Crawlers"   value={analytics.bot_count}                       color="#8b5cf6" sub="distinct bots detected" />
           </div>
 
+          {(analytics.cache_hits > 0 || analytics.files_parsed > 0) && (
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: -8 }}>
+              ⚡ {analytics.cache_hits > 0 && <><strong style={{ color: '#4ade80' }}>{analytics.cache_hits}</strong> day{analytics.cache_hits !== 1 ? 's' : ''} from cache</>}
+              {analytics.cache_hits > 0 && analytics.files_parsed > 0 && ' · '}
+              {analytics.files_parsed > 0 && <><strong style={{ color: 'white' }}>{analytics.files_parsed}</strong> freshly parsed</>}
+              {' '}— cached days load instantly without re-downloading.
+            </div>
+          )}
+
           {/* Filters */}
           <div className="glass-panel">
             <h3 className="flex items-center gap-2 mb-4"><Filter size={18} /> Filter Results</h3>

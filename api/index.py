@@ -198,6 +198,16 @@ def _ensure_schema():
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS alerts_seen_idx ON alerts (seen, created_at DESC)
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS log_file_cache (
+                        site       TEXT NOT NULL,
+                        file       TEXT NOT NULL,
+                        hits       INTEGER NOT NULL DEFAULT 0,
+                        aggregate  JSONB NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        PRIMARY KEY (site, file)
+                    )
+                """)
                 cur.execute("SELECT COUNT(*) AS cnt FROM users")
                 row = cur.fetchone()
                 if row["cnt"] == 0:
@@ -816,124 +826,274 @@ def get_log_files(req: LogRequest):
     files = fetch_log_files(site["url"], site["username"], site["password"])
     return {"files": files}
 
-@app.post("/api/logs/analyze")
-def analyze_logs(req: AnalyzeRequest):
+# ── Log analysis: per-file parse + DB-cached aggregates ───────────────────────
+
+_LOG_BOT_NAMES = ["Googlebot", "bingbot", "AhrefsBot", "SemrushBot", "YandexBot",
+                  "dotbot", "mj12bot", "PetalBot", "DataForSeoBot"]
+
+
+def _parse_one_log_file(base: str, file_name: str, auth):
+    """Download and parse a single .json.gz access-log file into a compact, bounded aggregate.
+
+    Returns a JSON-serializable dict (cacheable per site+file), or None on failure/non-200.
+    """
     import gzip, json as _json
     from collections import Counter
+    import requests as _req_lib
 
-    sites = load_sites()
-    if req.site_name not in sites:
-        raise HTTPException(status_code=404, detail="Site not found")
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    PER_FILE_SAMPLE = 400        # sample rows kept per file (merged view caps at 5000)
+    PER_FILE_IP_SAMPLE = 20_000  # IPs kept per file for cross-day union approximation
+    IP_COUNT_CAP = 500_000       # bound memory when counting a file's unique IPs
+    TOP_PATHS = 500              # keep only the busiest paths per file
+    TOP_BOT_PATHS = 100
 
-    site   = sites[req.site_name]
-    base   = site["url"].rstrip("/") + "/"
-    auth   = (site["username"], site["password"])
-    hdrs   = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
-    BOT_NAMES   = ["Googlebot","bingbot","AhrefsBot","SemrushBot","YandexBot",
-                   "dotbot","mj12bot","PetalBot","DataForSeoBot"]
-    MAX_SAMPLE  = 5000
-    MAX_IPS     = 500_000
-
-    total_hits  = 0
-    status_cnt  = Counter()
-    path_cnt    = Counter()
-    ip_set      = set()
-    bot_hits    = Counter()
-    time_cnt    = Counter()
-    sample_rows = []
-
-    # Per-bot aggregations (status, paths, time) computed over full dataset
-    bot_status  = {b: Counter() for b in BOT_NAMES}
-    bot_paths   = {b: Counter() for b in BOT_NAMES}
-    bot_time    = {b: Counter() for b in BOT_NAMES}
+    total_hits = 0
+    status_cnt = Counter()
+    path_cnt   = Counter()
+    ip_full    = set()
+    bot_hits   = Counter()
+    bot_status = {b: Counter() for b in _LOG_BOT_NAMES}
+    bot_paths  = {b: Counter() for b in _LOG_BOT_NAMES}
+    any_bot_hits   = 0
     any_bot_status = Counter()
     any_bot_paths  = Counter()
-    any_bot_time   = Counter()
+    sample_rows = []
 
-    import requests as _req_lib
-    for file_name in req.files:
-        try:
-            resp = _req_lib.get(base + file_name, auth=auth, headers=hdrs, timeout=60)
-            if resp.status_code != 200:
-                continue
-            with gzip.GzipFile(fileobj=io.BytesIO(resp.content)) as gz:
-                for raw in gz:
-                    line = raw.decode("utf-8", errors="replace").strip()
-                    if "@cee: " not in line:
-                        continue
-                    _, _, payload_str = line.partition("@cee: ")
-                    try:
-                        entry = _json.loads(payload_str)
-                    except _json.JSONDecodeError:
-                        continue
+    try:
+        resp = _req_lib.get(base + file_name, auth=auth, headers=hdrs, timeout=60)
+        if resp.status_code != 200:
+            return None
+        with gzip.GzipFile(fileobj=io.BytesIO(resp.content)) as gz:
+            for raw in gz:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if "@cee: " not in line:
+                    continue
+                _, _, payload_str = line.partition("@cee: ")
+                try:
+                    entry = _json.loads(payload_str)
+                except _json.JSONDecodeError:
+                    continue
 
-                    total_hits += 1
-                    status   = str(entry.get("status", "Unknown"))
-                    path     = entry.get("request", "/")
-                    ip       = entry.get("ip", "")
-                    ua_lower = (entry.get("user_agent", "") or "").lower()
+                total_hits += 1
+                status   = str(entry.get("status", "Unknown"))
+                path     = (entry.get("request", "/") or "/")[:200]
+                ip       = entry.get("ip", "")
+                ua_lower = (entry.get("user_agent", "") or "").lower()
 
-                    status_cnt[status] += 1
-                    path_cnt[path]     += 1
-                    time_cnt[file_name] += 1
-                    if len(ip_set) < MAX_IPS:
-                        ip_set.add(ip)
+                status_cnt[status] += 1
+                path_cnt[path]     += 1
+                if len(ip_full) < IP_COUNT_CAP:
+                    ip_full.add(ip)
 
-                    is_any_bot = False
-                    for bot in BOT_NAMES:
-                        if bot.lower() in ua_lower:
-                            bot_hits[bot]        += 1
-                            bot_status[bot][status] += 1
-                            bot_paths[bot][path]    += 1
-                            bot_time[bot][file_name] += 1
-                            is_any_bot = True
-                    if is_any_bot:
-                        any_bot_status[status]   += 1
-                        any_bot_paths[path]      += 1
-                        any_bot_time[file_name]  += 1
+                is_any_bot = False
+                for bot in _LOG_BOT_NAMES:
+                    if bot.lower() in ua_lower:
+                        bot_hits[bot] += 1
+                        bot_status[bot][status] += 1
+                        bot_paths[bot][path] += 1
+                        is_any_bot = True
+                if is_any_bot:
+                    any_bot_hits += 1
+                    any_bot_status[status] += 1
+                    any_bot_paths[path] += 1
 
-                    if len(sample_rows) < MAX_SAMPLE:
-                        entry["_source_file"] = file_name
-                        entry["status"]        = status
-                        sample_rows.append(entry)
-        except Exception:
+                if len(sample_rows) < PER_FILE_SAMPLE:
+                    entry["_source_file"] = file_name
+                    entry["status"] = status
+                    sample_rows.append(entry)
+    except Exception:
+        return None
+
+    return {
+        "file": file_name,
+        "total_hits": total_hits,
+        "status_cnt": dict(status_cnt),
+        "path_cnt": dict(path_cnt.most_common(TOP_PATHS)),
+        "unique_ips": len(ip_full),
+        "ip_sample": list(ip_full)[:PER_FILE_IP_SAMPLE],
+        "bot_hits": {b: c for b, c in bot_hits.items() if c},
+        "bot_status": {b: dict(s) for b, s in bot_status.items() if s},
+        "bot_paths": {b: dict(p.most_common(TOP_BOT_PATHS)) for b, p in bot_paths.items() if p},
+        "any_bot_hits": any_bot_hits,
+        "any_bot_status": dict(any_bot_status),
+        "any_bot_paths": dict(any_bot_paths.most_common(TOP_BOT_PATHS)),
+        "sample_rows": sample_rows,
+    }
+
+
+def _get_log_cache(site: str, file: str):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT aggregate FROM log_file_cache WHERE site=%s AND file=%s", (site, file))
+                row = cur.fetchone()
+                if row:
+                    agg = row["aggregate"]
+                    if isinstance(agg, str):
+                        agg = json.loads(agg)
+                    return agg
+    except Exception:
+        pass
+    return None
+
+
+def _put_log_cache(site: str, file: str, agg: dict):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO log_file_cache (site, file, hits, aggregate)
+                       VALUES (%s,%s,%s,%s)
+                       ON CONFLICT (site, file) DO UPDATE
+                         SET hits = EXCLUDED.hits, aggregate = EXCLUDED.aggregate, created_at = NOW()""",
+                    (site, file, agg.get("total_hits", 0), json.dumps(agg)),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _merge_log_aggregates(partials: list) -> dict:
+    """Merge per-file aggregates into the response shape the frontend expects."""
+    from collections import Counter
+    MERGE_SAMPLE = 5000
+    MERGE_IP_CAP = 500_000
+
+    total_hits = 0
+    status_cnt = Counter()
+    path_cnt   = Counter()
+    bot_hits   = Counter()
+    bot_status = {b: Counter() for b in _LOG_BOT_NAMES}
+    bot_paths  = {b: Counter() for b in _LOG_BOT_NAMES}
+    any_bot_status = Counter()
+    any_bot_paths  = Counter()
+    ip_union = set()
+    max_file_unique = 0
+    sample_rows = []
+    time_series = []
+    bot_time = {b: [] for b in _LOG_BOT_NAMES}
+    any_bot_time = []
+
+    for p in partials:
+        if not p:
             continue
+        date_label = p.get("file", "").replace(".json.gz", "")
+        fh = p.get("total_hits", 0)
+        total_hits += fh
+        time_series.append({"date": date_label, "hits": fh})
+
+        for k, v in (p.get("status_cnt") or {}).items():
+            status_cnt[k] += v
+        for k, v in (p.get("path_cnt") or {}).items():
+            path_cnt[k] += v
+
+        if len(ip_union) < MERGE_IP_CAP:
+            for ip in (p.get("ip_sample") or []):
+                if len(ip_union) >= MERGE_IP_CAP:
+                    break
+                ip_union.add(ip)
+        max_file_unique = max(max_file_unique, p.get("unique_ips", 0))
+
+        for b, c in (p.get("bot_hits") or {}).items():
+            if b in bot_hits or b in _LOG_BOT_NAMES:
+                bot_hits[b] += c
+                bot_time.setdefault(b, []).append({"date": date_label, "hits": c})
+        for b, s in (p.get("bot_status") or {}).items():
+            for k, v in s.items():
+                bot_status.setdefault(b, Counter())[k] += v
+        for b, pd in (p.get("bot_paths") or {}).items():
+            for k, v in pd.items():
+                bot_paths.setdefault(b, Counter())[k] += v
+
+        any_bot_time.append({"date": date_label, "hits": p.get("any_bot_hits", 0)})
+        for k, v in (p.get("any_bot_status") or {}).items():
+            any_bot_status[k] += v
+        for k, v in (p.get("any_bot_paths") or {}).items():
+            any_bot_paths[k] += v
+
+        if len(sample_rows) < MERGE_SAMPLE:
+            for r in (p.get("sample_rows") or []):
+                if len(sample_rows) >= MERGE_SAMPLE:
+                    break
+                sample_rows.append(r)
 
     if total_hits == 0:
         return {"total_hits": 0, "sample_rows": []}
 
-    def _build_agg(s_cnt, p_cnt, t_cnt):
+    time_series.sort(key=lambda x: x["date"])
+
+    def _agg(s_cnt, p_cnt, t_list):
         return {
-            "status_data":  [{"name": k, "value": v} for k, v in s_cnt.most_common()],
-            "top_paths":    [{"path": p[:60], "hits": c} for p, c in p_cnt.most_common(10)],
-            "time_series":  [{"date": k.replace(".json.gz", ""), "hits": v} for k, v in sorted(t_cnt.items())],
+            "status_data": [{"name": k, "value": v} for k, v in s_cnt.most_common()],
+            "top_paths":   [{"path": pp[:60], "hits": c} for pp, c in p_cnt.most_common(10)],
+            "time_series": sorted(t_list, key=lambda x: x["date"]),
         }
 
     bot_aggregations = {}
-    for b in BOT_NAMES:
-        if bot_hits[b] > 0:
-            bot_aggregations[b] = _build_agg(bot_status[b], bot_paths[b], bot_time[b])
+    for b in _LOG_BOT_NAMES:
+        if bot_hits.get(b, 0) > 0:
+            bot_aggregations[b] = _agg(bot_status[b], bot_paths[b], bot_time[b])
     if sum(any_bot_status.values()) > 0:
-        bot_aggregations["Any Bot"] = _build_agg(any_bot_status, any_bot_paths, any_bot_time)
+        bot_aggregations["Any Bot"] = _agg(any_bot_status, any_bot_paths, any_bot_time)
 
     googlebot_hits = bot_hits.get("Googlebot", 0)
     return {
-        "total_hits":        total_hits,
-        "errors_404":        status_cnt.get("404", 0),
-        "errors_5xx":        sum(v for k, v in status_cnt.items() if k.startswith("5")),
-        "unique_ips":        len(ip_set),
-        "googlebot_hits":    googlebot_hits,
-        "googlebot_rate":    round(googlebot_hits / total_hits * 100, 1) if total_hits else 0,
-        "bot_count":         len(bot_hits),
-        "status_data":       [{"name": k, "value": v} for k, v in status_cnt.most_common()],
-        "top_paths":         [{"path": p[:60], "hits": c} for p, c in path_cnt.most_common(10)],
-        "time_series":       [{"date": k.replace(".json.gz", ""), "hits": v} for k, v in sorted(time_cnt.items())],
-        "bot_breakdown":     [{"bot": k, "hits": v} for k, v in bot_hits.most_common()],
-        "bot_aggregations":  bot_aggregations,
-        "sample_rows":       sample_rows,
-        "sample_size":       MAX_SAMPLE,
+        "total_hits":       total_hits,
+        "errors_404":       status_cnt.get("404", 0),
+        "errors_5xx":       sum(v for k, v in status_cnt.items() if k.startswith("5")),
+        "unique_ips":       max(len(ip_union), max_file_unique),
+        "googlebot_hits":   googlebot_hits,
+        "googlebot_rate":   round(googlebot_hits / total_hits * 100, 1) if total_hits else 0,
+        "bot_count":        len([b for b, c in bot_hits.items() if c > 0]),
+        "status_data":      [{"name": k, "value": v} for k, v in status_cnt.most_common()],
+        "top_paths":        [{"path": p[:60], "hits": c} for p, c in path_cnt.most_common(10)],
+        "time_series":      time_series,
+        "bot_breakdown":    [{"bot": k, "hits": v} for k, v in bot_hits.most_common()],
+        "bot_aggregations": bot_aggregations,
+        "sample_rows":      sample_rows,
+        "sample_size":      MERGE_SAMPLE,
     }
+
+
+@app.post("/api/logs/analyze")
+def analyze_logs(req: AnalyzeRequest):
+    sites = load_sites()
+    if req.site_name not in sites:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    site = sites[req.site_name]
+    base = site["url"].rstrip("/") + "/"
+    auth = (site["username"], site["password"])
+
+    files = req.files or []
+    if not files:
+        return {"total_hits": 0, "sample_rows": []}
+
+    # The most-recent file may still be growing today — always re-parse it, never cache it.
+    newest = files[0]
+
+    partials = []
+    cache_hits = 0
+    parsed = 0
+    for fname in files:
+        cached = None if fname == newest else _get_log_cache(req.site_name, fname)
+        if cached is not None:
+            partials.append(cached)
+            cache_hits += 1
+            continue
+        agg = _parse_one_log_file(base, fname, auth)
+        if agg is None:
+            continue
+        partials.append(agg)
+        parsed += 1
+        if fname != newest:
+            _put_log_cache(req.site_name, fname, agg)
+
+    result = _merge_log_aggregates(partials)
+    result["cache_hits"] = cache_hits
+    result["files_parsed"] = parsed
+    return result
 
 
 class ExportRequest(BaseModel):
