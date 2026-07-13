@@ -1,0 +1,471 @@
+<title>MoveupMedia SEO Platform — Quick Guide</title>
+
+<style>
+  :root {
+    --paper:#FBF7F9; --surface:#FFFFFF; --surface-2:#FCF9FB;
+    --ink:#211C20; --muted:#6E6470; --hairline:#ECE3E9;
+    --accent:#E20071; --accent-deep:#B0005A; --accent-soft:rgba(226,0,113,.08);
+    --good:#2E9E5B; --good-soft:rgba(46,158,91,.1);
+    --info:#2F6DF6; --info-soft:rgba(47,109,246,.09);
+    --warn:#B9700A; --warn-soft:rgba(185,112,10,.1);
+    --shadow:0 1px 2px rgba(33,28,32,.04), 0 8px 24px rgba(33,28,32,.05);
+    --font-display:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --font-body:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,Helvetica,Arial,sans-serif;
+    --maxw:1060px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --paper:#141014; --surface:#1C171B; --surface-2:#211B20;
+      --ink:#F2EDF0; --muted:#A99FA8; --hairline:#312A30;
+      --accent:#FF3D97; --accent-deep:#FF74B4; --accent-soft:rgba(255,61,151,.12);
+      --good:#46C07A; --good-soft:rgba(70,192,122,.14);
+      --info:#6EA0FF; --info-soft:rgba(110,160,255,.13);
+      --warn:#E0A44A; --warn-soft:rgba(224,164,74,.14);
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --paper:#FBF7F9; --surface:#FFFFFF; --surface-2:#FCF9FB;
+    --ink:#211C20; --muted:#6E6470; --hairline:#ECE3E9;
+    --accent:#E20071; --accent-deep:#B0005A; --accent-soft:rgba(226,0,113,.08);
+    --good:#2E9E5B; --good-soft:rgba(46,158,91,.1);
+    --info:#2F6DF6; --info-soft:rgba(47,109,246,.09);
+    --warn:#B9700A; --warn-soft:rgba(185,112,10,.1);
+    --shadow:0 1px 2px rgba(33,28,32,.04), 0 8px 24px rgba(33,28,32,.05);
+  }
+  :root[data-theme="dark"]{
+    --paper:#141014; --surface:#1C171B; --surface-2:#211B20;
+    --ink:#F2EDF0; --muted:#A99FA8; --hairline:#312A30;
+    --accent:#FF3D97; --accent-deep:#FF74B4; --accent-soft:rgba(255,61,151,.12);
+    --good:#46C07A; --good-soft:rgba(70,192,122,.14);
+    --info:#6EA0FF; --info-soft:rgba(110,160,255,.13);
+    --warn:#E0A44A; --warn-soft:rgba(224,164,74,.14);
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0}
+  .page{
+    background:var(--paper); color:var(--ink);
+    font-family:var(--font-body); font-size:17px; line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 24px}
+  a{color:var(--accent); text-decoration:none}
+  a:hover{text-decoration:underline}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:4px}
+
+  /* ---- top nav ---- */
+  .topbar{
+    position:sticky; top:0; z-index:20;
+    background:color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter:saturate(1.4) blur(10px);
+    border-bottom:1px solid var(--hairline);
+  }
+  .topbar .wrap{display:flex; align-items:center; gap:20px; height:58px}
+  .brand{display:flex; align-items:center; gap:9px; font-weight:700; letter-spacing:-.01em}
+  .brand .dot{width:11px; height:11px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 4px var(--accent-soft)}
+  .topnav{margin-left:auto; display:flex; gap:22px}
+  .topnav a{color:var(--muted); font-size:.86rem; font-weight:600}
+  .topnav a:hover{color:var(--ink); text-decoration:none}
+  @media (max-width:680px){ .topnav{display:none} }
+
+  /* ---- hero ---- */
+  .hero{padding:72px 0 40px; border-bottom:1px solid var(--hairline)}
+  .eyebrow{
+    font-size:.74rem; font-weight:700; text-transform:uppercase; letter-spacing:.16em;
+    color:var(--accent);
+  }
+  .hero h1{
+    font-family:var(--font-display); font-weight:600;
+    font-size:clamp(2.3rem,5.2vw,3.5rem); line-height:1.05; letter-spacing:-.015em;
+    text-wrap:balance; margin:.35em 0 .3em;
+  }
+  .hero p{font-size:1.15rem; color:var(--muted); max-width:60ch; margin:0}
+  .meta-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:26px}
+  .tag{
+    font-size:.8rem; font-weight:600; color:var(--ink);
+    background:var(--surface); border:1px solid var(--hairline);
+    padding:6px 12px; border-radius:999px; box-shadow:var(--shadow);
+  }
+  .tag b{color:var(--accent)}
+
+  /* ---- section scaffolding ---- */
+  section{padding:56px 0}
+  section + section{border-top:1px solid var(--hairline)}
+  .sec-head{max-width:64ch; margin-bottom:32px}
+  .sec-head h2{
+    font-family:var(--font-display); font-weight:600; letter-spacing:-.01em;
+    font-size:1.9rem; margin:.2em 0 .25em; text-wrap:balance;
+  }
+  .sec-head p{color:var(--muted); margin:0}
+
+  /* ---- orientation cards ---- */
+  .grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:18px}
+  @media (max-width:820px){ .grid3{grid-template-columns:1fr} }
+  .step{
+    background:var(--surface); border:1px solid var(--hairline); border-radius:14px;
+    padding:22px 22px 24px; box-shadow:var(--shadow);
+  }
+  .step .num{
+    font-family:var(--font-display); font-size:1.05rem; font-weight:700; color:var(--accent);
+    width:34px; height:34px; border-radius:50%; background:var(--accent-soft);
+    display:grid; place-items:center; margin-bottom:14px;
+  }
+  .step h3{font-size:1.05rem; margin:0 0 6px}
+  .step p{margin:0; color:var(--muted); font-size:.95rem}
+
+  /* ---- task index ---- */
+  .tasks{display:grid; grid-template-columns:1fr 1fr; gap:2px; background:var(--hairline);
+    border:1px solid var(--hairline); border-radius:14px; overflow:hidden; box-shadow:var(--shadow)}
+  @media (max-width:760px){ .tasks{grid-template-columns:1fr} }
+  .task{
+    display:flex; align-items:center; gap:16px; justify-content:space-between;
+    background:var(--surface); padding:15px 20px;
+  }
+  .task:hover{background:var(--surface-2)}
+  .task .goal{font-weight:600; font-size:.98rem}
+  .task .to{
+    flex-shrink:0; font-size:.78rem; font-weight:700; color:var(--accent);
+    background:var(--accent-soft); padding:5px 11px; border-radius:999px; white-space:nowrap;
+  }
+
+  /* ---- tool groups ---- */
+  .group{margin-top:14px}
+  .group-head{display:flex; align-items:center; gap:12px; margin:38px 0 18px}
+  .group-head:first-child{margin-top:0}
+  .group-ico{
+    width:38px; height:38px; border-radius:10px; flex-shrink:0;
+    display:grid; place-items:center; color:var(--accent); background:var(--accent-soft);
+  }
+  .group-ico svg{width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.8;
+    stroke-linecap:round; stroke-linejoin:round}
+  .group-head h3{font-size:1.02rem; margin:0; letter-spacing:.02em; text-transform:uppercase; color:var(--muted); font-weight:700}
+  .cards{display:grid; grid-template-columns:repeat(2,1fr); gap:18px}
+  @media (max-width:760px){ .cards{grid-template-columns:1fr} }
+  .card{
+    background:var(--surface); border:1px solid var(--hairline); border-radius:14px;
+    padding:22px 22px 20px; box-shadow:var(--shadow); position:relative;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  .card-top{display:flex; align-items:baseline; justify-content:space-between; gap:10px}
+  .card h4{font-family:var(--font-display); font-weight:600; font-size:1.22rem; margin:0; letter-spacing:-.01em}
+  .card .lead{color:var(--ink); margin:0; font-size:.98rem}
+  .card .how{margin:0; color:var(--muted); font-size:.9rem; line-height:1.6}
+  .card .how b{color:var(--ink); font-weight:600}
+  .chip{
+    font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+    padding:4px 9px; border-radius:999px; white-space:nowrap; flex-shrink:0;
+  }
+  .chip.credit{color:var(--warn); background:var(--warn-soft)}
+  .chip.admin{color:var(--info); background:var(--info-soft)}
+  .subtabs{display:flex; flex-wrap:wrap; gap:7px; margin-top:2px}
+  .subtab{font-size:.76rem; font-weight:600; color:var(--muted);
+    border:1px solid var(--hairline); border-radius:8px; padding:4px 9px}
+
+  /* ---- callouts ---- */
+  .note{
+    border-left:3px solid var(--accent); background:var(--accent-soft);
+    padding:14px 18px; border-radius:0 10px 10px 0; margin:18px 0 0; font-size:.95rem;
+  }
+  .note.tip{border-color:var(--good); background:var(--good-soft)}
+  .note.warn{border-color:var(--warn); background:var(--warn-soft)}
+  .note b{font-weight:700}
+
+  /* ---- table ---- */
+  .table-scroll{overflow-x:auto; border:1px solid var(--hairline); border-radius:14px; box-shadow:var(--shadow)}
+  table{border-collapse:collapse; width:100%; font-size:.92rem; min-width:480px; background:var(--surface)}
+  th,td{text-align:left; padding:13px 18px; border-bottom:1px solid var(--hairline)}
+  tr:last-child td{border-bottom:none}
+  th{font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); font-weight:700}
+  td b{color:var(--accent)}
+
+  /* ---- faq ---- */
+  .faq{display:flex; flex-direction:column; gap:12px}
+  details{
+    background:var(--surface); border:1px solid var(--hairline); border-radius:12px;
+    padding:2px 20px; box-shadow:var(--shadow);
+  }
+  summary{
+    cursor:pointer; padding:15px 0; font-weight:600; list-style:none;
+    display:flex; justify-content:space-between; align-items:center; gap:16px;
+  }
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"+"; color:var(--accent); font-size:1.3rem; font-weight:400; transition:transform .2s}
+  details[open] summary::after{transform:rotate(45deg)}
+  details p{margin:0 0 16px; color:var(--muted); font-size:.95rem}
+
+  footer{border-top:1px solid var(--hairline); padding:34px 0 60px; color:var(--muted); font-size:.9rem}
+
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+</style>
+
+<div class="page">
+
+  <div class="topbar">
+    <div class="wrap">
+      <span class="brand"><span class="dot"></span>MoveupMedia SEO</span>
+      <nav class="topnav">
+        <a href="#start">Start here</a>
+        <a href="#do">What can I do?</a>
+        <a href="#tools">Tools</a>
+        <a href="#know">Good to know</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+    </div>
+  </div>
+
+  <header class="hero">
+    <div class="wrap">
+      <span class="eyebrow">Quick Guide</span>
+      <h1>Everything the platform does, in plain language.</h1>
+      <p>A friendly tour of your SEO toolkit — what each tool is for and how to use it. Written for everyone on the team; no technical background needed.</p>
+      <div class="meta-row">
+        <span class="tag">🕑 <b>10-minute</b> read</span>
+        <span class="tag">For <b>new users</b></span>
+        <span class="tag">Real data from Google, your logs &amp; more</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ORIENTATION -->
+  <section id="start">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Start here</span>
+        <h2>Three things to know before you dive in</h2>
+        <p>That's the whole setup. Once you're in, everything lives in the left-hand menu.</p>
+      </div>
+      <div class="grid3">
+        <div class="step">
+          <div class="num">1</div>
+          <h3>Signing in</h3>
+          <p>Log in with your email and password. You'll stay signed in for 24 hours before being asked again. No account yet? Ask an admin to create one.</p>
+        </div>
+        <div class="step">
+          <div class="num">2</div>
+          <h3>Your access level</h3>
+          <p><b style="color:var(--ink)">Editors</b> use every SEO tool. <b style="color:var(--ink)">Super-admins</b> can also manage user accounts. That's the only difference.</p>
+        </div>
+        <div class="step">
+          <div class="num">3</div>
+          <h3>Getting around</h3>
+          <p>Pick any tool from the left sidebar. The bell (🔔) at the top shows ranking alerts; your initials open your profile and logout.</p>
+        </div>
+      </div>
+      <div class="note tip"><b>Analyzing a password-protected staging site?</b> Most tools have a “🔒 Authentication” toggle — open it and enter the staging username and password so the tool can reach the page.</div>
+    </div>
+  </section>
+
+  <!-- TASK INDEX -->
+  <section id="do">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">What can I do?</span>
+        <h2>Start from what you want to accomplish</h2>
+        <p>Not sure which tool to open? Find your goal below — the pill points to the right tool.</p>
+      </div>
+      <div class="tasks">
+        <div class="task"><span class="goal">See how my site is doing on Google</span><span class="to">GSC Dashboard</span></div>
+        <div class="task"><span class="goal">Get a quick health score for a client</span><span class="to">SEO Health</span></div>
+        <div class="task"><span class="goal">Track a keyword's ranking over time</span><span class="to">Tracking</span></div>
+        <div class="task"><span class="goal">See who ranks for a keyword right now</span><span class="to">SERP Analyzer</span></div>
+        <div class="task"><span class="goal">Win the featured snippet for a keyword</span><span class="to">FS Stealer</span></div>
+        <div class="task"><span class="goal">Check if my pages are indexed by Google</span><span class="to">Indexation Control</span></div>
+        <div class="task"><span class="goal">Find out why a page loads slowly</span><span class="to">Technical › Core Web Vitals</span></div>
+        <div class="task"><span class="goal">See how Googlebot crawls my site</span><span class="to">Technical › Log Analysis</span></div>
+        <div class="task"><span class="goal">Review a page's content quality</span><span class="to">On-Page Auditor</span></div>
+        <div class="task"><span class="goal">Audit internal links &amp; anchor text</span><span class="to">Internal Linking</span></div>
+        <div class="task"><span class="goal">Compare my page to a competitor's</span><span class="to">URL Comparator</span></div>
+        <div class="task"><span class="goal">Re-open a past analysis</span><span class="to">History</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TOOLS -->
+  <section id="tools">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">The tools</span>
+        <h2>Your toolkit, grouped by job</h2>
+        <p>Every tool shows real data and adds an AI read-out with concrete recommendations you can act on.</p>
+      </div>
+
+      <!-- Group: Track performance -->
+      <div class="group">
+        <div class="group-head">
+          <span class="group-ico"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg></span>
+          <h3>Track performance</h3>
+        </div>
+        <div class="cards">
+          <article class="card">
+            <div class="card-top"><h4>GSC Dashboard</h4></div>
+            <p class="lead">Your Google Search Console numbers — clicks, impressions, CTR and average position.</p>
+            <p class="how"><b>How:</b> pick a site and date range, read the metrics, then hit <b>Generate AI Insights</b> for quick wins and cannibalization findings. You can even ask questions in plain English.</p>
+          </article>
+          <article class="card">
+            <div class="card-top"><h4>SEO Health</h4></div>
+            <p class="lead">One health score (0–100) per client, pulled from your Looker Studio spreadsheets.</p>
+            <p class="how"><b>How:</b> each client shows a score gauge, a trend sparkline and metrics by category. Click <b>why?</b> to see what's lowering the score. History fills in automatically day by day.</p>
+          </article>
+          <article class="card">
+            <div class="card-top"><h4>Tracking</h4><span class="chip credit">uses credits</span></div>
+            <p class="lead">Watch keyword rankings over time and get alerted to changes.</p>
+            <p class="how"><b>How:</b> add a keyword (with an optional page and location). It's re-checked automatically every day; open its history for the trend and watch the bell for drops, gains and snippet changes.</p>
+          </article>
+          <article class="card">
+            <div class="card-top"><h4>History</h4></div>
+            <p class="lead">A log of past analyses so you can re-open results without re-running them.</p>
+            <p class="how"><b>How:</b> filter by tool and click <b>View</b> on any run. Covers FS Stealer, SERP Analyzer and SEO Health.</p>
+          </article>
+        </div>
+      </div>
+
+      <!-- Group: Win rankings -->
+      <div class="group">
+        <div class="group-head">
+          <span class="group-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M8.5 13.5L7 22l5-3 5 3-1.5-8.5"/></svg></span>
+          <h3>Win rankings &amp; snippets</h3>
+        </div>
+        <div class="cards">
+          <article class="card">
+            <div class="card-top"><h4>SERP Analyzer</h4><span class="chip credit">uses credits</span></div>
+            <p class="lead">A real Google results page for any keyword, broken down for you.</p>
+            <p class="how"><b>How:</b> enter a keyword and optional location. See the organic results, related searches, People Also Ask, the featured snippet, and an AI read of the landscape. Saved to History.</p>
+          </article>
+          <article class="card">
+            <div class="card-top"><h4>FS Stealer</h4><span class="chip credit">uses credits</span></div>
+            <p class="lead">A step-by-step, copy-paste plan to win the featured snippet for a keyword.</p>
+            <p class="how"><b>How:</b> enter a keyword, your page URL and a location. You get a diagnosis, gap analysis vs. the current holder, an action plan and quick wins. Export it as a document, or click <b>Track</b> to monitor the keyword.</p>
+          </article>
+        </div>
+      </div>
+
+      <!-- Group: Audit -->
+      <div class="group">
+        <div class="group-head">
+          <span class="group-ico"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h10M4 19h7"/><circle cx="18" cy="17" r="3"/><path d="M20.5 19.5L22 21"/></svg></span>
+          <h3>Audit your site</h3>
+        </div>
+        <div class="cards">
+          <article class="card">
+            <div class="card-top"><h4>Technical Auditor</h4></div>
+            <p class="lead">Site-health diagnostics in three tabs.</p>
+            <div class="subtabs"><span class="subtab">Core Web Vitals</span><span class="subtab">Crawl Audit</span><span class="subtab">Log Analysis</span></div>
+            <p class="how"><b>Core Web Vitals:</b> real speed scores (mobile/desktop) with a history sparkline. <b>Crawl Audit:</b> upload a Screaming Frog crawl for an instant overview. <b>Log Analysis:</b> see how bots crawl your site, with a status/error/path breakdown.</p>
+          </article>
+          <article class="card">
+            <div class="card-top"><h4>On-Page Auditor</h4></div>
+            <p class="lead">Page-level content quality — paste a URL into any tab.</p>
+            <div class="subtabs"><span class="subtab">Headers</span><span class="subtab">Schema</span><span class="subtab">Image Alt</span><span class="subtab">E-E-A-T</span></div>
+            <p class="how"><b>How:</b> check the heading structure, validate structured data, improve image alt text, and score the page against Google's quality (E-E-A-T) guidelines — each with fix-it suggestions.</p>
+          </article>
+          <article class="card">
+            <div class="card-top"><h4>Indexation Control</h4></div>
+            <p class="lead">Are your pages actually in Google's index?</p>
+            <p class="how"><b>How:</b> check individual URLs, pull a whole sitemap for coverage, or view an indexed-status timeline across days with PASS / FAIL coloring.</p>
+          </article>
+        </div>
+      </div>
+
+      <!-- Group: Links -->
+      <div class="group">
+        <div class="group-head">
+          <span class="group-ico"><svg viewBox="0 0 24 24"><path d="M9 15l6-6"/><path d="M11 6l1-1a4 4 0 015.7 5.7l-1 1"/><path d="M13 18l-1 1a4 4 0 01-5.7-5.7l1-1"/></svg></span>
+          <h3>Links &amp; comparison</h3>
+        </div>
+        <div class="cards">
+          <article class="card">
+            <div class="card-top"><h4>Internal Linking</h4></div>
+            <p class="lead">How your pages link to each other — and where they should.</p>
+            <p class="how"><b>Live scan:</b> enter target URLs to see a link matrix, orphan pages and missing-link opportunities. <b>Screaming Frog mode:</b> upload an <i>All Inlinks</i> export to get a From/To/Anchor/Status table and an anchor-consistency check that flags the same anchor pointing to different pages.</p>
+          </article>
+          <article class="card">
+            <div class="card-top"><h4>URL Comparator</h4></div>
+            <p class="lead">Your page vs. a competitor's, side by side.</p>
+            <p class="how"><b>How:</b> enter two URLs and get an on-page comparison with an AI verdict on which is stronger and why.</p>
+          </article>
+        </div>
+      </div>
+
+      <!-- Group: Admin -->
+      <div class="group">
+        <div class="group-head">
+          <span class="group-ico"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0111 0"/><path d="M16 7h5M16 11h5M16 15h3"/></svg></span>
+          <h3>Administration</h3>
+        </div>
+        <div class="cards">
+          <article class="card">
+            <div class="card-top"><h4>Users</h4><span class="chip admin">admins only</span></div>
+            <p class="lead">Manage who can access the platform.</p>
+            <p class="how"><b>How:</b> super-admins create, edit and remove accounts and set each person's role. Editors won't see this menu.</p>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- GOOD TO KNOW -->
+  <section id="know">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Good to know</span>
+        <h2>Where the data comes from — and what to watch</h2>
+        <p>A few tools draw on paid search data. Here's what each uses so nothing surprises you.</p>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Tool</th><th>Data source</th><th>Worth knowing</th></tr></thead>
+          <tbody>
+            <tr><td><b>SERP Analyzer</b>, <b>FS Stealer</b></td><td>Live Google results</td><td>About 1 search credit per analysis</td></tr>
+            <tr><td><b>Tracking</b></td><td>Live Google results</td><td>~1 credit per keyword <b>per day</b> — remove keywords you no longer need</td></tr>
+            <tr><td><b>GSC Dashboard</b>, <b>Indexation</b></td><td>Google Search Console</td><td>Limited to the sites you have GSC access to</td></tr>
+            <tr><td><b>Core Web Vitals</b></td><td>Google PageSpeed</td><td>Can be briefly rate-limited; just retry</td></tr>
+            <tr><td><b>SEO Health</b></td><td>Your Looker Studio sheets</td><td>Sheets must be set to “anyone with the link can view”</td></tr>
+            <tr><td><b>Log Analysis</b></td><td>Your server logs</td><td>First run downloads logs; later runs are near-instant from cache</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">The AI recommendations across every tool are generated automatically — treat them as a smart first draft to review, not gospel.</div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">FAQ</span>
+        <h2>Common questions</h2>
+      </div>
+      <div class="faq">
+        <details>
+          <summary>The SEO Health or Core Web Vitals trend only shows one day.</summary>
+          <p>Trends build up over time from a daily snapshot. Give it a few days, or click Refresh / re-analyze on multiple days to seed it faster.</p>
+        </details>
+        <details>
+          <summary>A SERP or FS Stealer analysis said it failed.</summary>
+          <p>Usually a temporary hiccup with the search source or a used-up credit for the day. Wait a minute and try again — the platform automatically falls back to alternate sources.</p>
+        </details>
+        <details>
+          <summary>My big Screaming Frog file wouldn't upload before.</summary>
+          <p>Internal Linking now reads CSV files right in your browser with no size limit. For very large crawls, export as <b>CSV</b> (not XLSX) and it'll load fine.</p>
+        </details>
+        <details>
+          <summary>A page behind a login won't analyze.</summary>
+          <p>Open the “🔒 Authentication” toggle in the tool and enter the staging username and password.</p>
+        </details>
+        <details>
+          <summary>I can't see the Users menu.</summary>
+          <p>That panel is for super-admins only. Ask an administrator if you need an account created or changed.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      MoveupMedia SEO Platform — Quick Guide for new users. Something behaving unexpectedly? Contact your platform administrator.
+    </div>
+  </footer>
+
+</div>
