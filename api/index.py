@@ -412,6 +412,46 @@ def delete_user(user_id: str, current_user=Depends(_require_super_admin)):
     return {"deleted": True, "persisted": True}
 
 
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.put("/api/users/me/password")
+def change_own_password(req: PasswordChangeRequest, current_user=Depends(_decode_token)):
+    """Any signed-in user can change their OWN password (verifies the current one first)."""
+    if not req.new_password or len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+
+    uid = current_user.get("sub")
+    user = next((u for u in _load_users() if u["id"] == uid), None)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    try:
+        ok = bcrypt.checkpw(req.current_password.encode(), user["password_hash"].encode())
+    except Exception:
+        ok = False
+    if not ok:
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    new_hash = bcrypt.hashpw(req.new_password.encode(), bcrypt.gensalt(12)).decode()
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE users SET password_hash = %s, updated_at = NOW() WHERE id = %s RETURNING id",
+                    (new_hash, uid),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True}
+
+
 @app.get("/api/users/management-status")
 def management_status(current_user=Depends(_require_super_admin)):
     try:

@@ -42,7 +42,8 @@ function renderPage(page, user) {
     case 'FS Stealer':         return <FsStealer />;
     case 'Tracking':           return <Tracking />;
     case 'History':            return <History />;
-    case 'Users':              return <Users currentUser={user} />;
+    case 'Users':
+    case 'My Account':         return <Users currentUser={user} />;
     default:                   return null;
   }
 }
@@ -220,7 +221,7 @@ export default function App() {
 
   // ── App shell ─────────────────────────────────────────────────────────────
   const isSuperAdmin = user.role === 'super-admin';
-  const visibleNav   = [...NAV_ITEMS, ...(isSuperAdmin ? [{ name: 'Users', icon: <UsersIcon size={17} /> }] : [])];
+  const visibleNav   = [...NAV_ITEMS, { name: isSuperAdmin ? 'Users' : 'My Account', icon: <UsersIcon size={17} /> }];
 
   return (
     <div className="app-container">
