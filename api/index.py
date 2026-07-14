@@ -2639,19 +2639,8 @@ def cron_cwv_snapshot(authorization: str = Header(None)):
 
 
 # --- SEO Data API Proxy (moveupx) ---
-_SEO_API_BASE = "https://api.moveupx.ai/data/v1/seo"
-
-def _seo_get(path: str, params: dict = None):
-    api_key = os.getenv("SEO_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="SEO_API_KEY environment variable is not configured.")
-    headers = {"Authorization": f"Bearer {api_key}"}
-    r = http_requests.get(f"{_SEO_API_BASE}{path}", headers=headers, params=params or {}, timeout=30)
-    if r.status_code == 404:
-        return None
-    if not r.ok:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-    return r.json()
+# The shared _seo_get() helper is defined once, further below (see "SEO Data API proxy").
+# It normalizes leading slashes, so the paths here may keep their leading "/".
 
 @app.get("/api/data/gsc/sites")
 def data_gsc_sites():
@@ -2914,11 +2903,14 @@ Be ruthlessly specific — tie every recommendation to what {fs_holder["link"]} 
 _SEO_DATA_BASE = "https://api.moveupx.ai/data/v1/seo"
 
 def _seo_get(path: str, params: dict = None):
-    key = os.getenv("SEO_DATA_API_KEY")
+    key = os.getenv("SEO_DATA_API_KEY") or os.getenv("SEO_API_KEY")
     if not key:
         raise HTTPException(status_code=500, detail="SEO_DATA_API_KEY not configured in environment")
+    # Normalize the path so callers may pass it with or without a leading slash
+    # (avoids a double slash like .../seo//dims that the upstream API 404s on).
+    clean_path = str(path).lstrip("/")
     resp = http_requests.get(
-        f"{_SEO_DATA_BASE}/{path}",
+        f"{_SEO_DATA_BASE}/{clean_path}",
         headers={"Authorization": f"Bearer {key}"},
         params=params or {},
         timeout=25,
