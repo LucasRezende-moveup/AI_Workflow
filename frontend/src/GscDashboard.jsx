@@ -3,13 +3,38 @@ import { Download, Globe, MousePointerClick, Eye, TrendingUp, BarChart2, Message
 import ReactMarkdown from 'react-markdown';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
-const CUT_OPTIONS = [
-  { label: 'By Query',   value: 'query' },
-  { label: 'By Page',    value: 'page' },
-  { label: 'By Date',    value: 'date' },
-  { label: 'By Country', value: 'country' },
-  { label: 'By Device',  value: 'device' },
+const SINGLE_CUTS = [
+  { label: 'Query',   value: 'query' },
+  { label: 'Page',    value: 'page' },
+  { label: 'Date',    value: 'date' },
+  { label: 'Country', value: 'country' },
+  { label: 'Device',  value: 'device' },
 ];
+
+// Two-dimension breakdowns (served via /gsc/{site}/{cut})
+const COMBO_CUTS = [
+  { label: 'Page × Country',   value: 'page_country' },
+  { label: 'Page × Device',    value: 'page_device' },
+  { label: 'Country × Device', value: 'country_device' },
+  { label: 'Query × Page',     value: 'query_page' },
+  { label: 'Query × Country',  value: 'query_country' },
+  { label: 'Query × Device',   value: 'query_device' },
+];
+
+const DIM_LABEL = { query: 'Query', page: 'Page', country: 'Country', device: 'Device', date: 'Date' };
+
+// Which dimension columns a cut renders
+function dimsForCut(cut) {
+  if (cut === 'query') return ['query', 'page'];   // classic query cut carries the page too
+  if (cut === 'date')  return ['date'];
+  if (['page', 'country', 'device'].includes(cut)) return [cut];
+  return cut.split('_');   // 'page_country' → ['page','country'], 'query_device' → ['query','device']
+}
+
+function dimValue(row, dim) {
+  if (dim === 'date') return row.date_key || row.date || row.report_date || '—';
+  return row[dim] || '—';
+}
 
 const SEARCH_TYPES = [
   { label: 'Web',   value: 'web' },
@@ -47,7 +72,12 @@ export default function GscDashboard() {
   const [gscCut, setGscCut]               = useState('query');
   const [gscSearchType, setGscSearchType] = useState('web');
   const defaultDate = new Date(); defaultDate.setDate(defaultDate.getDate() - 4);
+  const defaultStart = new Date(); defaultStart.setDate(defaultStart.getDate() - 31);
+  const [gscDateMode, setGscDateMode]     = useState('latest');   // 'latest' | 'single' | 'range'
   const [gscDate, setGscDate]             = useState(defaultDate.toISOString().split('T')[0]);
+  const [gscStart, setGscStart]           = useState(defaultStart.toISOString().split('T')[0]);
+  const [gscEnd, setGscEnd]               = useState(defaultDate.toISOString().split('T')[0]);
+  const [gscSort, setGscSort]             = useState('clicks');   // 'clicks' | 'impressions'
   const [gscData, setGscData]             = useState([]);
   const [gscLoading, setGscLoading]       = useState(false);
   const [gscError, setGscError]           = useState('');
@@ -119,29 +149,40 @@ export default function GscDashboard() {
     if (!selectedSite) return;
     setGscLoading(true); setGscError(''); setGscData([]);
     setInsights(''); setChatLog([]);
+    const body = { site_slug: selectedSite, cut: gscCut, search_type: gscSearchType };
+    if (gscDateMode === 'single') body.date = gscDate || null;
+    if (gscDateMode === 'range')  { body.start_date = gscStart; body.end_date = gscEnd; }
+    // Query breakdowns default to the top 100 upstream — pull a richer set so the
+    // client-side keyword / threshold / sort controls have room to work.
+    if (dimsForCut(gscCut).includes('query')) body.limit = 1000;
     try {
       const res = await fetch('/api/data/gsc/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ site_slug: selectedSite, cut: gscCut, search_type: gscSearchType, date: gscDate || null })
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) { setGscError(data.detail || 'Failed to fetch data'); return; }
       const rows = Array.isArray(data) ? data : [];
       setGscData(rows);
-      if (rows.length === 0) setGscError('No data for this date. GSC settles ~3 days back — try an earlier date.');
+      if (rows.length === 0) {
+        setGscError(gscDateMode === 'single'
+          ? 'No data for this date. GSC settles ~3 days back — try an earlier date or switch to Latest.'
+          : 'No data returned for this selection.');
+      }
     } catch (e) {
       setGscError('Request failed. Check network or API key.');
     } finally { setGscLoading(false); }
   };
 
+  const gscDims = dimsForCut(gscCut);
   const filteredGsc = gscData.filter(row => {
-    if (queryFilter && row.query && !row.query.toLowerCase().includes(queryFilter.toLowerCase())) return false;
-    if (pageFilter  && row.page  && !row.page.toLowerCase().includes(pageFilter.toLowerCase())) return false;
+    if (queryFilter && gscDims.includes('query') && !(row.query || '').toLowerCase().includes(queryFilter.toLowerCase())) return false;
+    if (pageFilter  && gscDims.includes('page')  && !(row.page  || '').toLowerCase().includes(pageFilter.toLowerCase()))  return false;
     if ((row.clicks || 0) < minClicks) return false;
     if ((row.impressions || 0) < minImpressions) return false;
     return true;
-  }).sort((a, b) => b.clicks - a.clicks);
+  }).sort((a, b) => (Number(b[gscSort]) || 0) - (Number(a[gscSort]) || 0));
 
   const totalClicks      = filteredGsc.reduce((s, r) => s + (r.clicks || 0), 0);
   const totalImpressions = filteredGsc.reduce((s, r) => s + (r.impressions || 0), 0);
@@ -319,7 +360,12 @@ export default function GscDashboard() {
               <div>
                 <label className="metric-label mb-2 block">Dimension</label>
                 <select className="glass-input glass-select" value={gscCut} onChange={e => setGscCut(e.target.value)}>
-                  {CUT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  <optgroup label="Single dimension">
+                    {SINGLE_CUTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </optgroup>
+                  <optgroup label="Two dimensions">
+                    {COMBO_CUTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </optgroup>
                 </select>
               </div>
               <div>
@@ -331,17 +377,47 @@ export default function GscDashboard() {
             </div>
             <div className="grid grid-cols-4 gap-4">
               <div>
-                <label className="metric-label mb-2 block">
-                  Date <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>settled ≥ 3 days back</span>
-                </label>
-                <input type="date" className="glass-input" value={gscDate} onChange={e => setGscDate(e.target.value)} />
+                <label className="metric-label mb-2 block">Time range</label>
+                <select className="glass-input glass-select" value={gscDateMode} onChange={e => setGscDateMode(e.target.value)}>
+                  <option value="latest">Latest available</option>
+                  <option value="single">Single day</option>
+                  <option value="range">Date range</option>
+                </select>
               </div>
-              <div style={{ gridColumn: 'span 3' }} className="flex items-end">
+
+              {gscDateMode === 'single' && (
+                <div>
+                  <label className="metric-label mb-2 block">
+                    Date <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>settles ≥ 3 days back</span>
+                  </label>
+                  <input type="date" className="glass-input" value={gscDate} onChange={e => setGscDate(e.target.value)} />
+                </div>
+              )}
+
+              {gscDateMode === 'range' && (
+                <>
+                  <div>
+                    <label className="metric-label mb-2 block">From</label>
+                    <input type="date" className="glass-input" value={gscStart} onChange={e => setGscStart(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="metric-label mb-2 block">To</label>
+                    <input type="date" className="glass-input" value={gscEnd} onChange={e => setGscEnd(e.target.value)} />
+                  </div>
+                </>
+              )}
+
+              <div style={{ gridColumn: gscDateMode === 'range' ? 'span 1' : gscDateMode === 'single' ? 'span 2' : 'span 3' }} className="flex items-end">
                 <button className="btn-primary w-full" onClick={handleGscFetch} disabled={gscLoading || !selectedSite}>
                   {gscLoading ? <><div className="loader" /> Fetching…</> : '🔍 Fetch GSC Data'}
                 </button>
               </div>
             </div>
+            {gscDateMode === 'latest' && (
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 10 }}>
+                Showing the most recent available data — no date needed.
+              </p>
+            )}
           </div>
 
           <ErrorBanner msg={gscError} />
@@ -356,18 +432,20 @@ export default function GscDashboard() {
               </div>
 
               <div className="glass-panel">
-                <h3 className="mb-4">Filters</h3>
+                <h3 className="mb-4">Filters &amp; sort</h3>
                 <div className="grid grid-cols-4 gap-4">
-                  {gscCut === 'query' && (
+                  {gscDims.includes('query') && (
                     <div>
-                      <label className="metric-label mb-2 block">Query contains</label>
-                      <input className="glass-input" value={queryFilter} onChange={e => setQueryFilter(e.target.value)} />
+                      <label className="metric-label mb-2 block">Keyword contains</label>
+                      <input className="glass-input" placeholder="filter queries…" value={queryFilter} onChange={e => setQueryFilter(e.target.value)} />
                     </div>
                   )}
-                  <div>
-                    <label className="metric-label mb-2 block">Page contains</label>
-                    <input className="glass-input" value={pageFilter} onChange={e => setPageFilter(e.target.value)} />
-                  </div>
+                  {gscDims.includes('page') && (
+                    <div>
+                      <label className="metric-label mb-2 block">Page contains</label>
+                      <input className="glass-input" placeholder="/path…" value={pageFilter} onChange={e => setPageFilter(e.target.value)} />
+                    </div>
+                  )}
                   <div>
                     <label className="metric-label mb-2 block">Min Clicks</label>
                     <input type="number" className="glass-input" value={minClicks} onChange={e => setMinClicks(Number(e.target.value))} />
@@ -375,6 +453,13 @@ export default function GscDashboard() {
                   <div>
                     <label className="metric-label mb-2 block">Min Impressions</label>
                     <input type="number" className="glass-input" value={minImpressions} onChange={e => setMinImpressions(Number(e.target.value))} />
+                  </div>
+                  <div>
+                    <label className="metric-label mb-2 block">Sort by</label>
+                    <select className="glass-input glass-select" value={gscSort} onChange={e => setGscSort(e.target.value)}>
+                      <option value="clicks">Clicks</option>
+                      <option value="impressions">Impressions</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -402,22 +487,18 @@ export default function GscDashboard() {
                     <table className="data-table">
                       <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-dark)' }}>
                         <tr>
-                          {gscCut === 'query'   && <th>Query</th>}
-                          {(gscCut === 'query' || gscCut === 'page') && <th>Page</th>}
-                          {gscCut === 'date'    && <th>Date</th>}
-                          {gscCut === 'country' && <th>Country</th>}
-                          {gscCut === 'device'  && <th>Device</th>}
+                          {gscDims.map(d => <th key={d}>{DIM_LABEL[d]}</th>)}
                           <th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th>
                         </tr>
                       </thead>
                       <tbody>
                         {filteredGsc.slice(0, 500).map((row, i) => (
                           <tr key={i}>
-                            {gscCut === 'query'   && <td style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.query || '—'}</td>}
-                            {(gscCut === 'query' || gscCut === 'page') && <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.78rem', color: 'var(--text-muted)' }}>{row.page || '—'}</td>}
-                            {gscCut === 'date'    && <td>{row.date_key || '—'}</td>}
-                            {gscCut === 'country' && <td>{row.country || '—'}</td>}
-                            {gscCut === 'device'  && <td>{row.device  || '—'}</td>}
+                            {gscDims.map(d => (
+                              <td key={d} style={{ maxWidth: d === 'page' ? 300 : 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(d === 'page' ? { fontSize: '0.78rem', color: 'var(--text-muted)' } : {}) }}>
+                                {dimValue(row, d)}
+                              </td>
+                            ))}
                             <td>{(row.clicks || 0).toLocaleString()}</td>
                             <td>{(row.impressions || 0).toLocaleString()}</td>
                             <td>{(parseFloat(row.ctr || 0) * 100).toFixed(2)}%</td>

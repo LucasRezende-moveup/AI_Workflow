@@ -2654,16 +2654,24 @@ class GscQueryRequest(BaseModel):
     site_slug: str
     cut: str = "query"
     search_type: str = "web"
-    date: Optional[str] = None
-    params: Optional[dict] = None  # TEMP probe passthrough
+    date: Optional[str] = None            # single day; omit for latest available
+    start_date: Optional[str] = None      # date-range start (maps to upstream "from")
+    end_date: Optional[str] = None        # date-range end   (maps to upstream "to")
+    limit: Optional[int] = None           # cap rows (query breakdowns default to 100 upstream)
+    query: Optional[str] = None           # exact-keyword filter (server-side)
+    min_clicks: Optional[int] = None
+    min_impressions: Optional[int] = None
 
 @app.post("/api/data/gsc/query")
 def data_gsc_query(req: GscQueryRequest):
     params = {"search_type": req.search_type}
-    if req.date:
-        params["date"] = req.date
-    if req.params:
-        params.update(req.params)
+    if req.date:            params["date"] = req.date
+    if req.start_date:      params["from"] = req.start_date
+    if req.end_date:        params["to"] = req.end_date
+    if req.limit:           params["limit"] = req.limit
+    if req.query:           params["query"] = req.query
+    if req.min_clicks is not None:      params["min_clicks"] = req.min_clicks
+    if req.min_impressions is not None: params["min_impressions"] = req.min_impressions
     return _seo_get(f"/gsc/{req.site_slug}/{req.cut}", params=params) or []
 
 @app.get("/api/data/ahrefs/projects")
