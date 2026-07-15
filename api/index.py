@@ -2655,12 +2655,15 @@ class GscQueryRequest(BaseModel):
     cut: str = "query"
     search_type: str = "web"
     date: Optional[str] = None
+    params: Optional[dict] = None  # TEMP probe passthrough
 
 @app.post("/api/data/gsc/query")
 def data_gsc_query(req: GscQueryRequest):
     params = {"search_type": req.search_type}
     if req.date:
         params["date"] = req.date
+    if req.params:
+        params.update(req.params)
     return _seo_get(f"/gsc/{req.site_slug}/{req.cut}", params=params) or []
 
 @app.get("/api/data/ahrefs/projects")
