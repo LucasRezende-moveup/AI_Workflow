@@ -293,6 +293,29 @@ export default function LogAnalyzer({ onData } = {}) {
 
       {analytics?.total_hits > 0 && (
         <>
+          {/* 404-rate health banner */}
+          {(() => {
+            const rate = analytics.total_hits > 0 ? (analytics.errors_404 / analytics.total_hits) * 100 : 0;
+            if (rate < 10) return null;
+            const critical = rate >= 25;
+            const color = critical ? '#f87171' : '#fbbf24';
+            const bg = critical ? 'rgba(248,113,113,0.08)' : 'rgba(251,191,36,0.08)';
+            return (
+              <div style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 16px', borderRadius: 8,
+                background: bg, border: `1px solid ${color}44`, color,
+              }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span style={{ fontSize: '0.85rem', lineHeight: 1.5 }}>
+                  <strong>{critical ? 'Critical: ' : 'Warning: '}</strong>
+                  {rate.toFixed(1)}% of requests are 404s ({analytics.errors_404.toLocaleString()} of {analytics.total_hits.toLocaleString()}).
+                  That's above the 10% threshold — broken links or bad URLs are wasting crawl budget.
+                  This site is monitored daily and will alert in Slack automatically.
+                </span>
+              </div>
+            );
+          })()}
+
           {/* Summary Metrics */}
           <div className="grid grid-cols-3 gap-4">
             <MetricCard icon={Activity}      label="Total Hits"     value={analytics.total_hits.toLocaleString()}     color="var(--primary)" sub={`${Math.min(fileRange, availableFiles.length)} files`} />
