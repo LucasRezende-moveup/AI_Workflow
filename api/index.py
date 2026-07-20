@@ -1242,8 +1242,8 @@ def _fire_log_alert(site: str, rate: float, errors: int, hits: int, window_days:
         pass
 
     emoji = "🔴" if severity == "critical" else "🟠"
-    _notify_slack(f"{emoji} *Log health alert — {site}*\n• *{severity.upper()}* — {msg}")
-    return {"site": site, "severity": severity, "rate": rate, "message": msg}
+    sent = _notify_slack(f"{emoji} *Log health alert — {site}*\n• *{severity.upper()}* — {msg}")
+    return {"site": site, "severity": severity, "rate": rate, "message": msg, "notified": sent}
 
 
 def _check_log_404_all(only_site: str = None) -> list:
@@ -1266,7 +1266,8 @@ def _check_log_404_all(only_site: str = None) -> list:
             rate = round(errors / hits * 100, 1) if hits else 0.0
             fired = _fire_log_alert(name, rate, errors, hits, window) if rate >= threshold else None
             results.append({"site": name, "rate_404": rate, "hits": hits,
-                            "over_threshold": rate >= threshold, "alerted": bool(fired)})
+                            "over_threshold": rate >= threshold, "alerted": bool(fired),
+                            "notified": (fired or {}).get("notified")})
         except Exception as e:
             results.append({"site": name, "error": str(e)})
     return results
