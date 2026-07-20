@@ -245,6 +245,23 @@ def _ensure_schema():
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS index_alerts_seen_idx ON index_alerts (seen, created_at DESC)
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS log_alerts (
+                        id          TEXT PRIMARY KEY,
+                        site        TEXT NOT NULL,
+                        alert_type  TEXT NOT NULL,
+                        severity    TEXT NOT NULL DEFAULT 'info',
+                        message     TEXT,
+                        rate        NUMERIC,
+                        errors      INTEGER,
+                        total_hits  INTEGER,
+                        seen        BOOLEAN DEFAULT false,
+                        created_at  TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS log_alerts_seen_idx ON log_alerts (seen, created_at DESC)
+                """)
                 cur.execute("SELECT COUNT(*) AS cnt FROM users")
                 row = cur.fetchone()
                 if row["cnt"] == 0:
@@ -1171,6 +1188,141 @@ def analyze_logs(req: AnalyzeRequest):
     result["cache_hits"] = cache_hits
     result["files_parsed"] = parsed
     return result
+
+
+# --- Proactive log health: 404-rate alerts ------------------------------------
+
+def _analyze_log_window(site_name: str, site: dict, days: int) -> dict:
+    """Merge the most recent `days` log files for a site (reusing the per-file cache)."""
+    base = site["url"].rstrip("/") + "/"
+    auth = (site["username"], site["password"])
+    files = fetch_log_files(site["url"], site["username"], site["password"])[:max(days, 1)]
+    if not files:
+        return None
+    newest = files[0]
+    partials = []
+    for fname in files:
+        cached = None if fname == newest else _get_log_cache(site_name, fname)
+        if cached is None:
+            cached = _parse_one_log_file(base, fname, auth)
+            if cached and fname != newest:
+                _put_log_cache(site_name, fname, cached)
+        if cached:
+            partials.append(cached)
+    return _merge_log_aggregates(partials)
+
+
+def _fire_log_alert(site: str, rate: float, errors: int, hits: int, window_days: int) -> dict:
+    """Record + Slack-push a 404-rate alert, unless an unseen one already exists for the site."""
+    # Dedup: don't stack a new alert while a previous one is still unacknowledged
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM log_alerts WHERE site=%s AND alert_type='high_404' AND seen=false LIMIT 1",
+                    (site,),
+                )
+                if cur.fetchone():
+                    return None
+    except Exception:
+        pass
+
+    severity = "critical" if rate >= 25 else "warning"
+    msg = f"{rate}% of requests are 404s ({errors:,} of {hits:,}) over the last {window_days}d"
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO log_alerts (id, site, alert_type, severity, message, rate, errors, total_hits)
+                       VALUES (%s,%s,'high_404',%s,%s,%s,%s,%s)""",
+                    (str(uuid.uuid4()), site, severity, msg, rate, errors, hits),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+    emoji = "🔴" if severity == "critical" else "🟠"
+    _notify_slack(f"{emoji} *Log health alert — {site}*\n• *{severity.upper()}* — {msg}")
+    return {"site": site, "severity": severity, "rate": rate, "message": msg}
+
+
+def _check_log_404_all(only_site: str = None) -> list:
+    """Check the 404 rate for each configured log site; fire alerts over the threshold."""
+    threshold = float(os.getenv("LOG_404_ALERT_PCT", "10"))
+    min_hits = int(os.getenv("LOG_404_MIN_HITS", "500"))
+    window = int(os.getenv("LOG_404_WINDOW_DAYS", "2"))
+    sites = load_sites()
+    results = []
+    for name, site in sites.items():
+        if only_site and name != only_site:
+            continue
+        try:
+            agg = _analyze_log_window(name, site, window)
+            hits = (agg or {}).get("total_hits", 0)
+            if not agg or hits < min_hits:
+                results.append({"site": name, "hits": hits, "skipped": "insufficient traffic"})
+                continue
+            errors = agg.get("errors_404", 0)
+            rate = round(errors / hits * 100, 1) if hits else 0.0
+            fired = _fire_log_alert(name, rate, errors, hits, window) if rate >= threshold else None
+            results.append({"site": name, "rate_404": rate, "hits": hits,
+                            "over_threshold": rate >= threshold, "alerted": bool(fired)})
+        except Exception as e:
+            results.append({"site": name, "error": str(e)})
+    return results
+
+
+class Log404CheckRequest(BaseModel):
+    site_name: Optional[str] = None
+
+
+@app.post("/api/logs/404-check")
+def logs_404_check(req: Log404CheckRequest):
+    """Run the 404-rate check now (all sites, or one) — same logic the daily cron uses."""
+    return {"results": _check_log_404_all(req.site_name)}
+
+
+@app.get("/api/logs/alerts")
+def logs_alerts(unseen_only: bool = False, limit: int = 50):
+    where = "WHERE seen = false" if unseen_only else ""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT * FROM log_alerts {where} ORDER BY created_at DESC LIMIT %s",
+                    (min(limit, 200),),
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        if r.get("created_at"):
+            r["created_at"] = r["created_at"].isoformat()
+        if r.get("rate") is not None:
+            r["rate"] = float(r["rate"])
+    return {"alerts": rows}
+
+
+@app.post("/api/logs/alerts/seen")
+def logs_alerts_seen():
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE log_alerts SET seen = true WHERE seen = false")
+            conn.commit()
+        return {"ok": True}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/cron/log-404-check")
+def cron_log_404_check(authorization: str = Header(None)):
+    """Daily job: flag any log site whose 404 rate exceeds LOG_404_ALERT_PCT (default 10%)."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret and authorization != f"Bearer {cron_secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    results = _check_log_404_all()
+    return {"checked": len(results), "results": results}
 
 
 class ExportRequest(BaseModel):
@@ -2518,10 +2670,13 @@ def cron_seo_health_snapshot(authorization: str = Header(None)):
             results.append({"site": name, "score": out.get("score")})
         except Exception as e:
             results.append({"site": name, "error": str(e)})
-    # Piggyback the daily Core Web Vitals + indexation snapshots here to stay within Vercel's cron limit
+    # Piggyback the daily Core Web Vitals + indexation snapshots + log 404 check here
+    # to stay within Vercel's cron limit
     cwv_results = _snapshot_cwv_all()
     index_results = _snapshot_indexation_all()
-    return {"recorded": len(results), "results": results, "cwv": cwv_results, "indexation": index_results}
+    log_results = _check_log_404_all()
+    return {"recorded": len(results), "results": results, "cwv": cwv_results,
+            "indexation": index_results, "log_404": log_results}
 
 
 # --- CWV Analysis Endpoints ---
