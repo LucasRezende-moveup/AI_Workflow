@@ -1008,6 +1008,144 @@ function IndexVerdict({ selectedSite }) {
 
 // ── main component ────────────────────────────────────────────────────────────
 
+// ── Index Health panel — daily snapshot trend + alerts ─────────────────────────
+
+function rateColor(r) {
+  return r >= 80 ? '#4ade80' : r >= 50 ? '#f59e0b' : '#f87171';
+}
+
+function IndexRateSparkline({ history }) {
+  const pts0 = (history || []).filter(h => h.index_rate != null).slice(-30);
+  if (pts0.length < 2) return null;
+  const W = 200, H = 44, pad = 4;
+  const xs = pts0.map((_, i) => pad + (i / (pts0.length - 1)) * (W - 2 * pad));
+  const min = Math.min(...pts0.map(h => h.index_rate));
+  const max = Math.max(...pts0.map(h => h.index_rate));
+  const range = (max - min) || 1;
+  const yOf = v => pad + (1 - (v - min) / range) * (H - 2 * pad);
+  const line = pts0.map((h, i) => `${xs[i].toFixed(1)},${yOf(h.index_rate).toFixed(1)}`).join(' ');
+  const last = pts0[pts0.length - 1];
+  const color = rateColor(last.index_rate);
+  return (
+    <svg width={W} height={H} style={{ overflow: 'visible' }}>
+      <polyline points={line} fill="none" stroke={color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={xs[xs.length - 1]} cy={yOf(last.index_rate)} r="3" fill={color} />
+    </svg>
+  );
+}
+
+function IndexHealthPanel({ site }) {
+  const [history, setHistory] = useState([]);
+  const [alerts, setAlerts]   = useState([]);
+  const [busy, setBusy]       = useState(false);
+  const [msg, setMsg]         = useState('');
+
+  const load = useCallback(async (s) => {
+    if (!s) return;
+    try {
+      const [h, a] = await Promise.all([
+        fetch(`/api/indexation/history?site_slug=${encodeURIComponent(s)}`).then(r => r.json()).catch(() => ({})),
+        fetch(`/api/indexation/alerts?site_slug=${encodeURIComponent(s)}`).then(r => r.json()).catch(() => ({})),
+      ]);
+      setHistory(Array.isArray(h.history) ? h.history : []);
+      setAlerts(Array.isArray(a.alerts) ? a.alerts : []);
+    } catch { /* best-effort */ }
+  }, []);
+
+  useEffect(() => { setHistory([]); setAlerts([]); setMsg(''); load(site); }, [site, load]);
+
+  const capture = async () => {
+    if (!site) return;
+    setBusy(true); setMsg('');
+    try {
+      const res = await fetch('/api/indexation/snapshot', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ site_slug: site }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Snapshot failed');
+      if (d.error) setMsg(d.error);
+      await load(site);
+    } catch (e) { setMsg(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const dismiss = async () => {
+    await fetch('/api/indexation/alerts/seen', { method: 'POST' }).catch(() => {});
+    setAlerts([]);
+  };
+
+  const latest  = history.length ? history[history.length - 1] : null;
+  const first   = history.length ? history[0] : null;
+  const delta   = latest && first && history.length > 1 ? Math.round((latest.index_rate - first.index_rate) * 10) / 10 : null;
+  const unseen  = alerts.filter(a => !a.seen);
+  const sevColor = { critical: '#f87171', warning: '#f59e0b', info: '#60a5fa' };
+
+  if (!site) return null;
+
+  return (
+    <div className="glass-panel" style={{ padding: '16px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 3 }}>Index Health</div>
+            {latest ? (
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <span style={{ fontSize: '1.9rem', fontWeight: 800, lineHeight: 1, color: rateColor(latest.index_rate) }}>{latest.index_rate}%</span>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  {latest.indexed_count.toLocaleString()}/{latest.page_count.toLocaleString()} indexed
+                </span>
+                {delta != null && (
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : 'var(--text-muted)' }}>
+                    {delta > 0 ? '+' : ''}{delta} pts
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>No history yet — capture the first snapshot.</div>
+            )}
+          </div>
+          {history.length >= 2 && (
+            <div>
+              <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginBottom: 2 }}>{history.length}-day trend</div>
+              <IndexRateSparkline history={history} />
+            </div>
+          )}
+        </div>
+        <button onClick={capture} disabled={busy} style={{
+          display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', padding: '7px 13px',
+          background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: 7, cursor: busy ? 'wait' : 'pointer', color: 'var(--text-muted)',
+        }}>
+          <RefreshCw size={13} /> {busy ? 'Capturing…' : 'Capture snapshot'}
+        </button>
+      </div>
+
+      {msg && <div style={{ marginTop: 10, fontSize: '0.78rem', color: '#f59e0b' }}>{msg}</div>}
+
+      {unseen.length > 0 && (
+        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#f87171', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <ShieldAlert size={13} /> {unseen.length} index alert{unseen.length !== 1 ? 's' : ''}
+            </span>
+            <button onClick={dismiss} style={{ fontSize: '0.7rem', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', textDecoration: 'underline' }}>Dismiss</button>
+          </div>
+          {unseen.map((a, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '7px 11px', borderRadius: 7, fontSize: '0.8rem',
+              background: 'rgba(255,255,255,0.03)', borderLeft: `3px solid ${sevColor[a.severity] || '#60a5fa'}`,
+            }}>
+              <span style={{ color: sevColor[a.severity] || '#60a5fa', fontWeight: 700, textTransform: 'uppercase', fontSize: '0.62rem', letterSpacing: '0.05em', flexShrink: 0 }}>{a.severity}</span>
+              <span style={{ color: '#d8d8e6' }}>{a.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function IndexationControl() {
   const [sites, setSites]                   = useState([]);
   const [siteSearch, setSiteSearch]         = useState('');
@@ -1306,6 +1444,9 @@ export default function IndexationControl() {
           </div>
         )}
       </div>
+
+      {/* ── Index health: daily snapshot trend + alerts ── */}
+      {selectedSite && <IndexHealthPanel site={selectedSite} />}
 
       {/* ── Results ── */}
       {result && stats && (
