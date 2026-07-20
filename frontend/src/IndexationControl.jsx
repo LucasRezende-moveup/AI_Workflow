@@ -1075,6 +1075,19 @@ function IndexHealthPanel({ site }) {
     setAlerts([]);
   };
 
+  const testSlack = async () => {
+    setMsg('');
+    try {
+      const token = localStorage.getItem('auth_token');
+      const res = await fetch('/api/indexation/test-slack', {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await res.json();
+      if (!d.configured) setMsg('Slack not configured — set SLACK_WEBHOOK_URL in the environment.');
+      else setMsg(d.sent ? 'Test message sent to Slack ✓' : 'Slack webhook is set but the send failed.');
+    } catch { setMsg('Could not reach the server.'); }
+  };
+
   const latest  = history.length ? history[history.length - 1] : null;
   const first   = history.length ? history[0] : null;
   const delta   = latest && first && history.length > 1 ? Math.round((latest.index_rate - first.index_rate) * 10) / 10 : null;
@@ -1112,13 +1125,21 @@ function IndexHealthPanel({ site }) {
             </div>
           )}
         </div>
-        <button onClick={capture} disabled={busy} style={{
-          display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', padding: '7px 13px',
-          background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
-          borderRadius: 7, cursor: busy ? 'wait' : 'pointer', color: 'var(--text-muted)',
-        }}>
-          <RefreshCw size={13} /> {busy ? 'Capturing…' : 'Capture snapshot'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button onClick={testSlack} style={{
+            fontSize: '0.72rem', padding: '7px 11px', background: 'none',
+            border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7, cursor: 'pointer', color: 'var(--text-muted)',
+          }}>
+            Test Slack
+          </button>
+          <button onClick={capture} disabled={busy} style={{
+            display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', padding: '7px 13px',
+            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 7, cursor: busy ? 'wait' : 'pointer', color: 'var(--text-muted)',
+          }}>
+            <RefreshCw size={13} /> {busy ? 'Capturing…' : 'Capture snapshot'}
+          </button>
+        </div>
       </div>
 
       {msg && <div style={{ marginTop: 10, fontSize: '0.78rem', color: '#f59e0b' }}>{msg}</div>}

@@ -3385,6 +3385,18 @@ def _aggregate_inspection(rows: list) -> dict:
     }
 
 
+def _notify_slack(text: str) -> bool:
+    """Best-effort push to a Slack Incoming Webhook. No-op (returns False) if SLACK_WEBHOOK_URL is unset."""
+    url = os.getenv("SLACK_WEBHOOK_URL")
+    if not url:
+        return False
+    try:
+        r = http_requests.post(url, json={"text": text}, timeout=8)
+        return r.ok
+    except Exception:
+        return False
+
+
 def _fire_index_alerts(site_slug: str, prev: dict, curr: dict):
     """Compare the previous snapshot with the new one and record notable regressions."""
     alerts = []
@@ -3427,6 +3439,14 @@ def _fire_index_alerts(site_slug: str, prev: dict, curr: dict):
             conn.commit()
     except Exception:
         pass
+
+    # Push to Slack (best-effort; only when SLACK_WEBHOOK_URL is configured)
+    sev_rank = {"critical": 3, "warning": 2, "info": 1}
+    top = max((a[1] for a in alerts), key=lambda s: sev_rank.get(s, 0))
+    emoji = "🔴" if top == "critical" else "🟠" if top == "warning" else "🔵"
+    lines = "\n".join(f"• *{a[1].upper()}* — {a[2]}" for a in alerts)
+    _notify_slack(f"{emoji} *Index health alert — {site_slug}*\n{lines}")
+
     return [{"alert_type": a[0], "severity": a[1], "message": a[2]} for a in alerts]
 
 
@@ -3562,6 +3582,16 @@ def indexation_alerts(site_slug: Optional[str] = None, unseen_only: bool = False
         if r.get("created_at"):
             r["created_at"] = r["created_at"].isoformat()
     return {"alerts": rows}
+
+
+@app.post("/api/indexation/test-slack")
+def indexation_test_slack(current_user=Depends(_decode_token)):
+    """Send a sample message to confirm the Slack webhook is wired up."""
+    if not os.getenv("SLACK_WEBHOOK_URL"):
+        return {"configured": False, "sent": False,
+                "detail": "SLACK_WEBHOOK_URL is not set in the environment."}
+    sent = _notify_slack("✅ *Index health alerts are connected.* This is a test message from the SEO platform.")
+    return {"configured": True, "sent": sent}
 
 
 @app.post("/api/indexation/alerts/seen")
