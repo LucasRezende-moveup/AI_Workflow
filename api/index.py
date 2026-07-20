@@ -208,6 +208,43 @@ def _ensure_schema():
                         PRIMARY KEY (site, file)
                     )
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS index_snapshots (
+                        id                       TEXT PRIMARY KEY,
+                        site_slug                TEXT NOT NULL,
+                        snapshot_date            DATE NOT NULL,
+                        page_count               INTEGER NOT NULL DEFAULT 0,
+                        indexed_count            INTEGER NOT NULL DEFAULT 0,
+                        not_indexed_count        INTEGER NOT NULL DEFAULT 0,
+                        pass_count               INTEGER NOT NULL DEFAULT 0,
+                        neutral_count            INTEGER NOT NULL DEFAULT 0,
+                        fail_count               INTEGER NOT NULL DEFAULT 0,
+                        canonical_mismatch_count INTEGER NOT NULL DEFAULT 0,
+                        index_rate               NUMERIC,
+                        created_at               TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE (site_slug, snapshot_date)
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS index_snapshots_site_idx
+                    ON index_snapshots (site_slug, snapshot_date DESC)
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS index_alerts (
+                        id          TEXT PRIMARY KEY,
+                        site_slug   TEXT NOT NULL,
+                        alert_type  TEXT NOT NULL,
+                        severity    TEXT NOT NULL DEFAULT 'info',
+                        message     TEXT,
+                        prev_value  TEXT,
+                        curr_value  TEXT,
+                        seen        BOOLEAN DEFAULT false,
+                        created_at  TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS index_alerts_seen_idx ON index_alerts (seen, created_at DESC)
+                """)
                 cur.execute("SELECT COUNT(*) AS cnt FROM users")
                 row = cur.fetchone()
                 if row["cnt"] == 0:
@@ -2481,9 +2518,10 @@ def cron_seo_health_snapshot(authorization: str = Header(None)):
             results.append({"site": name, "score": out.get("score")})
         except Exception as e:
             results.append({"site": name, "error": str(e)})
-    # Piggyback the daily Core Web Vitals snapshots here to stay within Vercel's cron limit
+    # Piggyback the daily Core Web Vitals + indexation snapshots here to stay within Vercel's cron limit
     cwv_results = _snapshot_cwv_all()
-    return {"recorded": len(results), "results": results, "cwv": cwv_results}
+    index_results = _snapshot_indexation_all()
+    return {"recorded": len(results), "results": results, "cwv": cwv_results, "indexation": index_results}
 
 
 # --- CWV Analysis Endpoints ---
@@ -3323,6 +3361,229 @@ def url_inspection_single(url: str):
     if data is None:
         raise HTTPException(status_code=404, detail="URL not found in inspection data")
     return data
+
+
+# --- Indexation daily snapshots + alerts ---------------------------------------
+
+def _aggregate_inspection(rows: list) -> dict:
+    """Roll up per-page URL-inspection rows into site-level index-health counters."""
+    page_count = len(rows)
+    indexed = sum(1 for r in rows if r.get("is_indexed"))
+    passc = sum(1 for r in rows if r.get("verdict") == "PASS")
+    neutral = sum(1 for r in rows if r.get("verdict") == "NEUTRAL")
+    fail = sum(1 for r in rows if r.get("verdict") == "FAIL")
+    mismatch = sum(1 for r in rows if r.get("canonical_mismatch"))
+    return {
+        "page_count": page_count,
+        "indexed_count": indexed,
+        "not_indexed_count": page_count - indexed,
+        "pass_count": passc,
+        "neutral_count": neutral,
+        "fail_count": fail,
+        "canonical_mismatch_count": mismatch,
+        "index_rate": round(indexed / page_count * 100, 2) if page_count else 0.0,
+    }
+
+
+def _fire_index_alerts(site_slug: str, prev: dict, curr: dict):
+    """Compare the previous snapshot with the new one and record notable regressions."""
+    alerts = []
+    prev_rate = float(prev.get("index_rate") or 0)
+    curr_rate = float(curr.get("index_rate") or 0)
+    rate_delta = round(curr_rate - prev_rate, 1)
+
+    if rate_delta <= -10:
+        alerts.append(("index_rate_drop", "critical",
+                       f"Index rate fell {prev_rate:.1f}% → {curr_rate:.1f}% ({rate_delta} pts)",
+                       f"{prev_rate:.1f}%", f"{curr_rate:.1f}%"))
+    elif rate_delta <= -5:
+        alerts.append(("index_rate_drop", "warning",
+                       f"Index rate fell {prev_rate:.1f}% → {curr_rate:.1f}% ({rate_delta} pts)",
+                       f"{prev_rate:.1f}%", f"{curr_rate:.1f}%"))
+
+    lost = curr.get("not_indexed_count", 0) - prev.get("not_indexed_count", 0)
+    if lost >= 10:
+        alerts.append(("pages_deindexed", "warning",
+                       f"{lost} more pages are no longer indexed",
+                       str(prev.get("not_indexed_count", 0)), str(curr.get("not_indexed_count", 0))))
+
+    fail_delta = curr.get("fail_count", 0) - prev.get("fail_count", 0)
+    if fail_delta >= 10:
+        alerts.append(("fail_spike", "warning",
+                       f"{fail_delta} more pages now FAIL Google's index check",
+                       str(prev.get("fail_count", 0)), str(curr.get("fail_count", 0))))
+
+    if not alerts:
+        return []
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                for (atype, sev, msg, pv, cv) in alerts:
+                    cur.execute(
+                        """INSERT INTO index_alerts (id, site_slug, alert_type, severity, message, prev_value, curr_value)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                        (str(uuid.uuid4()), site_slug, atype, sev, msg, pv, cv),
+                    )
+            conn.commit()
+    except Exception:
+        pass
+    return [{"alert_type": a[0], "severity": a[1], "message": a[2]} for a in alerts]
+
+
+def _snapshot_indexation_one(site_slug: str) -> dict:
+    """Fetch the latest URL-inspection rows for a site, store a daily snapshot, fire alerts on change."""
+    rows = _seo_get(f"gsc/{site_slug}/url-inspection") or []
+    if not isinstance(rows, list) or not rows:
+        return {"site_slug": site_slug, "error": "no url-inspection data"}
+
+    agg = _aggregate_inspection(rows)
+    today = datetime.now(timezone.utc).date()
+
+    # Load the most recent prior snapshot (before today) to diff against
+    prev = {}
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT * FROM index_snapshots
+                       WHERE site_slug = %s AND snapshot_date < %s
+                       ORDER BY snapshot_date DESC LIMIT 1""",
+                    (site_slug, today),
+                )
+                r = cur.fetchone()
+                if r:
+                    prev = dict(r)
+    except Exception:
+        pass
+
+    # Upsert today's snapshot (idempotent if the cron runs more than once)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO index_snapshots
+                       (id, site_slug, snapshot_date, page_count, indexed_count, not_indexed_count,
+                        pass_count, neutral_count, fail_count, canonical_mismatch_count, index_rate)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (site_slug, snapshot_date) DO UPDATE SET
+                        page_count=EXCLUDED.page_count, indexed_count=EXCLUDED.indexed_count,
+                        not_indexed_count=EXCLUDED.not_indexed_count, pass_count=EXCLUDED.pass_count,
+                        neutral_count=EXCLUDED.neutral_count, fail_count=EXCLUDED.fail_count,
+                        canonical_mismatch_count=EXCLUDED.canonical_mismatch_count, index_rate=EXCLUDED.index_rate""",
+                    (str(uuid.uuid4()), site_slug, today, agg["page_count"], agg["indexed_count"],
+                     agg["not_indexed_count"], agg["pass_count"], agg["neutral_count"], agg["fail_count"],
+                     agg["canonical_mismatch_count"], agg["index_rate"]),
+                )
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not store snapshot: {exc}")
+
+    fired = _fire_index_alerts(site_slug, prev, agg) if prev else []
+    return {"site_slug": site_slug, "snapshot_date": str(today), **agg, "alerts_fired": fired}
+
+
+def _snapshot_indexation_all(sites: list = None) -> list:
+    """Snapshot every site in `sites`, or the INDEXATION_SITES env list. Best-effort per site."""
+    if sites is None:
+        raw = os.getenv("INDEXATION_SITES", "[]")
+        try:
+            sites = _json_mod.loads(raw)
+        except Exception:
+            sites = []
+    results = []
+    for s in sites:
+        slug = s if isinstance(s, str) else (s or {}).get("site_slug", "")
+        if not slug:
+            continue
+        try:
+            out = _snapshot_indexation_one(slug)
+            results.append({"site_slug": slug, "index_rate": out.get("index_rate"),
+                            "alerts": len(out.get("alerts_fired", []))})
+        except Exception as e:
+            results.append({"site_slug": slug, "error": str(e)})
+    return results
+
+
+class IndexSnapshotRequest(BaseModel):
+    site_slug: str
+
+
+@app.post("/api/indexation/snapshot")
+def indexation_snapshot(req: IndexSnapshotRequest):
+    """Manually capture an index-health snapshot for a site (also runs daily via cron)."""
+    return _snapshot_indexation_one(req.site_slug)
+
+
+@app.get("/api/indexation/history")
+def indexation_history(site_slug: str, days: int = 60):
+    """Daily index-health snapshots for a site (chronological ascending)."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT snapshot_date, page_count, indexed_count, not_indexed_count,
+                              pass_count, neutral_count, fail_count, canonical_mismatch_count, index_rate
+                       FROM index_snapshots WHERE site_slug = %s
+                       ORDER BY snapshot_date DESC LIMIT %s""",
+                    (site_slug, min(max(days, 1), 180)),
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        if r.get("snapshot_date"):
+            r["snapshot_date"] = str(r["snapshot_date"])
+        if r.get("index_rate") is not None:
+            r["index_rate"] = float(r["index_rate"])
+    rows.reverse()
+    return {"history": rows}
+
+
+@app.get("/api/indexation/alerts")
+def indexation_alerts(site_slug: Optional[str] = None, unseen_only: bool = False, limit: int = 50):
+    clauses, params = [], []
+    if site_slug:
+        clauses.append("site_slug = %s"); params.append(site_slug)
+    if unseen_only:
+        clauses.append("seen = false")
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(min(limit, 200))
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT * FROM index_alerts {where} ORDER BY created_at DESC LIMIT %s",
+                    params,
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        if r.get("created_at"):
+            r["created_at"] = r["created_at"].isoformat()
+    return {"alerts": rows}
+
+
+@app.post("/api/indexation/alerts/seen")
+def indexation_alerts_seen():
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE index_alerts SET seen = true WHERE seen = false")
+            conn.commit()
+        return {"ok": True}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/cron/indexation-snapshot")
+def cron_indexation_snapshot(authorization: str = Header(None)):
+    """Daily job: snapshot index health for every INDEXATION_SITES entry."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret and authorization != f"Bearer {cron_secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    results = _snapshot_indexation_all()
+    return {"recorded": len(results), "results": results}
 
 
 # --- Vercel serverless handler (only active when mangum is installed) ---
