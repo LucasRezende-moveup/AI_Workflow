@@ -3610,7 +3610,13 @@ def _fire_index_alerts(site_slug: str, prev: dict, curr: dict):
     curr_idx = curr.get("indexed_count", 0)
     lost = prev_idx - curr_idx
     min_drop = int(os.getenv("INDEX_DEINDEX_MIN", "10"))
-    if lost >= min_drop:
+    # Google inspects a varying sample of pages per day, so a shrinking sample lowers the
+    # raw indexed count without any real de-indexation. Only trust the count drop when the
+    # inspection set size is stable (within 10% of the prior day).
+    prev_pages = prev.get("page_count", 0) or 0
+    curr_pages = curr.get("page_count", 0) or 0
+    sample_stable = prev_pages > 0 and curr_pages >= 0.9 * prev_pages
+    if sample_stable and lost >= min_drop:
         severity = "critical" if (lost >= 50 or (prev_idx and lost / prev_idx >= 0.2)) else "warning"
         alerts.append(("pages_deindexed", severity,
                        f"{lost} pages dropped out of Google's index ({prev_idx:,} → {curr_idx:,} indexed)",
