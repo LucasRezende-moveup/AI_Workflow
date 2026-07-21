@@ -55,6 +55,7 @@ GEOLOCATIONS = [
     {"name": "United Kingdom",           "gl": "gb", "hl": "en",    "domain": "google.co.uk",  "uule_name": "United Kingdom",                                    "cr": "countryGB", "ddg_kl": "uk-en"},
     {"name": "Canada",                   "gl": "ca", "hl": "en",    "domain": "google.ca",     "uule_name": "Canada",                                            "cr": "countryCA", "ddg_kl": "ca-en"},
     {"name": "Australia",                "gl": "au", "hl": "en",    "domain": "google.com.au", "uule_name": "Australia",                                         "cr": "countryAU", "ddg_kl": "au-en"},
+    {"name": "India",                    "gl": "in", "hl": "en",    "domain": "google.co.in",  "uule_name": "India",                                             "cr": "countryIN", "ddg_kl": "in-en"},
     # European
     {"name": "Germany",                  "gl": "de", "hl": "de",    "domain": "google.de",     "uule_name": "Germany",                                           "cr": "countryDE", "ddg_kl": "de-de"},
     {"name": "France",                   "gl": "fr", "hl": "fr",    "domain": "google.fr",     "uule_name": "France",                                            "cr": "countryFR", "ddg_kl": "fr-fr"},
