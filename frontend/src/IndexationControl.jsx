@@ -1099,7 +1099,7 @@ function IndexHealthPanel({ site }) {
   };
 
   const dismiss = async () => {
-    await fetch('/api/indexation/alerts/seen', { method: 'POST' }).catch(() => {});
+    await fetch(`/api/indexation/alerts/seen?site_slug=${encodeURIComponent(site)}`, { method: 'POST' }).catch(() => {});
     setAlerts([]);
   };
 

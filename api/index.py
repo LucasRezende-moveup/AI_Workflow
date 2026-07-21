@@ -3820,11 +3820,14 @@ def indexation_test_slack(current_user=Depends(_decode_token)):
 
 
 @app.post("/api/indexation/alerts/seen")
-def indexation_alerts_seen():
+def indexation_alerts_seen(site_slug: Optional[str] = None):
     try:
         with _db_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("UPDATE index_alerts SET seen = true WHERE seen = false")
+                if site_slug:
+                    cur.execute("UPDATE index_alerts SET seen = true WHERE seen = false AND site_slug = %s", (site_slug,))
+                else:
+                    cur.execute("UPDATE index_alerts SET seen = true WHERE seen = false")
             conn.commit()
         return {"ok": True}
     except Exception as exc:
