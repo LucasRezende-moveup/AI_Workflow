@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Globe, CheckCircle, AlertCircle, ArrowUpDown, ExternalLink, Filter, Map, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, ShieldAlert, RefreshCw, Link2 } from 'lucide-react';
+import { Globe, CheckCircle, AlertCircle, ArrowUpDown, ExternalLink, Filter, Map, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, ShieldAlert, RefreshCw, Link2, Download } from 'lucide-react';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -839,6 +839,25 @@ function IndexVerdict({ selectedSite }) {
     }}>{label}</button>
   );
 
+  const exportCsv = () => {
+    const esc = (v) => {
+      const s = (v ?? '').toString();
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = ['Page URL', 'Verdict', 'Indexed', 'Coverage reason', 'Last crawl', 'Canonical mismatch'];
+    const body = filtered.map(r => [
+      r.page_url, r.verdict, r.is_indexed ? 'Yes' : 'No',
+      r.coverage_state, r.last_crawl_time, r.canonical_mismatch ? 'Yes' : 'No',
+    ].map(esc).join(','));
+    const blob = new Blob([[header.join(','), ...body].join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const label = verdictFilter || indexedFilter || 'all';
+    a.download = `indexation-${label}-${selectedSite}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   return (
     <div>
       {/* Header row */}
@@ -912,6 +931,13 @@ function IndexVerdict({ selectedSite }) {
             {filterBtn(indexedFilter === 'missing', `Not indexed ${counts.total - counts.indexed}`, () => setIndexedFilter(v => v === 'missing' ? '' : 'missing'))}
             {counts.mismatch > 0 && filterBtn(canonicalOnly, `Canonical mismatch ${counts.mismatch}`, () => setCanonicalOnly(v => !v), '#fb923c', '#fb923c')}
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button onClick={exportCsv} title="Export the filtered rows as CSV" style={{
+                display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', padding: '5px 11px',
+                borderRadius: 7, cursor: 'pointer', color: 'var(--text-muted)',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
+              }}>
+                <Download size={13} /> Export CSV ({filtered.length})
+              </button>
               <Filter size={13} color="var(--text-muted)" />
               <input
                 className="glass-input"
@@ -1037,6 +1063,7 @@ function IndexRateSparkline({ history }) {
 function IndexHealthPanel({ site }) {
   const [history, setHistory] = useState([]);
   const [alerts, setAlerts]   = useState([]);
+  const [important, setImportant] = useState([]);
   const [busy, setBusy]       = useState(false);
   const [msg, setMsg]         = useState('');
 
@@ -1048,11 +1075,12 @@ function IndexHealthPanel({ site }) {
         fetch(`/api/indexation/alerts?site_slug=${encodeURIComponent(s)}`).then(r => r.json()).catch(() => ({})),
       ]);
       setHistory(Array.isArray(h.history) ? h.history : []);
+      setImportant(Array.isArray(h.important_not_indexed) ? h.important_not_indexed : []);
       setAlerts(Array.isArray(a.alerts) ? a.alerts : []);
     } catch { /* best-effort */ }
   }, []);
 
-  useEffect(() => { setHistory([]); setAlerts([]); setMsg(''); load(site); }, [site, load]);
+  useEffect(() => { setHistory([]); setAlerts([]); setImportant([]); setMsg(''); load(site); }, [site, load]);
 
   const capture = async () => {
     if (!site) return;
@@ -1161,6 +1189,28 @@ function IndexHealthPanel({ site }) {
               <span style={{ color: '#d8d8e6' }}>{a.message}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {important.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+            <ShieldAlert size={13} /> {important.length} high-traffic page{important.length !== 1 ? 's' : ''} not indexed
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {important.slice(0, 8).map((p, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.76rem', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <a href={p.url} target="_blank" rel="noopener noreferrer" title={p.url}
+                  style={{ color: 'var(--primary)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {shortPath(p.url)}
+                </a>
+                <span style={{ color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{(p.clicks || 0).toLocaleString()} clicks</span>
+              </div>
+            ))}
+            {important.length > 8 && (
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>+{important.length - 8} more</span>
+            )}
+          </div>
         </div>
       )}
     </div>

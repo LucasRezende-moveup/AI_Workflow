@@ -230,6 +230,10 @@ def _ensure_schema():
                     ON index_snapshots (site_slug, snapshot_date DESC)
                 """)
                 cur.execute("""
+                    ALTER TABLE index_snapshots
+                    ADD COLUMN IF NOT EXISTS important_not_indexed JSONB
+                """)
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS index_alerts (
                         id          TEXT PRIMARY KEY,
                         site_slug   TEXT NOT NULL,
@@ -3541,6 +3545,36 @@ def _aggregate_inspection(rows: list) -> dict:
     }
 
 
+def _norm_page(u: str) -> str:
+    """Normalize a page URL for matching GSC vs URL-inspection rows (drop fragment, trailing slash, case)."""
+    if not u:
+        return ""
+    s = str(u).split("#")[0].strip().rstrip("/").lower()
+    return s
+
+
+def _important_not_indexed(site_slug: str, inspection_rows: list, top_n: int = 25) -> list:
+    """Top pages by clicks that URL-inspection reports as NOT indexed — the highest-impact gaps."""
+    try:
+        pages = _seo_get(f"gsc/{site_slug}/page") or []
+        if not isinstance(pages, list) or not pages:
+            return []
+        # index status by normalized URL, only for pages inspection actually covers
+        status = {}
+        for r in inspection_rows:
+            status[_norm_page(r.get("page_url"))] = bool(r.get("is_indexed"))
+        top = sorted(pages, key=lambda p: -(p.get("clicks") or 0))[:top_n]
+        out = []
+        for p in top:
+            url = p.get("page")
+            key = _norm_page(url)
+            if key in status and status[key] is False:
+                out.append({"url": url, "clicks": int(p.get("clicks") or 0)})
+        return out
+    except Exception:
+        return []
+
+
 def _notify_slack(text: str) -> bool:
     """Best-effort push to a Slack Incoming Webhook. No-op (returns False) if SLACK_WEBHOOK_URL is unset."""
     url = os.getenv("SLACK_WEBHOOK_URL")
@@ -3588,6 +3622,20 @@ def _fire_index_alerts(site_slug: str, prev: dict, curr: dict):
                        f"{fail_delta} more pages now FAIL Google's index check",
                        str(prev.get("fail_count", 0)), str(curr.get("fail_count", 0))))
 
+    # Most-important pages: a high-traffic page newly dropping out of the index is a priority.
+    # Only diff once a baseline exists (prev list is non-null) to avoid a first-run false alarm.
+    prev_imp_raw = prev.get("important_not_indexed")
+    if prev_imp_raw is not None:
+        prev_urls = {(p.get("url") if isinstance(p, dict) else p) for p in (prev_imp_raw or [])}
+        newly = [p for p in (curr.get("important_not_indexed") or []) if p.get("url") not in prev_urls]
+        if newly:
+            top = sorted(newly, key=lambda x: -(x.get("clicks") or 0))[:5]
+            listed = "; ".join(f"{p['url']} ({p.get('clicks', 0):,} clicks)" for p in top)
+            more = f" (+{len(newly) - len(top)} more)" if len(newly) > len(top) else ""
+            alerts.append(("important_page_deindexed", "critical",
+                           f"{len(newly)} high-traffic page(s) dropped from the index: {listed}{more}",
+                           "", str(len(newly))))
+
     if not alerts:
         return []
     try:
@@ -3620,6 +3668,7 @@ def _snapshot_indexation_one(site_slug: str) -> dict:
         return {"site_slug": site_slug, "error": "no url-inspection data"}
 
     agg = _aggregate_inspection(rows)
+    agg["important_not_indexed"] = _important_not_indexed(site_slug, rows)
     today = datetime.now(timezone.utc).date()
 
     # Load the most recent prior snapshot (before today) to diff against
@@ -3646,16 +3695,19 @@ def _snapshot_indexation_one(site_slug: str) -> dict:
                 cur.execute(
                     """INSERT INTO index_snapshots
                        (id, site_slug, snapshot_date, page_count, indexed_count, not_indexed_count,
-                        pass_count, neutral_count, fail_count, canonical_mismatch_count, index_rate)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        pass_count, neutral_count, fail_count, canonical_mismatch_count, index_rate,
+                        important_not_indexed)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                        ON CONFLICT (site_slug, snapshot_date) DO UPDATE SET
                         page_count=EXCLUDED.page_count, indexed_count=EXCLUDED.indexed_count,
                         not_indexed_count=EXCLUDED.not_indexed_count, pass_count=EXCLUDED.pass_count,
                         neutral_count=EXCLUDED.neutral_count, fail_count=EXCLUDED.fail_count,
-                        canonical_mismatch_count=EXCLUDED.canonical_mismatch_count, index_rate=EXCLUDED.index_rate""",
+                        canonical_mismatch_count=EXCLUDED.canonical_mismatch_count, index_rate=EXCLUDED.index_rate,
+                        important_not_indexed=EXCLUDED.important_not_indexed""",
                     (str(uuid.uuid4()), site_slug, today, agg["page_count"], agg["indexed_count"],
                      agg["not_indexed_count"], agg["pass_count"], agg["neutral_count"], agg["fail_count"],
-                     agg["canonical_mismatch_count"], agg["index_rate"]),
+                     agg["canonical_mismatch_count"], agg["index_rate"],
+                     json.dumps(agg["important_not_indexed"])),
                 )
             conn.commit()
     except Exception as exc:
@@ -3705,7 +3757,8 @@ def indexation_history(site_slug: str, days: int = 60):
             with conn.cursor() as cur:
                 cur.execute(
                     """SELECT snapshot_date, page_count, indexed_count, not_indexed_count,
-                              pass_count, neutral_count, fail_count, canonical_mismatch_count, index_rate
+                              pass_count, neutral_count, fail_count, canonical_mismatch_count, index_rate,
+                              important_not_indexed
                        FROM index_snapshots WHERE site_slug = %s
                        ORDER BY snapshot_date DESC LIMIT %s""",
                     (site_slug, min(max(days, 1), 180)),
@@ -3713,13 +3766,16 @@ def indexation_history(site_slug: str, days: int = 60):
                 rows = [dict(r) for r in cur.fetchall()]
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+    # The important-pages list only matters for the latest day; keep the trend payload lean.
+    latest_important = rows[0].get("important_not_indexed") if rows else None
     for r in rows:
         if r.get("snapshot_date"):
             r["snapshot_date"] = str(r["snapshot_date"])
         if r.get("index_rate") is not None:
             r["index_rate"] = float(r["index_rate"])
+        r.pop("important_not_indexed", None)
     rows.reverse()
-    return {"history": rows}
+    return {"history": rows, "important_not_indexed": latest_important or []}
 
 
 @app.get("/api/indexation/alerts")
