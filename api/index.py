@@ -3784,6 +3784,54 @@ def indexation_history(site_slug: str, days: int = 60):
     return {"history": rows, "important_not_indexed": latest_important or []}
 
 
+@app.get("/api/indexation/overview")
+def indexation_overview():
+    """Cross-site 'needs attention' roll-up: latest snapshot per site + day delta + active alerts."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT site_slug, snapshot_date, page_count, indexed_count, not_indexed_count,
+                           fail_count, index_rate, important_not_indexed,
+                           ROW_NUMBER() OVER (PARTITION BY site_slug ORDER BY snapshot_date DESC) AS rn
+                    FROM index_snapshots
+                """)
+                rows = [dict(r) for r in cur.fetchall()]
+                cur.execute("SELECT site_slug, COUNT(*) AS c FROM index_alerts WHERE seen = false GROUP BY site_slug")
+                alert_counts = {r["site_slug"]: int(r["c"]) for r in cur.fetchall()}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    latest, prev = {}, {}
+    for r in rows:
+        if r["rn"] == 1:
+            latest[r["site_slug"]] = r
+        elif r["rn"] == 2:
+            prev[r["site_slug"]] = r
+
+    out = []
+    for slug, r in latest.items():
+        rate = float(r["index_rate"]) if r["index_rate"] is not None else 0.0
+        p = prev.get(slug)
+        delta = round(rate - float(p["index_rate"]), 1) if p and p.get("index_rate") is not None else None
+        imp = r.get("important_not_indexed") or []
+        out.append({
+            "site_slug": slug,
+            "snapshot_date": str(r["snapshot_date"]),
+            "page_count": r["page_count"],
+            "indexed_count": r["indexed_count"],
+            "not_indexed_count": r["not_indexed_count"],
+            "fail_count": r["fail_count"],
+            "index_rate": rate,
+            "rate_delta": delta,
+            "important_down": len(imp),
+            "active_alerts": alert_counts.get(slug, 0),
+        })
+    # Needs-attention order: active alerts, then important pages down, then worst rate, then FAILs
+    out.sort(key=lambda x: (-x["active_alerts"], -x["important_down"], x["index_rate"], -x["fail_count"]))
+    return {"sites": out}
+
+
 @app.get("/api/indexation/alerts")
 def indexation_alerts(site_slug: Optional[str] = None, unseen_only: bool = False, limit: int = 50):
     clauses, params = [], []

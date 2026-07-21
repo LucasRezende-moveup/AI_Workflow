@@ -1060,6 +1060,109 @@ function IndexRateSparkline({ history }) {
   );
 }
 
+function IndexOverviewPanel({ sites, selectedSite, onSelect }) {
+  const [data, setData]     = useState([]);
+  const [loading, setLoad]  = useState(true);
+  const [open, setOpen]     = useState(true);
+
+  const nameOf = useMemo(() => {
+    const m = {};
+    (sites || []).forEach(s => { m[s.site_slug] = s.site || s.domain || s.site_slug; });
+    return m;
+  }, [sites]);
+
+  const load = useCallback(async () => {
+    setLoad(true);
+    try {
+      const d = await fetch('/api/indexation/overview').then(r => r.json());
+      setData(Array.isArray(d.sites) ? d.sites : []);
+    } catch { setData([]); }
+    finally { setLoad(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const attention = data.filter(s => s.active_alerts > 0 || s.important_down > 0).length;
+
+  if (!loading && data.length === 0) return null;
+
+  return (
+    <div className="glass-panel" style={{ padding: '16px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, cursor: 'pointer' }}
+        onClick={() => setOpen(v => !v)}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Globe size={16} color="var(--primary)" />
+          <span style={{ fontSize: '0.92rem', fontWeight: 700 }}>Portfolio Overview</span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            {data.length} sites{attention > 0 && <> · <span style={{ color: '#f87171', fontWeight: 700 }}>{attention} need attention</span></>}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button onClick={(e) => { e.stopPropagation(); load(); }} title="Refresh"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}>
+            <RefreshCw size={13} />
+          </button>
+          <ChevronDown size={16} color="var(--text-muted)" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+        </div>
+      </div>
+
+      {open && (
+        <div style={{ overflowX: 'auto', marginTop: 14 }}>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)', fontSize: '0.82rem' }}>Loading…</div>
+          ) : (
+            <table className="data-table" style={{ fontSize: '0.82rem' }}>
+              <thead>
+                <tr>
+                  <th>Site</th>
+                  <th style={{ textAlign: 'right' }}>Index rate</th>
+                  <th style={{ textAlign: 'right' }}>Δ 1d</th>
+                  <th style={{ textAlign: 'right' }}>Indexed</th>
+                  <th style={{ textAlign: 'right' }}>FAIL</th>
+                  <th style={{ textAlign: 'right' }}>Top pages down</th>
+                  <th style={{ textAlign: 'right' }}>Alerts</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map(s => {
+                  const attn = s.active_alerts > 0 || s.important_down > 0;
+                  const isSel = s.site_slug === selectedSite;
+                  return (
+                    <tr key={s.site_slug}
+                      onClick={() => onSelect(s.site_slug)}
+                      style={{ cursor: 'pointer', background: isSel ? 'rgba(226,0,113,0.08)' : undefined }}
+                      onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                      onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = ''; }}>
+                      <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {attn && <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#f87171', marginRight: 7 }} />}
+                        {nameOf[s.site_slug] || s.site_slug}
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 700, color: rateColor(s.index_rate), fontVariantNumeric: 'tabular-nums' }}>{s.index_rate}%</td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.rate_delta == null ? 'var(--text-dim)' : s.rate_delta < 0 ? '#f87171' : s.rate_delta > 0 ? '#4ade80' : 'var(--text-muted)' }}>
+                        {s.rate_delta == null ? '—' : `${s.rate_delta > 0 ? '+' : ''}${s.rate_delta}`}
+                      </td>
+                      <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                        {(s.indexed_count || 0).toLocaleString()}<span style={{ color: 'var(--text-dim)' }}>/{(s.page_count || 0).toLocaleString()}</span>
+                      </td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.fail_count > 0 ? '#f59e0b' : 'var(--text-dim)' }}>{s.fail_count || 0}</td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.important_down > 0 ? '#f87171' : 'var(--text-dim)', fontWeight: s.important_down > 0 ? 700 : 400 }}>{s.important_down || 0}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        {s.active_alerts > 0
+                          ? <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: 'rgba(248,113,113,0.15)', color: '#f87171' }}>{s.active_alerts}</span>
+                          : <span style={{ color: 'var(--text-dim)' }}>—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function IndexHealthPanel({ site }) {
   const [history, setHistory] = useState([]);
   const [alerts, setAlerts]   = useState([]);
@@ -1516,7 +1619,10 @@ export default function IndexationControl() {
         )}
       </div>
 
-      {/* ── Index health: daily snapshot trend + alerts ── */}
+      {/* ── Portfolio overview: cross-site "needs attention" ── */}
+      <IndexOverviewPanel sites={sites} selectedSite={selectedSite} onSelect={setSelectedSite} />
+
+      {/* ── Index health: daily snapshot trend + alerts (selected site) ── */}
       {selectedSite && <IndexHealthPanel site={selectedSite} />}
 
       {/* ── Results ── */}
