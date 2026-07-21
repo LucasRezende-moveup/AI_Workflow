@@ -3569,11 +3569,18 @@ def _fire_index_alerts(site_slug: str, prev: dict, curr: dict):
                        f"Index rate fell {prev_rate:.1f}% → {curr_rate:.1f}% ({rate_delta} pts)",
                        f"{prev_rate:.1f}%", f"{curr_rate:.1f}%"))
 
-    lost = curr.get("not_indexed_count", 0) - prev.get("not_indexed_count", 0)
-    if lost >= 10:
-        alerts.append(("pages_deindexed", "warning",
-                       f"{lost} more pages are no longer indexed",
-                       str(prev.get("not_indexed_count", 0)), str(curr.get("not_indexed_count", 0))))
+    # Direct signal: how many pages that were indexed no longer are. Keying off the indexed
+    # count (not the not-indexed count) avoids false alarms when new, not-yet-indexed pages
+    # are published — that raises not-indexed without any real de-indexation.
+    prev_idx = prev.get("indexed_count", 0)
+    curr_idx = curr.get("indexed_count", 0)
+    lost = prev_idx - curr_idx
+    min_drop = int(os.getenv("INDEX_DEINDEX_MIN", "10"))
+    if lost >= min_drop:
+        severity = "critical" if (lost >= 50 or (prev_idx and lost / prev_idx >= 0.2)) else "warning"
+        alerts.append(("pages_deindexed", severity,
+                       f"{lost} pages dropped out of Google's index ({prev_idx:,} → {curr_idx:,} indexed)",
+                       str(prev_idx), str(curr_idx)))
 
     fail_delta = curr.get("fail_count", 0) - prev.get("fail_count", 0)
     if fail_delta >= 10:
