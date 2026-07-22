@@ -642,6 +642,14 @@ def _fire_alerts(tracking_id: str, keyword: str, prev: dict, curr: dict):
     except Exception:
         pass
 
+    # Push declines to Slack (best-effort). Only warning/critical events — i.e. drops, lost
+    # rankings and lost featured snippets — never the positive info alerts (gains, new rankings).
+    notable = [a for a in alerts_to_insert if a[1] in ("warning", "critical")]
+    if notable:
+        emoji = "🔴" if any(a[1] == "critical" for a in notable) else "🟠"
+        lines = "\n".join(f"• *{a[1].upper()}* — {a[2]}" for a in notable)
+        _notify_slack(f'{emoji} *Ranking alert — "{keyword}"*\n{lines}')
+
 
 def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str], location: str) -> dict:
     """Fetch live SERP, save a ranking snapshot, fire alerts on changes."""
