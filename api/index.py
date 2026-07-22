@@ -266,6 +266,18 @@ def _ensure_schema():
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS log_alerts_seen_idx ON log_alerts (seen, created_at DESC)
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS serp_cache (
+                        cache_key  TEXT PRIMARY KEY,
+                        keyword    TEXT NOT NULL,
+                        location   TEXT NOT NULL,
+                        result     JSONB NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS serp_cache_created_idx ON serp_cache (created_at)
+                """)
                 cur.execute("SELECT COUNT(*) AS cnt FROM users")
                 row = cur.fetchone()
                 if row["cnt"] == 0:
@@ -654,7 +666,7 @@ def _fire_alerts(tracking_id: str, keyword: str, prev: dict, curr: dict):
 def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str], location: str) -> dict:
     """Fetch live SERP, save a ranking snapshot, fire alerts on changes."""
     from urllib.parse import urlparse
-    serp = fetch_serp_results(keyword, location_name=location)
+    serp = _serp_cached(keyword, location_name=location)
     organic = serp.get("organic", [])
     position = None
     ranking_url = None
@@ -1791,6 +1803,57 @@ Provide your findings in clear, formatted markdown."""
 # --- SERP Analyzer Endpoints ---
 from serp_utils import fetch_serp_results, GEOLOCATIONS
 
+
+def _serp_cached(keyword: str, location_name: str = "Global (No Geolocation)") -> dict:
+    """
+    SERP fetch with a short-lived DB cache to avoid re-buying the same query.
+    Reuses a stored result for (keyword, location) within SERP_CACHE_TTL_HOURS (default 6h)
+    — long enough to dedupe repeated ad-hoc analyses, short enough that daily tracking
+    still gets fresh data. Only successful results are cached; errors always re-fetch.
+    """
+    ttl = float(os.getenv("SERP_CACHE_TTL_HOURS", "6"))
+    key = f"{(keyword or '').strip().lower()}|{location_name}"
+
+    if ttl > 0:
+        try:
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT result FROM serp_cache WHERE cache_key = %s "
+                        "AND created_at > NOW() - (%s * INTERVAL '1 hour')",
+                        (key, ttl),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        res = row["result"]
+                        if isinstance(res, str):
+                            res = json.loads(res)
+                        if isinstance(res, dict):
+                            res["_cached"] = True
+                            return res
+        except Exception:
+            pass
+
+    res = fetch_serp_results(keyword, location_name=location_name)
+    if isinstance(res, dict) and res.get("organic"):
+        try:
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO serp_cache (cache_key, keyword, location, result)
+                           VALUES (%s,%s,%s,%s)
+                           ON CONFLICT (cache_key) DO UPDATE
+                             SET result = EXCLUDED.result, created_at = NOW()""",
+                        (key, (keyword or "").strip(), location_name, json.dumps(res)),
+                    )
+                conn.commit()
+        except Exception:
+            pass
+    if isinstance(res, dict):
+        res["_cached"] = False
+    return res
+
+
 class SerpRequest(BaseModel):
     keyword: str
     location_name: str = "Global (No Geolocation)"
@@ -1800,7 +1863,7 @@ class SerpRequest(BaseModel):
 
 @app.post("/api/serp/analyze")
 def serp_analyze(req: SerpRequest):
-    results_data = fetch_serp_results(req.keyword, location_name=req.location_name)
+    results_data = _serp_cached(req.keyword, location_name=req.location_name)
     if isinstance(results_data, dict) and "error" in results_data:
         raise HTTPException(status_code=502, detail=results_data["error"])
     if not results_data or not results_data.get("organic"):
@@ -1858,7 +1921,8 @@ Format in clear Markdown."""
     out = {
         "organic": serp_results,
         "related_keywords": related,
-        "analysis": analysis
+        "analysis": analysis,
+        "cached": bool(results_data.get("_cached")),
     }
     _save_run(
         tool="serp_analyzer",
@@ -3012,7 +3076,7 @@ def fs_stealer_analyze(req: FsStealerRequest):
     intent = _classify_intent(req.keyword)
 
     # Step 1 — fetch SERP: SerpAPI (real Google) → DuckDuckGo → Google scraper
-    serp = fetch_serp_results(req.keyword, location_name=req.location_name)
+    serp = _serp_cached(req.keyword, location_name=req.location_name)
     if not serp.get("organic"):
         raise HTTPException(status_code=502, detail=serp.get("error", "SERP fetch failed. Please try again."))
 
