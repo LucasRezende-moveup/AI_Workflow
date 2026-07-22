@@ -72,7 +72,7 @@ export default function App() {
 
   async function fetchAlerts(token) {
     try {
-      const res = await fetch('/api/alerts?unseen_only=true&limit=20', {
+      const res = await fetch('/api/alerts/unified?limit=30', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;
@@ -84,7 +84,7 @@ export default function App() {
   async function markAllSeen() {
     const token = localStorage.getItem('auth_token');
     try {
-      await fetch('/api/alerts/seen', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      await fetch('/api/alerts/seen-all', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       setAlerts([]);
     } catch { /* silent */ }
   }
@@ -305,15 +305,24 @@ export default function App() {
                       {alerts.map(a => {
                         const colors = { critical: '#f87171', warning: '#fb923c', info: '#38bdf8' };
                         const dot = colors[a.severity] || '#94a3b8';
+                        const SRC = {
+                          tracking:   { label: 'Tracking',          page: 'Tracking' },
+                          indexation: { label: 'Indexation',        page: 'Indexation Control' },
+                          log:        { label: 'Log health',        page: 'Technical Auditor' },
+                        };
+                        const src = SRC[a.source] || { label: a.source || 'Alert', page: 'Tracking' };
                         return (
-                          <div key={a.id} onClick={() => { setActivePage('Tracking'); setBellOpen(false); }}
+                          <div key={a.id} onClick={() => { setActivePage(src.page); setBellOpen(false); }}
                             style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'flex-start' }}
                             onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
                             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                           >
                             <div style={{ width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0, marginTop: 5 }} />
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#fff', marginBottom: 2 }}>{a.keyword}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                                <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.07)', padding: '1px 6px', borderRadius: 4, flexShrink: 0 }}>{src.label}</span>
+                                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</span>
+                              </div>
                               <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>{a.message}</div>
                             </div>
                           </div>

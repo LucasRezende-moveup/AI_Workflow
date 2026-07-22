@@ -868,6 +868,55 @@ def mark_alerts_seen(current_user=Depends(_decode_token)):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/api/alerts/unified")
+def alerts_unified(limit: int = 30, current_user=Depends(_decode_token)):
+    """Merge unseen alerts from keyword tracking, indexation, and log health into one feed."""
+    def fetch(sql, mapper):
+        try:
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (min(limit, 100),))
+                    return [mapper(r) for r in cur.fetchall()]
+        except Exception:
+            return []
+
+    items = []
+    items += fetch(
+        "SELECT id, keyword, severity, message, created_at FROM alerts WHERE seen = false ORDER BY created_at DESC LIMIT %s",
+        lambda r: {"id": f"kw-{r['id']}", "source": "tracking", "severity": r["severity"],
+                   "title": r["keyword"], "message": r["message"], "created_at": r["created_at"]},
+    )
+    items += fetch(
+        "SELECT id, site_slug, severity, message, created_at FROM index_alerts WHERE seen = false ORDER BY created_at DESC LIMIT %s",
+        lambda r: {"id": f"idx-{r['id']}", "source": "indexation", "severity": r["severity"],
+                   "title": r["site_slug"], "message": r["message"], "created_at": r["created_at"]},
+    )
+    items += fetch(
+        "SELECT id, site, severity, message, created_at FROM log_alerts WHERE seen = false ORDER BY created_at DESC LIMIT %s",
+        lambda r: {"id": f"log-{r['id']}", "source": "log", "severity": r["severity"],
+                   "title": r["site"], "message": r["message"], "created_at": r["created_at"]},
+    )
+    for it in items:
+        if it.get("created_at"):
+            it["created_at"] = it["created_at"].isoformat()
+    items.sort(key=lambda x: x["created_at"] or "", reverse=True)
+    return {"alerts": items[:limit]}
+
+
+@app.post("/api/alerts/seen-all")
+def mark_all_alerts_seen(current_user=Depends(_decode_token)):
+    """Acknowledge every unseen alert across tracking, indexation, and log health."""
+    for tbl in ("alerts", "index_alerts", "log_alerts"):
+        try:
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f"UPDATE {tbl} SET seen = true WHERE seen = false")
+                conn.commit()
+        except Exception:
+            pass
+    return {"ok": True}
+
+
 # ── Cron: daily auto-check all tracked keywords ───────────────────────────────
 
 @app.post("/api/cron/check-all")
