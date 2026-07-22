@@ -3616,9 +3616,21 @@ def url_inspection_single(url: str):
 
 # --- Indexation daily snapshots + alerts ---------------------------------------
 
+def _rate_excluded(row: dict) -> bool:
+    """URLs that shouldn't count against the index rate: Google has no data on them,
+    or the page intentionally opts out (noindex). Excluding these makes the rate reflect
+    *indexable* pages rather than every URL Google has ever discovered."""
+    s = (row.get("coverage_state") or "").lower()
+    return ("unknown to google" in s) or ("noindex" in s)
+
+
 def _aggregate_inspection(rows: list) -> dict:
-    """Roll up per-page URL-inspection rows into site-level index-health counters."""
-    page_count = len(rows)
+    """Roll up per-page URL-inspection rows into site-level index-health counters.
+    The rate denominator is the indexable universe (excludes unknown-to-Google and noindex);
+    indexed_count is unchanged (every indexed page is indexable)."""
+    total_inspected = len(rows)
+    eligible = [r for r in rows if not _rate_excluded(r)]
+    page_count = len(eligible)
     indexed = sum(1 for r in rows if r.get("is_indexed"))
     passc = sum(1 for r in rows if r.get("verdict") == "PASS")
     neutral = sum(1 for r in rows if r.get("verdict") == "NEUTRAL")
@@ -3626,8 +3638,9 @@ def _aggregate_inspection(rows: list) -> dict:
     mismatch = sum(1 for r in rows if r.get("canonical_mismatch"))
     return {
         "page_count": page_count,
+        "total_inspected": total_inspected,
         "indexed_count": indexed,
-        "not_indexed_count": page_count - indexed,
+        "not_indexed_count": max(page_count - indexed, 0),
         "pass_count": passc,
         "neutral_count": neutral,
         "fail_count": fail,
