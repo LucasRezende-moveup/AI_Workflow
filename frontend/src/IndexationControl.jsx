@@ -898,11 +898,7 @@ function IndexVerdict({ selectedSite }) {
         </div>
       )}
 
-      {error && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171', fontSize: '0.82rem', marginBottom: 12 }}>
-          {error}
-        </div>
-      )}
+      {error && <div className="banner banner-error mb-4">{error}</div>}
 
       {!loaded && !loadingRows && !error && (
         <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
@@ -1470,13 +1466,26 @@ export default function IndexationControl() {
   return (
     <div className="flex-col gap-6">
 
+      {/* ── Page header ── */}
+      <div className="page-header">
+        <div>
+          <h1 className="page-title"><Globe size={22} color="var(--primary)" /> Indexation Control</h1>
+          <p className="page-subtitle">
+            Track how much of each site Google has indexed, watch it day&#8209;by&#8209;day, and drill into any property. Pick a site from the overview or run a detailed check below.
+          </p>
+        </div>
+      </div>
+
+      {/* ── Portfolio overview: cross-site "needs attention" (landing view) ── */}
+      <IndexOverviewPanel sites={sites} selectedSite={selectedSite} onSelect={setSelectedSite} />
+
       {/* ── Config panel ── */}
       <div className="glass-panel">
-        <h2 className="flex items-center gap-2 mb-4">
-          <Globe size={22} color="var(--primary)" /> Indexation Control
-        </h2>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: 20 }}>
-          Cross-reference your URLs against Google Search Console data over a date range. See exactly which days each page was indexed.
+        <h3 className="flex items-center gap-2 mb-2" style={{ fontSize: '1rem' }}>
+          <Filter size={16} color="var(--primary)" /> Run a detailed check
+        </h3>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 20 }}>
+          Cross-reference a site's URLs against Search Console over a date range — see exactly which days each page was indexed.
         </p>
 
         {/* Site + search type */}
@@ -1606,18 +1615,20 @@ export default function IndexationControl() {
             : '🔍 Check Indexation'}
         </button>
 
-        {error && (
-          <div style={{ marginTop: 14, padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5', fontSize: '0.83rem' }}>
-            {error}
-          </div>
-        )}
+        {error && <div className="banner banner-error mt-4">{error}</div>}
       </div>
-
-      {/* ── Portfolio overview: cross-site "needs attention" ── */}
-      <IndexOverviewPanel sites={sites} selectedSite={selectedSite} onSelect={setSelectedSite} />
 
       {/* ── Index health: daily snapshot trend + alerts (selected site) ── */}
       {selectedSite && <IndexHealthPanel site={selectedSite} />}
+
+      {/* ── Guiding empty state: site chosen, no detailed check run yet ── */}
+      {!result && !loading && selectedSite && (
+        <div className="glass-panel empty-state">
+          <Filter size={28} className="empty-icon" />
+          <div className="empty-title">Run a check to see the full breakdown</div>
+          <div className="empty-hint">Pick a date range above and hit “Check Indexation” for a day-by-day timeline, all pages, Google's per-page verdicts, and sitemap coverage.</div>
+        </div>
+      )}
 
       {/* ── Results ── */}
       {result && stats && (
@@ -1680,8 +1691,8 @@ export default function IndexationControl() {
           <div className="glass-panel">
 
             {/* Explanation note */}
-            <div style={{ padding: '8px 14px', borderRadius: 8, background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', fontSize: '0.78rem', color: 'rgba(255,255,255,0.65)', lineHeight: 1.55, marginBottom: 18 }}>
-              <strong style={{ color: '#60a5fa' }}>Note:</strong> Timeline indexation uses the URL Inspection API verdict (PASS/NEUTRAL/FAIL). When inspection data is unavailable for a date, falls back to GSC performance presence. Impressions/clicks/position always come from GSC performance data.
+            <div className="banner banner-info mb-4" style={{ fontSize: '0.78rem' }}>
+              <span><strong>Note:</strong> Timeline indexation uses the URL Inspection API verdict (PASS/NEUTRAL/FAIL). When inspection data is unavailable for a date, it falls back to GSC performance presence. Impressions/clicks/position always come from GSC performance data.</span>
             </div>
 
             {/* Tabs nav */}
