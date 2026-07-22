@@ -139,12 +139,12 @@ function normUrl(u) {
   }
 }
 
-function statusStyle(code) {
+function statusBadgeClass(code) {
   const n = parseInt(code, 10);
-  if (!code || Number.isNaN(n)) return { bg: 'rgba(255,255,255,.06)', color: 'var(--text-muted)' };
-  if (n >= 200 && n < 300) return { bg: 'rgba(34,197,94,.1)',  color: '#4ade80' };  // 2xx
-  if (n >= 300 && n < 400) return { bg: 'rgba(59,130,246,.12)', color: '#60a5fa' };  // 3xx
-  return { bg: 'rgba(239,68,68,.1)', color: '#f87171' };                             // 4xx / 5xx
+  if (!code || Number.isNaN(n)) return 'badge-neutral';
+  if (n >= 200 && n < 300) return 'badge-success';   // 2xx
+  if (n >= 300 && n < 400) return 'badge-info';       // 3xx
+  return 'badge-danger';                              // 4xx / 5xx
 }
 
 function toCsv(rows) {
@@ -609,7 +609,6 @@ export default function InternalLinkingCrawl() {
                 </thead>
                 <tbody>
                   {pageRows.map((r, i) => {
-                    const s = statusStyle(r.status_code);
                     return (
                       <tr key={i}>
                         <td style={{ maxWidth: 300 }}>
@@ -629,7 +628,7 @@ export default function InternalLinkingCrawl() {
                           {r.anchor || '[no anchor / image link]'}
                         </td>
                         <td style={{ textAlign: 'center' }}>
-                          <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 9px', borderRadius: 20, background: s.bg, color: s.color, fontVariantNumeric: 'tabular-nums' }}>
+                          <span className={`badge ${statusBadgeClass(r.status_code)}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                             {r.status_code || '—'}
                           </span>
                         </td>

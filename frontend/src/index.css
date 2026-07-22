@@ -602,6 +602,12 @@ h1, h2, h3, h4, h5, h6 {
   100% { transform: translateX(100%); }
 }
 
+/* Used by a few inline loading placeholders that referenced it before it existed */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
 .tag {
   display: inline-block;
   padding: 3px 8px;

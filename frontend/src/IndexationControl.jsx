@@ -726,16 +726,8 @@ const VERDICT_STYLE = {
 };
 
 function VerdictBadge({ verdict }) {
-  const s = VERDICT_STYLE[verdict] || { color: '#94a3b8', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.25)' };
-  return (
-    <span style={{
-      fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 4,
-      color: s.color, background: s.bg, border: `1px solid ${s.border}`,
-      textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
-    }}>
-      {verdict || '—'}
-    </span>
-  );
+  const cls = { PASS: 'badge-success', NEUTRAL: 'badge-warning', FAIL: 'badge-danger' }[verdict] || 'badge-neutral';
+  return <span className={`badge ${cls}`} style={{ textTransform: 'uppercase' }}>{verdict || '—'}</span>;
 }
 
 function IndexVerdict({ selectedSite }) {
@@ -1109,7 +1101,9 @@ function IndexOverviewPanel({ sites, selectedSite, onSelect }) {
       {open && (
         <div style={{ overflowX: 'auto', marginTop: 14 }}>
           {loading ? (
-            <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)', fontSize: '0.82rem' }}>Loading…</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[0, 1, 2, 3, 4].map(i => <div key={i} className="skeleton" style={{ height: 34 }} />)}
+            </div>
           ) : (
             <table className="data-table" style={{ fontSize: '0.82rem' }}>
               <thead>

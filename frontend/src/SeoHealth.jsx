@@ -409,7 +409,7 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
       {!cached && isLoading && (
         <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
           {[1, 2, 3, 4].map(i => (
-            <div key={i} style={{ flex: 1, height: 72, borderRadius: 8, background: 'rgba(255,255,255,0.04)', animation: 'pulse 1.5s ease-in-out infinite' }} />
+            <div key={i} className="skeleton" style={{ flex: 1, height: 72 }} />
           ))}
         </div>
       )}
