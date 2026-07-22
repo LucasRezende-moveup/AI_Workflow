@@ -1728,7 +1728,9 @@ Base page content:
 {content}"""
     try:
         result = _gemini_generate(prompt)
-        return {"analysis": result}
+        out = {"analysis": result, "url": url}
+        _save_run(tool="eeat", result=out, target_url=url, summary="E-E-A-T analysis")
+        return out
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1797,7 +1799,10 @@ Provide your findings in clear, formatted markdown."""
     except Exception as e:
         ai_analysis = f"AI analysis failed: {e}"
 
-    return {"blocks": blocks, "ai_analysis": ai_analysis, "count": len(blocks)}
+    out = {"blocks": blocks, "ai_analysis": ai_analysis, "count": len(blocks), "url": url}
+    _save_run(tool="schema", result=out, target_url=url,
+              summary=f"{len(blocks)} schema block{'s' if len(blocks) != 1 else ''}")
+    return out
 
 
 # --- SERP Analyzer Endpoints ---
@@ -1966,7 +1971,10 @@ def comparator_analyze(req: ComparatorRequest):
     if d3 and d3.get('error'):
         d3 = None
     analysis = _comp_compare(req.keyword, d1, d2, d3, req.pos1, req.pos2, req.pos3)
-    return {"scraped": [d1, d2, d3], "analysis": analysis}
+    out = {"scraped": [d1, d2, d3], "analysis": analysis}
+    _save_run(tool="comparator", result=out, keyword=req.keyword, target_url=req.url1,
+              summary=f"{req.url1} vs {req.url2}")
+    return out
 
 
 # --- Internal Linking Endpoints ---
@@ -2034,7 +2042,11 @@ def internal_linking_analyze(req: InternalLinkingRequest):
             })
 
     analysis = _il_analyze(all_data, req.urls)
-    return {"summary": summary, "matrix": matrix, "matrix_cols": req.urls, "analysis": analysis}
+    out = {"summary": summary, "matrix": matrix, "matrix_cols": req.urls, "analysis": analysis}
+    _save_run(tool="internal_linking", result=out,
+              target_url=(req.urls[0] if req.urls else None),
+              summary=f"{len(req.urls)} URL{'s' if len(req.urls) != 1 else ''}")
+    return out
 
 
 @app.post("/api/internal-linking/crawl-audit")
@@ -2236,7 +2248,10 @@ def image_alt_analyze(req: ImageAltRequest):
                 "reasoning": analysis.get("reasoning", ""), "proposed_alt": analysis.get("proposed_alt", "")})
         except Exception as e:
             results.append({"src": img_info['src'], "alt": img_info['alt'], "status": "❌ Error", "error": str(e)})
-    return {"detected_intent": detected_intent, "total_images": len(imgs), "results": results}
+    out = {"detected_intent": detected_intent, "total_images": len(imgs), "results": results, "url": url}
+    _save_run(tool="image_alt", result=out, keyword=req.keyword, target_url=url,
+              summary=f"{len(results)} of {len(imgs)} images analyzed")
+    return out
 
 
 # --- Header Analysis Endpoints ---
@@ -2332,14 +2347,18 @@ Use markdown. Be specific. Max 350 words."""
     except Exception as e:
         ai_analysis = f"AI analysis unavailable: {e}"
 
-    return {
+    out = {
         "headers": headers_list,
         "issues": issues,
         "score": score,
         "ai_analysis": ai_analysis,
         "total": len(headers_list),
         "keyword": req.keyword,
+        "url": url,
     }
+    _save_run(tool="headers", result=out, keyword=req.keyword, target_url=url,
+              summary=f"Score {score}/100 · {len(headers_list)} headings")
+    return out
 
 
 # --- SEO Health / Sheets KPI Endpoints ---

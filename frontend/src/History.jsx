@@ -2,16 +2,30 @@ import { useState, useEffect, useCallback } from 'react';
 import { Clock, Search, Target, RefreshCw, ChevronDown, ChevronUp, MapPin, Link } from 'lucide-react';
 
 const TOOL_META = {
-  fs_stealer:    { label: 'FS Stealer',    color: '#E20071', bg: 'rgba(226,0,113,0.12)' },
-  serp_analyzer: { label: 'SERP Analyzer', color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
-  seo_health:    { label: 'SEO Health',    color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+  fs_stealer:       { label: 'FS Stealer',       color: '#E20071', bg: 'rgba(226,0,113,0.12)' },
+  serp_analyzer:    { label: 'SERP Analyzer',    color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
+  seo_health:       { label: 'SEO Health',       color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+  cwv:              { label: 'Core Web Vitals',  color: '#00bcd4', bg: 'rgba(0,188,212,0.12)' },
+  eeat:             { label: 'E-E-A-T',          color: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
+  schema:           { label: 'Schema',           color: '#38bdf8', bg: 'rgba(56,189,248,0.12)' },
+  image_alt:        { label: 'Image Alt',        color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
+  headers:          { label: 'Headers',          color: '#fb923c', bg: 'rgba(251,146,60,0.12)' },
+  comparator:       { label: 'URL Comparator',   color: '#14b8a6', bg: 'rgba(20,184,166,0.12)' },
+  internal_linking: { label: 'Internal Linking', color: '#eab308', bg: 'rgba(234,179,8,0.12)' },
 };
 
 const ALL_TOOLS = [
-  { value: '',              label: 'All tools' },
-  { value: 'fs_stealer',    label: 'FS Stealer' },
-  { value: 'serp_analyzer', label: 'SERP Analyzer' },
-  { value: 'seo_health',    label: 'SEO Health' },
+  { value: '',                 label: 'All tools' },
+  { value: 'fs_stealer',       label: 'FS Stealer' },
+  { value: 'serp_analyzer',    label: 'SERP Analyzer' },
+  { value: 'seo_health',       label: 'SEO Health' },
+  { value: 'cwv',              label: 'Core Web Vitals' },
+  { value: 'eeat',             label: 'E-E-A-T' },
+  { value: 'schema',           label: 'Schema' },
+  { value: 'image_alt',        label: 'Image Alt' },
+  { value: 'headers',          label: 'Headers' },
+  { value: 'comparator',       label: 'URL Comparator' },
+  { value: 'internal_linking', label: 'Internal Linking' },
 ];
 
 function ToolBadge({ tool }) {
@@ -121,6 +135,10 @@ function RunDetail({ runId }) {
   if (data.tool === 'serp_analyzer') return <SerpDetail result={result} />;
   if (data.tool === 'seo_health') return <SeoHealthDetail result={result} />;
 
+  // Generic: tools that produce a markdown analysis (E-E-A-T, Schema, Comparator, Headers, Internal Linking)
+  const text = result.analysis || result.ai_analysis;
+  if (text) return <AnalysisDetail text={text} url={result.url} score={result.score} />;
+
   return (
     <pre style={{
       marginTop: 12, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.07)',
@@ -129,6 +147,26 @@ function RunDetail({ runId }) {
     }}>
       {JSON.stringify(result, null, 2)}
     </pre>
+  );
+}
+
+function AnalysisDetail({ text, url, score }) {
+  return (
+    <div style={{ marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {(url || score != null) && (
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          {url && <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: '0.78rem', color: '#E20071', wordBreak: 'break-all' }}>{url}</a>}
+          {score != null && <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Score: <b style={{ color: '#fff' }}>{score}/100</b></span>}
+        </div>
+      )}
+      <div style={{
+        background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.07)',
+        borderRadius: 8, padding: 12, fontSize: '0.78rem', color: '#cbd5e1',
+        maxHeight: 260, overflowY: 'auto', whiteSpace: 'pre-wrap', lineHeight: 1.6,
+      }}>
+        {String(text).slice(0, 1200)}{String(text).length > 1200 ? '…' : ''}
+      </div>
+    </div>
   );
 }
 
@@ -307,7 +345,7 @@ export default function History() {
           <Clock size={28} style={{ marginBottom: 10, opacity: 0.3 }} />
           <div>No runs yet.</div>
           <div style={{ fontSize: '0.78rem', marginTop: 4, opacity: 0.6 }}>
-            Results from FS Stealer and SERP Analyzer will appear here.
+            Results from your analyses across the platform will appear here.
           </div>
         </div>
       )}
