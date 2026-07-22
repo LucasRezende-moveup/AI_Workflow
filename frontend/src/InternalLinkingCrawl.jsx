@@ -371,7 +371,7 @@ export default function InternalLinkingCrawl() {
             {loading ? <><div className="loader" /> Parsing crawl…</> : '🐸 Audit Internal Links'}
           </button>
         )}
-        {error && <p style={{ marginTop: 14, color: '#f87171', fontSize: '0.85rem', textAlign: 'center', maxWidth: 480 }}>{error}</p>}
+        {error && <div className="banner banner-error mt-4" style={{ maxWidth: 480 }}>{error}</div>}
       </div>
       )}
 

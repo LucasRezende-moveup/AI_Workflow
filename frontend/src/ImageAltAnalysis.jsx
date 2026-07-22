@@ -98,7 +98,7 @@ export default function ImageAltAnalysis() {
         <button className="btn-primary w-full" onClick={handleAnalyze} disabled={loading || !url || !keyword}>
           {loading ? <><div className="loader" /> Analyzing Images...</> : '🚀 Run Analysis'}
         </button>
-        {error && <p className="mt-4 text-red-400">{error}</p>}
+        {error && <div className="banner banner-error mt-4">{error}</div>}
       </div>
 
       {result && (

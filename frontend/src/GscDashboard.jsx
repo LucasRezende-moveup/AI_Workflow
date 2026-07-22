@@ -56,11 +56,7 @@ function MetricCard({ icon: Icon, label, value, sub, color = 'var(--primary)' })
 
 function ErrorBanner({ msg }) {
   if (!msg) return null;
-  return (
-    <div style={{ padding: '12px 16px', borderRadius: 8, background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171', fontSize: '0.875rem' }}>
-      {msg}
-    </div>
-  );
+  return <div className="banner banner-error">{msg}</div>;
 }
 
 export default function GscDashboard() {

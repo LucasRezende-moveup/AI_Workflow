@@ -70,7 +70,7 @@ export default function SchemaAudit() {
         <button className="btn-primary w-full" onClick={handleAudit} disabled={loading || !url}>
           {loading ? <><div className="loader" /> Fetching Schema...</> : '🔍 Audit Schema'}
         </button>
-        {error && <p className="mt-4 text-red-400">{error}</p>}
+        {error && <div className="banner banner-error mt-4">{error}</div>}
       </div>
 
       {result && (

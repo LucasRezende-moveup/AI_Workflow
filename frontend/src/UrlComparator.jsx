@@ -149,7 +149,7 @@ export default function UrlComparator() {
         <button className="btn-primary w-full" onClick={handleCompare} disabled={loading || !keyword || !url1 || !url2}>
           {loading ? <><div className="loader" /> Scraping &amp; Analyzing...</> : '⚙️ Compare Pages'}
         </button>
-        {error && <p className="mt-4 text-red-400">{error}</p>}
+        {error && <div className="banner banner-error mt-4">{error}</div>}
       </div>
 
       {result && (

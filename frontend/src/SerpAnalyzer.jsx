@@ -97,7 +97,7 @@ export default function SerpAnalyzer() {
         <button className="btn-primary w-full" onClick={handleAnalyze} disabled={loading || !keyword}>
           {loading ? <><div className="loader" /> Fetching SERP Results...</> : '📱 Analyze Mobile SERP'}
         </button>
-        {error && <p className="mt-4 text-red-400">{error}</p>}
+        {error && <div className="banner banner-error mt-4">{error}</div>}
       </div>
 
       {result && (

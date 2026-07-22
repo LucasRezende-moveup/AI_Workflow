@@ -15,18 +15,26 @@ import History from './History';
 import Tracking from './Tracking';
 import './index.css';
 
-const NAV_ITEMS = [
-  { name: 'GSC Dashboard',      icon: <Activity size={17} /> },
-  { name: 'SEO Health',         icon: <BarChart2 size={17} /> },
-  { name: 'Indexation Control', icon: <Globe size={17} /> },
-  { name: 'Technical Auditor',  icon: <Settings size={17} /> },
-  { name: 'On-Page Auditor',    icon: <Layers size={17} /> },
-  { name: 'URL Comparator',     icon: <Link2 size={17} /> },
-  { name: 'Internal Linking',   icon: <LayoutDashboard size={17} /> },
-  { name: 'SERP Analyzer',      icon: <Search size={17} /> },
-  { name: 'FS Stealer',         icon: <Target size={17} /> },
-  { name: 'Tracking',           icon: <TrendingUp size={17} /> },
-  { name: 'History',            icon: <Clock size={17} /> },
+const NAV_GROUPS = [
+  { label: 'Monitor', items: [
+    { name: 'GSC Dashboard',      icon: <Activity size={17} /> },
+    { name: 'SEO Health',         icon: <BarChart2 size={17} /> },
+    { name: 'Tracking',           icon: <TrendingUp size={17} /> },
+    { name: 'Indexation Control', icon: <Globe size={17} /> },
+  ]},
+  { label: 'Audit', items: [
+    { name: 'Technical Auditor',  icon: <Settings size={17} /> },
+    { name: 'On-Page Auditor',    icon: <Layers size={17} /> },
+    { name: 'Internal Linking',   icon: <LayoutDashboard size={17} /> },
+    { name: 'URL Comparator',     icon: <Link2 size={17} /> },
+  ]},
+  { label: 'Research', items: [
+    { name: 'SERP Analyzer',      icon: <Search size={17} /> },
+    { name: 'FS Stealer',         icon: <Target size={17} /> },
+  ]},
+  { label: 'Account', items: [
+    { name: 'History',            icon: <Clock size={17} /> },
+  ]},
 ];
 
 function renderPage(page, user) {
@@ -221,7 +229,10 @@ export default function App() {
 
   // ── App shell ─────────────────────────────────────────────────────────────
   const isSuperAdmin = user.role === 'super-admin';
-  const visibleNav   = [...NAV_ITEMS, { name: isSuperAdmin ? 'Users' : 'My Account', icon: <UsersIcon size={17} /> }];
+  const accountItem  = { name: isSuperAdmin ? 'Users' : 'My Account', icon: <UsersIcon size={17} /> };
+  const visibleGroups = NAV_GROUPS.map(g =>
+    g.label === 'Account' ? { ...g, items: [...g.items, accountItem] } : g
+  );
 
   return (
     <div className="app-container">
@@ -235,14 +246,19 @@ export default function App() {
         </div>
 
         <div className="nav-menu">
-          {visibleNav.map(item => (
-            <div
-              key={item.name}
-              className={`nav-item ${activePage === item.name ? 'active' : ''}`}
-              onClick={() => setActivePage(item.name)}
-            >
-              {item.icon}
-              {item.name}
+          {visibleGroups.map(group => (
+            <div key={group.label} className="nav-group">
+              <div className="nav-group-label">{group.label}</div>
+              {group.items.map(item => (
+                <div
+                  key={item.name}
+                  className={`nav-item ${activePage === item.name ? 'active' : ''}`}
+                  onClick={() => setActivePage(item.name)}
+                >
+                  {item.icon}
+                  {item.name}
+                </div>
+              ))}
             </div>
           ))}
         </div>

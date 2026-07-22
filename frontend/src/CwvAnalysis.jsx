@@ -196,7 +196,7 @@ export default function CwvAnalysis() {
         <button className="btn-primary w-full" onClick={handleAnalyze} disabled={loading || !url}>
           {loading ? <><div className="loader" /> Running PageSpeed Insights...</> : '⚡ Analyze Core Web Vitals'}
         </button>
-        {error && <p className="mt-4 text-red-400">{error}</p>}
+        {error && <div className="banner banner-error mt-4">{error}</div>}
       </div>
 
       {result && (

@@ -257,7 +257,7 @@ export default function InternalLinking() {
             ? <><div className="loader" /> Scraping &amp; analyzing…</>
             : '🔍 Analyze Internal Links'}
         </button>
-        {error && <p style={{ marginTop: 14, color: '#f87171', fontSize: '0.85rem' }}>{error}</p>}
+        {error && <div className="banner banner-error mt-4">{error}</div>}
       </div>
 
       {result && derived && (

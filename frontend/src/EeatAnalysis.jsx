@@ -63,7 +63,7 @@ export default function EeatAnalysis() {
         <button className="btn-primary w-full" onClick={handleAnalyze} disabled={loading || !url}>
           {loading ? <><div className="loader" /> Fetching &amp; Analyzing...</> : '🚀 Start E-E-A-T Analysis'}
         </button>
-        {error && <p className="mt-4 text-red-400">{error}</p>}
+        {error && <div className="banner banner-error mt-4">{error}</div>}
       </div>
 
       {result && (

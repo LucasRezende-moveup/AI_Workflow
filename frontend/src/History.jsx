@@ -328,25 +328,13 @@ export default function History() {
         </div>
       )}
 
-      {error && (
-        <div style={{
-          padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem',
-          background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171',
-        }}>
-          {error}
-        </div>
-      )}
+      {error && <div className="banner banner-error">{error}</div>}
 
       {!loading && !error && runs.length === 0 && (
-        <div style={{
-          textAlign: 'center', padding: '60px 0',
-          color: 'var(--text-muted)', fontSize: '0.85rem',
-        }}>
-          <Clock size={28} style={{ marginBottom: 10, opacity: 0.3 }} />
-          <div>No runs yet.</div>
-          <div style={{ fontSize: '0.78rem', marginTop: 4, opacity: 0.6 }}>
-            Results from your analyses across the platform will appear here.
-          </div>
+        <div className="empty-state">
+          <Clock size={30} className="empty-icon" />
+          <div className="empty-title">No runs yet</div>
+          <div className="empty-hint">Results from your analyses across the platform will appear here.</div>
         </div>
       )}
 
