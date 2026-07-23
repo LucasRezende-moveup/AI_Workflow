@@ -242,7 +242,7 @@ export default function TechnicalAudit() {
               style={{
                 display: 'flex', alignItems: 'center', gap: 7,
                 padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: '0.9rem',
-                cursor: 'pointer', transition: 'all 0.15s',
+                cursor: 'pointer', transition: 'background 0.15s, color 0.15s, box-shadow 0.15s',
                 ...(isActive
                   ? { background: 'var(--primary)', color: 'white', border: '1px solid var(--primary)', boxShadow: '0 0 14px rgba(226,0,113,0.35)' }
                   : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }),

@@ -206,8 +206,8 @@ export default function LogAnalyzer({ onData } = {}) {
 
         <div className="grid grid-cols-3 gap-4 mb-4">
           <div>
-            <label className="metric-label mb-2 block">Log Site</label>
-            <select className="glass-input glass-select" value={selectedSite} onChange={e => setSelectedSite(e.target.value)}>
+            <label className="metric-label mb-2 block" htmlFor="log-site">Log Site</label>
+            <select id="log-site" aria-label="Log Site" className="glass-input glass-select" value={selectedSite} onChange={e => setSelectedSite(e.target.value)}>
               {Object.keys(sites).map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
@@ -246,7 +246,7 @@ export default function LogAnalyzer({ onData } = {}) {
             >
               {loading
                 ? <><div className="loader" /> Loading {Math.min(fileRange, availableFiles.length)} files…</>
-                : `🚀 Load & Analyze Logs`}
+                : <><span aria-hidden="true">🚀</span> Load & Analyze Logs</>}
             </button>
           </div>
         </div>
@@ -269,7 +269,7 @@ export default function LogAnalyzer({ onData } = {}) {
         {/* Log analysis: estimated progress */}
         {(loading || progress > 0) && (
           <div style={{ marginTop: 16 }}>
-            <div className="flex justify-between mb-2" style={{ fontSize: '0.82rem' }}>
+            <div className="flex justify-between mb-2" role="status" aria-live="polite" style={{ fontSize: '0.82rem' }}>
               <span style={{ color: 'var(--text-muted)' }}>
                 {loading ? `Downloading & parsing ${Math.min(fileRange, availableFiles.length)} files…` : '✓ Complete'}
               </span>
@@ -328,7 +328,7 @@ export default function LogAnalyzer({ onData } = {}) {
 
           {(analytics.cache_hits > 0 || analytics.files_parsed > 0) && (
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: -8 }}>
-              ⚡ {analytics.cache_hits > 0 && <><strong style={{ color: '#4ade80' }}>{analytics.cache_hits}</strong> day{analytics.cache_hits !== 1 ? 's' : ''} from cache</>}
+              <span aria-hidden="true">⚡</span> {analytics.cache_hits > 0 && <><strong style={{ color: '#4ade80' }}>{analytics.cache_hits}</strong> day{analytics.cache_hits !== 1 ? 's' : ''} from cache</>}
               {analytics.cache_hits > 0 && analytics.files_parsed > 0 && ' · '}
               {analytics.files_parsed > 0 && <><strong style={{ color: 'white' }}>{analytics.files_parsed}</strong> freshly parsed</>}
               {' '}— cached days load instantly without re-downloading.
@@ -340,30 +340,30 @@ export default function LogAnalyzer({ onData } = {}) {
             <h3 className="flex items-center gap-2 mb-4"><Filter size={18} /> Filter Results</h3>
             <div className="grid grid-cols-3 gap-4 mb-4">
               <div>
-                <label className="metric-label mb-2 block">Status Code</label>
-                <select className="glass-input glass-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                <label className="metric-label mb-2 block" htmlFor="log-status">Status Code</label>
+                <select id="log-status" aria-label="Status Code" className="glass-input glass-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
                   {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
               <div>
-                <label className="metric-label mb-2 block">Bot / Crawler</label>
-                <select className="glass-input glass-select" value={botFilter} onChange={e => { setBotFilter(e.target.value); setCustomUa(''); }}>
+                <label className="metric-label mb-2 block" htmlFor="log-bot">Bot / Crawler</label>
+                <select id="log-bot" aria-label="Bot / Crawler" className="glass-input glass-select" value={botFilter} onChange={e => { setBotFilter(e.target.value); setCustomUa(''); }}>
                   {BOT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
               <div>
-                <label className="metric-label mb-2 block">Custom User Agent</label>
-                <input className="glass-input" placeholder="contains…" value={customUa} onChange={e => { setCustomUa(e.target.value); setBotFilter('All'); }} />
+                <label className="metric-label mb-2 block" htmlFor="log-ua">Custom User Agent</label>
+                <input id="log-ua" aria-label="Custom User Agent" className="glass-input" placeholder="contains…" value={customUa} onChange={e => { setCustomUa(e.target.value); setBotFilter('All'); }} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="metric-label mb-2 block">Path Contains</label>
-                <input className="glass-input" placeholder="/apostas/" value={pathFilter} onChange={e => setPathFilter(e.target.value)} />
+                <label className="metric-label mb-2 block" htmlFor="log-path">Path Contains</label>
+                <input id="log-path" aria-label="Path Contains" className="glass-input" placeholder="/apostas/" value={pathFilter} onChange={e => setPathFilter(e.target.value)} />
               </div>
               <div>
-                <label className="metric-label mb-2 block">IP Address</label>
-                <input className="glass-input" placeholder="66.249." value={ipFilter} onChange={e => setIpFilter(e.target.value)} />
+                <label className="metric-label mb-2 block" htmlFor="log-ip">IP Address</label>
+                <input id="log-ip" aria-label="IP Address" className="glass-input" placeholder="66.249." value={ipFilter} onChange={e => setIpFilter(e.target.value)} />
               </div>
             </div>
             <div className="mt-3" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>

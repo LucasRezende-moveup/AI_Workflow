@@ -150,11 +150,13 @@ export default function App() {
     return () => clearInterval(id);
   }, [user]);
 
-  // Close bell dropdown on outside click
+  // Close bell dropdown on outside click or Escape
   useEffect(() => {
     function onDown(e) { if (bellRef.current && !bellRef.current.contains(e.target)) setBellOpen(false); }
+    function onKey(e) { if (e.key === 'Escape') setBellOpen(false); }
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, []);
 
   function handleLogout() {
@@ -184,32 +186,34 @@ export default function App() {
           }} />
           <div style={{ position: 'relative', zIndex: 1 }}>
             <div style={{ textAlign: 'center', marginBottom: 28 }}>
-              <img src={moveupLogo} alt="Moveup Media"
+              <img src={moveupLogo} alt="Moveup Media" width={72} height={72}
                 style={{ width: 72, height: 72, borderRadius: 14, marginBottom: 14, boxShadow: '0 0 24px rgba(226,0,113,0.4)' }} />
-              <div style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff' }}>Moveup Media</div>
+              <h1 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff' }}>Moveup Media</h1>
               <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: 3 }}>SEO Intelligence Platform</div>
             </div>
 
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 5 }}>Email</label>
+                <label htmlFor="login-email" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 5 }}>Email</label>
                 <input
-                  className="glass-input" type="email" required autoFocus
+                  id="login-email" className="glass-input" type="email" required autoFocus
+                  name="email" autoComplete="email" spellCheck={false}
                   placeholder="your@email.com"
                   value={email} onChange={e => setEmail(e.target.value)}
                 />
               </div>
               <div>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 5 }}>Password</label>
+                <label htmlFor="login-password" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 5 }}>Password</label>
                 <input
-                  className="glass-input" type="password" required
+                  id="login-password" className="glass-input" type="password" required
+                  name="password" autoComplete="current-password"
                   placeholder="••••••••"
                   value={password} onChange={e => setPassword(e.target.value)}
                 />
               </div>
 
               {loginError && (
-                <div style={{
+                <div role="alert" style={{
                   padding: '8px 12px', borderRadius: 6, fontSize: '0.82rem',
                   background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171',
                 }}>
@@ -250,23 +254,25 @@ export default function App() {
             <div key={group.label} className="nav-group">
               <div className="nav-group-label">{group.label}</div>
               {group.items.map(item => (
-                <div
+                <button
                   key={item.name}
+                  type="button"
                   className={`nav-item ${activePage === item.name ? 'active' : ''}`}
+                  aria-current={activePage === item.name ? 'page' : undefined}
                   onClick={() => setActivePage(item.name)}
                 >
-                  {item.icon}
+                  <span aria-hidden="true" style={{ display: 'flex' }}>{item.icon}</span>
                   {item.name}
-                </div>
+                </button>
               ))}
             </div>
           ))}
         </div>
 
         <div style={{ marginTop: 'auto' }}>
-          <div className="nav-item" onClick={handleLogout} style={{ color: 'var(--text-muted)' }}>
-            <LogOut size={16} /> Logout
-          </div>
+          <button type="button" className="nav-item" onClick={handleLogout} style={{ color: 'var(--text-muted)' }}>
+            <LogOut size={16} aria-hidden="true" /> Logout
+          </button>
         </div>
       </div>
 
@@ -278,15 +284,18 @@ export default function App() {
 
             {/* ── Notification bell ── */}
             <div ref={bellRef} style={{ position: 'relative' }}>
-              <button onClick={() => setBellOpen(v => !v)} style={{
+              <button onClick={() => setBellOpen(v => !v)}
+                aria-label={alerts.length ? `Notifications, ${alerts.length} unread` : 'Notifications'}
+                aria-haspopup="true" aria-expanded={bellOpen}
+                style={{
                 position: 'relative', background: 'rgba(255,255,255,0.05)',
                 border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
                 width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center',
                 cursor: 'pointer', color: alerts.length ? '#fff' : 'var(--text-muted)',
               }}>
-                <Bell size={15} />
+                <Bell size={15} aria-hidden="true" />
                 {alerts.length > 0 && (
-                  <span style={{
+                  <span aria-hidden="true" style={{
                     position: 'absolute', top: -4, right: -4,
                     width: 16, height: 16, borderRadius: '50%',
                     background: '#E20071', border: '2px solid var(--bg-dark)',
@@ -317,7 +326,7 @@ export default function App() {
                       No new alerts
                     </div>
                   ) : (
-                    <div style={{ maxHeight: 340, overflowY: 'auto' }}>
+                    <div className="overscroll-contain" style={{ maxHeight: 340, overflowY: 'auto' }}>
                       {alerts.map(a => {
                         const colors = { critical: '#f87171', warning: '#fb923c', info: '#38bdf8' };
                         const dot = colors[a.severity] || '#94a3b8';
@@ -328,12 +337,12 @@ export default function App() {
                         };
                         const src = SRC[a.source] || { label: a.source || 'Alert', page: 'Tracking' };
                         return (
-                          <div key={a.id} onClick={() => { setActivePage(src.page); setBellOpen(false); }}
-                            style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'flex-start' }}
+                          <button key={a.id} type="button" onClick={() => { setActivePage(src.page); setBellOpen(false); }}
+                            style={{ width: '100%', textAlign: 'left', font: 'inherit', color: 'inherit', background: 'transparent', padding: '10px 14px', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'flex-start' }}
                             onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
                             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                           >
-                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0, marginTop: 5 }} />
+                            <div aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0, marginTop: 5 }} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                                 <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.07)', padding: '1px 6px', borderRadius: 4, flexShrink: 0 }}>{src.label}</span>
@@ -341,7 +350,7 @@ export default function App() {
                               </div>
                               <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>{a.message}</div>
                             </div>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>

@@ -67,7 +67,7 @@ function HeaderAnalysis() {
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="metric-label mb-2 block">Page URL</label>
-            <input className="glass-input" placeholder="https://example.com/page" value={url} onChange={e => setUrl(e.target.value)} />
+            <input className="glass-input" type="url" placeholder="https://example.com/page" value={url} onChange={e => setUrl(e.target.value)} />
           </div>
           <div>
             <label className="metric-label mb-2 block">Target Keyword</label>
@@ -94,9 +94,9 @@ function HeaderAnalysis() {
         </div>
 
         <button className="btn-primary w-full" onClick={handleAnalyze} disabled={loading || !url || !keyword}>
-          {loading ? <><div className="loader" /> Fetching &amp; Analyzing…</> : '🔍 Analyze Headers'}
+          {loading ? <span role="status"><div className="loader" /> Fetching &amp; Analyzing…</span> : '🔍 Analyze Headers'}
         </button>
-        {error && <div className="banner banner-error mt-4">{error}</div>}
+        {error && <div className="banner banner-error mt-4" role="alert">{error}</div>}
       </div>
 
       {result && (
@@ -221,7 +221,7 @@ export default function OnPageAudit() {
               style={{
                 display: 'flex', alignItems: 'center', gap: 7,
                 padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: '0.9rem',
-                cursor: 'pointer', transition: 'all 0.15s',
+                cursor: 'pointer', transition: 'background 0.15s, color 0.15s, box-shadow 0.15s',
                 ...(isActive
                   ? { background: 'var(--primary)', color: 'white', border: '1px solid var(--primary)', boxShadow: '0 0 14px rgba(226,0,113,0.35)' }
                   : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }),

@@ -47,7 +47,7 @@ export default function SchemaAudit() {
       <div className="glass-panel">
         <h2 className="flex items-center gap-2 mb-6"><FileCode size={22} color="var(--primary)"/> Schema Validation & Audit</h2>
         <label className="metric-label mb-2 block">URL to Audit</label>
-        <input className="glass-input mb-4" placeholder="https://example.com/page" value={url} onChange={e => setUrl(e.target.value)} />
+        <input className="glass-input mb-4" type="url" placeholder="https://example.com/page" value={url} onChange={e => setUrl(e.target.value)} />
 
         <div className="mb-4">
           <button className="flex items-center gap-2 text-sm mb-3" style={{color: 'var(--text-muted)'}} onClick={() => setShowAuth(!showAuth)}>
@@ -68,9 +68,9 @@ export default function SchemaAudit() {
         </div>
 
         <button className="btn-primary w-full" onClick={handleAudit} disabled={loading || !url}>
-          {loading ? <><div className="loader" /> Fetching Schema...</> : '🔍 Audit Schema'}
+          {loading ? <span role="status"><div className="loader" /> Fetching Schema…</span> : '🔍 Audit Schema'}
         </button>
-        {error && <div className="banner banner-error mt-4">{error}</div>}
+        {error && <div className="banner banner-error mt-4" role="alert">{error}</div>}
       </div>
 
       {result && (
@@ -81,9 +81,12 @@ export default function SchemaAudit() {
 
           {result.blocks.map((block, i) => (
             <div key={i} className="glass-panel p-0 overflow-hidden">
-              <div
+              <button
+                type="button"
                 className="flex justify-between items-center p-4 cursor-pointer hover:bg-white/5"
                 onClick={() => toggleBlock(i)}
+                aria-expanded={!!expandedBlocks[i]}
+                style={{ background: 'none', border: 'none', width: '100%', textAlign: 'left', font: 'inherit', color: 'inherit', cursor: 'pointer' }}
               >
                 <h4 className="m-0">Schema Block {i + 1}
                   {block.types.length > 0 && (
@@ -93,7 +96,7 @@ export default function SchemaAudit() {
                   )}
                 </h4>
                 <span>{expandedBlocks[i] ? '▲' : '▼'}</span>
-              </div>
+              </button>
               {expandedBlocks[i] && (
                 <div className="p-4 border-t border-white/10">
                   <pre className="p-4 bg-black/30 rounded-lg text-sm font-mono overflow-x-auto text-gray-300 max-h-80 overflow-y-auto">

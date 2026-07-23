@@ -152,7 +152,7 @@ export default function CwvAnalysis() {
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="metric-label mb-2 block">Page URL</label>
-            <input className="glass-input" placeholder="https://example.com" value={url} onChange={e => setUrl(e.target.value)} />
+            <input className="glass-input" type="url" placeholder="https://example.com" value={url} onChange={e => setUrl(e.target.value)} />
           </div>
           <div>
             <label className="metric-label mb-2 block">Strategy</label>
@@ -194,9 +194,9 @@ export default function CwvAnalysis() {
         </div>
 
         <button className="btn-primary w-full" onClick={handleAnalyze} disabled={loading || !url}>
-          {loading ? <><div className="loader" /> Running PageSpeed Insights...</> : '⚡ Analyze Core Web Vitals'}
+          {loading ? <span role="status"><div className="loader" /> Running PageSpeed Insights…</span> : '⚡ Analyze Core Web Vitals'}
         </button>
-        {error && <div className="banner banner-error mt-4">{error}</div>}
+        {error && <div className="banner banner-error mt-4" role="alert">{error}</div>}
       </div>
 
       {result && (

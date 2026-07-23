@@ -3,6 +3,8 @@ import { Download, Globe, MousePointerClick, Eye, TrendingUp, BarChart2, Message
 import ReactMarkdown from 'react-markdown';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
+const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
 const SINGLE_CUTS = [
   { label: 'Query',   value: 'query' },
   { label: 'Page',    value: 'page' },
@@ -56,7 +58,7 @@ function MetricCard({ icon: Icon, label, value, sub, color = 'var(--primary)' })
 
 function ErrorBanner({ msg }) {
   if (!msg) return null;
-  return <div className="banner banner-error">{msg}</div>;
+  return <div className="banner banner-error" role="alert">{msg}</div>;
 }
 
 export default function GscDashboard() {
@@ -121,6 +123,14 @@ export default function GscDashboard() {
     fetchAhrefsProjects();
     fetch('/api/serp/geolocations').then(r => r.json()).then(d => setSerpTabLocations(d.geolocations || [])).catch(() => {});
   }, []);
+
+  // Close the keyword-history modal on Escape while it's open
+  useEffect(() => {
+    if (!kwModal) return;
+    const onKeyDown = (e) => { if (e.key === 'Escape') setKwModal(null); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [kwModal]);
 
   const fetchGscSites = async () => {
     try {
@@ -552,7 +562,7 @@ export default function GscDashboard() {
                     )}
                   </div>
                   <form onSubmit={handleChat} className="flex gap-4">
-                    <input className="glass-input" placeholder="Ask about the data…" value={chatInput} onChange={e => setChatInput(e.target.value)} disabled={chatLoading} />
+                    <input className="glass-input" aria-label="Ask about the data" placeholder="Ask about the data…" value={chatInput} onChange={e => setChatInput(e.target.value)} disabled={chatLoading} />
                     <button type="submit" className="btn-primary" disabled={chatLoading || !chatInput.trim()}>Send</button>
                   </form>
                 </div>
@@ -636,6 +646,8 @@ export default function GscDashboard() {
                       <tbody>
                         {topByTraffic.map((row, i) => (
                           <tr key={i} onClick={() => openKwHistory(row)} style={{ cursor: 'pointer' }}
+                            tabIndex={0} role="button"
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openKwHistory(row); } }}
                             onMouseEnter={e => e.currentTarget.style.background = 'rgba(226,0,113,0.08)'}
                             onMouseLeave={e => e.currentTarget.style.background = ''}>
                             <td><span style={{ fontWeight: 700, color: row.position <= 3 ? '#4ade80' : row.position <= 10 ? '#f59e0b' : 'var(--text-muted)' }}>#{row.position}</span></td>
@@ -669,6 +681,8 @@ export default function GscDashboard() {
                     {[...rankTracker].sort((a, b) => (a.position || 999) - (b.position || 999)).map((row, i) => (
                       <tr key={i} onClick={() => openKwHistory(row)}
                         style={{ cursor: 'pointer' }}
+                        tabIndex={0} role="button"
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openKwHistory(row); } }}
                         onMouseEnter={e => e.currentTarget.style.background = 'rgba(226,0,113,0.08)'}
                         onMouseLeave={e => e.currentTarget.style.background = ''}>
                         <td>
@@ -717,7 +731,7 @@ export default function GscDashboard() {
                             {row.difficulty}
                           </span>
                         </td>
-                        <td>{row.cpc ? `R$${row.cpc}` : '—'}</td>
+                        <td>{row.cpc ? BRL.format(Number(row.cpc) || 0) : '—'}</td>
                         <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.78rem', color: 'var(--text-muted)' }}>{row.parent_topic || '—'}</td>
                       </tr>
                     ))}
@@ -748,7 +762,7 @@ export default function GscDashboard() {
                         <td>{parseFloat(row.average_position || 0).toFixed(1)}</td>
                         <td>{parseFloat(row.share_of_voice || 0).toFixed(2)}%</td>
                         <td>{(row.traffic || 0).toLocaleString()}</td>
-                        <td>R${(row.traffic_value || 0).toLocaleString()}</td>
+                        <td>{BRL.format(Number(row.traffic_value) || 0)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -837,7 +851,7 @@ export default function GscDashboard() {
                       <button
                         key={i}
                         onClick={() => { setSerpTabKeyword(kw); setSerpTabData(null); }}
-                        style={{ padding: '5px 12px', borderRadius: 20, background: 'rgba(226,0,113,0.12)', border: '1px solid rgba(226,0,113,0.3)', color: 'var(--primary)', fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.2s' }}
+                        style={{ padding: '5px 12px', borderRadius: 20, background: 'rgba(226,0,113,0.12)', border: '1px solid rgba(226,0,113,0.3)', color: 'var(--primary)', fontSize: '0.82rem', cursor: 'pointer', transition: 'background-color 0.2s, border-color 0.2s' }}
                         onMouseEnter={e => e.currentTarget.style.background = 'rgba(226,0,113,0.25)'}
                         onMouseLeave={e => e.currentTarget.style.background = 'rgba(226,0,113,0.12)'}
                       >
@@ -914,9 +928,9 @@ export default function GscDashboard() {
 
       {/* ════════ Keyword History Modal ════════ */}
       {kwModal && (
-        <div onClick={() => setKwModal(null)}
+        <div onClick={() => setKwModal(null)} aria-hidden="true"
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div onClick={e => e.stopPropagation()}
+          <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true"
             style={{ background: 'var(--bg-card)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 820, maxHeight: '90vh', overflowY: 'auto' }}>
 
             {/* Header */}
@@ -925,7 +939,7 @@ export default function GscDashboard() {
                 <h3 style={{ marginBottom: 4 }}>{kwModal.keyword}</h3>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', maxWidth: 620, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{kwModal.url}</div>
               </div>
-              <button onClick={() => setKwModal(null)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}>
+              <button onClick={() => setKwModal(null)} aria-label="Close" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}>
                 <X size={20} />
               </button>
             </div>

@@ -40,7 +40,7 @@ export default function EeatAnalysis() {
       <div className="glass-panel">
         <h2 className="flex items-center gap-2 mb-6"><Award size={22} color="var(--primary)" /> E-E-A-T Analysis Settings</h2>
         <label className="metric-label mb-2 block">Page URL</label>
-        <input className="glass-input mb-4" placeholder="https://example.com/article" value={url} onChange={e => setUrl(e.target.value)} />
+        <input className="glass-input mb-4" type="url" placeholder="https://example.com/article" value={url} onChange={e => setUrl(e.target.value)} />
 
         <div className="mb-4">
           <button className="flex items-center gap-2 text-sm mb-3" style={{color: 'var(--text-muted)'}} onClick={() => setShowAuth(!showAuth)}>
@@ -61,9 +61,9 @@ export default function EeatAnalysis() {
         </div>
 
         <button className="btn-primary w-full" onClick={handleAnalyze} disabled={loading || !url}>
-          {loading ? <><div className="loader" /> Fetching &amp; Analyzing...</> : '🚀 Start E-E-A-T Analysis'}
+          {loading ? <span role="status"><div className="loader" /> Fetching &amp; Analyzing…</span> : '🚀 Start E-E-A-T Analysis'}
         </button>
-        {error && <div className="banner banner-error mt-4">{error}</div>}
+        {error && <div className="banner banner-error mt-4" role="alert">{error}</div>}
       </div>
 
       {result && (

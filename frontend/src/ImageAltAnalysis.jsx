@@ -58,7 +58,7 @@ export default function ImageAltAnalysis() {
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="metric-label mb-2 block">Page URL</label>
-            <input className="glass-input" placeholder="https://example.com/page" value={url} onChange={e => setUrl(e.target.value)} />
+            <input className="glass-input" type="url" placeholder="https://example.com/page" value={url} onChange={e => setUrl(e.target.value)} />
           </div>
           <div>
             <label className="metric-label mb-2 block">Target Keyword</label>
@@ -96,9 +96,9 @@ export default function ImageAltAnalysis() {
         </div>
 
         <button className="btn-primary w-full" onClick={handleAnalyze} disabled={loading || !url || !keyword}>
-          {loading ? <><div className="loader" /> Analyzing Images...</> : '🚀 Run Analysis'}
+          {loading ? <span role="status"><div className="loader" /> Analyzing Images…</span> : '🚀 Run Analysis'}
         </button>
-        {error && <div className="banner banner-error mt-4">{error}</div>}
+        {error && <div className="banner banner-error mt-4" role="alert">{error}</div>}
       </div>
 
       {result && (
@@ -115,7 +115,7 @@ export default function ImageAltAnalysis() {
               <div key={i} className="glass-panel">
                 <div className="flex gap-6">
                   <div style={{width: 140, flexShrink: 0}}>
-                    <img src={res.src} alt={res.alt || 'Image'} style={{width: '100%', borderRadius: 8, objectFit: 'cover', maxHeight: 120}} onError={e => { e.target.style.display = 'none'; }} />
+                    <img src={res.src} alt={res.alt || 'Image'} loading="lazy" width={140} height={120} style={{width: '100%', borderRadius: 8, objectFit: 'cover', maxHeight: 120}} onError={e => { e.target.style.display = 'none'; }} />
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">

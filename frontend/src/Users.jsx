@@ -58,7 +58,7 @@ function PasswordForm() {
       </div>
 
       {msg && (
-        <div style={{
+        <div role="alert" style={{
           padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem', marginBottom: 12,
           background: msg.type === 'ok' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
           border: `1px solid ${msg.type === 'ok' ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
@@ -69,7 +69,7 @@ function PasswordForm() {
       )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button type="submit" className="btn-primary" disabled={loading || !cur || !nw || !confirm}>
+        <button type="submit" className="btn-primary" disabled={loading}>
           {loading ? 'Updating…' : 'Update Password'}
         </button>
       </div>
@@ -237,11 +237,11 @@ export default function Users({ currentUser }) {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn-secondary" onClick={fetchUsers} disabled={loading}>
-            <RefreshCw size={14} />
+          <button className="btn-secondary" onClick={fetchUsers} disabled={loading} aria-label="Refresh users">
+            <RefreshCw size={14} aria-hidden="true" />
           </button>
           <button className="btn-secondary" onClick={() => setShowPw(v => !v)}>
-            <KeyRound size={14} /> My password
+            <KeyRound size={14} aria-hidden="true" /> My Password
           </button>
           <button className="btn-primary" onClick={() => setShowAdd(v => !v)}>
             <UserPlus size={15} /> Add User
@@ -276,7 +276,7 @@ export default function Users({ currentUser }) {
               <div>
                 <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 5 }}>Email *</label>
                 <input
-                  className="glass-input" type="email" required
+                  className="glass-input" type="email" required autoComplete="email"
                   placeholder="user@example.com"
                   value={addForm.email}
                   onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))}
@@ -294,7 +294,7 @@ export default function Users({ currentUser }) {
               <div>
                 <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 5 }}>Password *</label>
                 <input
-                  className="glass-input" type="password" required
+                  className="glass-input" type="password" required autoComplete="new-password"
                   placeholder="Minimum 8 characters"
                   value={addForm.password}
                   onChange={e => setAddForm(f => ({ ...f, password: e.target.value }))}
@@ -313,7 +313,7 @@ export default function Users({ currentUser }) {
               </div>
             </div>
             {addError && (
-              <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171', fontSize: '0.8rem', marginBottom: 12 }}>
+              <div role="alert" style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171', fontSize: '0.8rem', marginBottom: 12 }}>
                 {addError}
               </div>
             )}
@@ -377,7 +377,7 @@ export default function Users({ currentUser }) {
                       </td>
                       <td style={{ padding: '10px 20px' }}>
                         <input
-                          className="glass-input" type="password"
+                          className="glass-input" type="password" autoComplete="new-password"
                           style={{ padding: '6px 10px', fontSize: '0.82rem' }}
                           placeholder="New password (leave blank to keep)"
                           value={editForm.password}
@@ -392,8 +392,8 @@ export default function Users({ currentUser }) {
                           >
                             <Check size={13} /> Save
                           </button>
-                          <button className="btn-secondary" style={{ padding: '5px 10px' }} onClick={() => setEditId(null)}>
-                            <X size={13} />
+                          <button className="btn-secondary" style={{ padding: '5px 10px' }} onClick={() => setEditId(null)} aria-label="Cancel edit">
+                            <X size={13} aria-hidden="true" />
                           </button>
                         </div>
                       </td>
@@ -412,8 +412,8 @@ export default function Users({ currentUser }) {
                           >
                             <Trash2 size={13} /> {deleteLoading ? 'Deleting…' : 'Confirm'}
                           </button>
-                          <button className="btn-secondary" style={{ padding: '5px 10px' }} onClick={() => setDeleteId(null)}>
-                            <X size={13} />
+                          <button className="btn-secondary" style={{ padding: '5px 10px' }} onClick={() => setDeleteId(null)} aria-label="Cancel">
+                            <X size={13} aria-hidden="true" />
                           </button>
                         </div>
                       </td>
@@ -429,22 +429,22 @@ export default function Users({ currentUser }) {
                         <RoleBadge role={user.role} />
                       </td>
                       <td style={{ padding: '14px 20px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-                        {user.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                        {user.created_at ? new Date(user.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
                       </td>
                       <td style={{ padding: '14px 20px', textAlign: 'right' }}>
                         {user.id !== currentUser?.sub && (
                           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                             <button
                               className="btn-secondary" style={{ padding: '5px 10px' }}
-                              onClick={() => startEdit(user)}
+                              onClick={() => startEdit(user)} aria-label="Edit user"
                             >
-                              <Edit2 size={13} />
+                              <Edit2 size={13} aria-hidden="true" />
                             </button>
                             <button
                               className="btn-danger" style={{ padding: '5px 10px' }}
-                              onClick={() => setDeleteId(user.id)}
+                              onClick={() => setDeleteId(user.id)} aria-label="Delete user"
                             >
-                              <Trash2 size={13} />
+                              <Trash2 size={13} aria-hidden="true" />
                             </button>
                           </div>
                         )}

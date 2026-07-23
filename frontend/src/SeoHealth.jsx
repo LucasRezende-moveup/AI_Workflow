@@ -38,7 +38,7 @@ function dayLabel(ts) {
   const diff = Math.floor((now - d) / 86_400_000);
   if (diff === 0) return 'Today';
   if (diff === 1) return 'Yest.';
-  return d.toLocaleDateString('en-US', { weekday: 'short' });
+  return d.toLocaleDateString(undefined, { weekday: 'short' });
 }
 
 // ── Sparkline ─────────────────────────────────────────────────────────────────
@@ -344,9 +344,10 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
               {breakdown.length > 0 && (
                 <button
                   onClick={() => setShowBreakdown(v => !v)}
+                  aria-expanded={showBreakdown}
                   style={{ display: 'block', margin: '4px auto 0', fontSize: '0.65rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
                 >
-                  {showBreakdown ? 'hide' : 'why?'}
+                  {showBreakdown ? 'Hide' : 'Why?'}
                 </button>
               )}
             </div>
@@ -366,7 +367,7 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
           {/* Name + metadata */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <h3 style={{ marginBottom: 3, fontSize: '1.1rem' }}>{site.name}</h3>
-            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div role="status" style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {isLoading && <span style={{ color: 'var(--primary)' }}>Updating…</span>}
               {!isLoading && ts && <span>Updated {ts}</span>}
               {cached?.data?.sheets_read?.length > 0 && (
@@ -419,6 +420,7 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
         <>
           <button
             onClick={() => setExpanded(v => !v)}
+            aria-expanded={expanded}
             style={{
               display: 'flex', alignItems: 'center', gap: 6, width: '100%',
               padding: '9px 14px', borderRadius: 8, fontSize: '0.82rem', fontWeight: 600,
@@ -574,7 +576,7 @@ export default function SeoHealth() {
       )}
 
       {sitesError && (
-        <div className="glass-panel" style={{ color: '#f87171' }}>
+        <div role="alert" className="glass-panel" style={{ color: '#f87171' }}>
           Could not load site configuration: {sitesError}
         </div>
       )}

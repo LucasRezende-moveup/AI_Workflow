@@ -224,6 +224,7 @@ export default function InternalLinking() {
         <label className="metric-label mb-2 block">Target URLs (one per line)</label>
         <textarea
           className="glass-input mb-4"
+          aria-label="Target URLs (one per line)"
           rows={5}
           placeholder={"https://example.com/page1\nhttps://example.com/page2\nhttps://example.com/page3"}
           value={urlsText}
@@ -234,6 +235,7 @@ export default function InternalLinking() {
         <div className="mb-4">
           <button
             onClick={() => setShowAuth(v => !v)}
+            aria-expanded={showAuth}
             style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.83rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', marginBottom: 10 }}
           >
             🔒 Authentication (Optional) {showAuth ? '▲' : '▼'}
@@ -242,11 +244,11 @@ export default function InternalLinking() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="metric-label mb-2 block">Username</label>
-                <input className="glass-input" placeholder="user" value={authUser} onChange={e => setAuthUser(e.target.value)} />
+                <input className="glass-input" aria-label="Username" placeholder="user" value={authUser} onChange={e => setAuthUser(e.target.value)} />
               </div>
               <div>
                 <label className="metric-label mb-2 block">Password</label>
-                <input className="glass-input" type="password" placeholder="password" value={authPass} onChange={e => setAuthPass(e.target.value)} />
+                <input className="glass-input" type="password" aria-label="Password" placeholder="password" value={authPass} onChange={e => setAuthPass(e.target.value)} />
               </div>
             </div>
           )}
@@ -257,7 +259,7 @@ export default function InternalLinking() {
             ? <><div className="loader" /> Scraping &amp; analyzing…</>
             : '🔍 Analyze Internal Links'}
         </button>
-        {error && <div className="banner banner-error mt-4">{error}</div>}
+        {error && <div className="banner banner-error mt-4" role="alert">{error}</div>}
       </div>
 
       {result && derived && (
@@ -432,6 +434,7 @@ export default function InternalLinking() {
                     <div key={i} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, overflow: 'hidden' }}>
                       <button
                         onClick={() => setOpenAnchors(prev => ({ ...prev, [page.url]: !prev[page.url] }))}
+                        aria-expanded={isOpen}
                         style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', textAlign: 'left' }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -528,6 +531,7 @@ export default function InternalLinking() {
           <div className="glass-panel">
             <button
               onClick={() => setShowAI(v => !v)}
+              aria-expanded={showAI}
               style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', textAlign: 'left' }}
             >
               <h3 style={{ fontSize: '1rem', margin: 0 }}>AI Linking Strategy Analysis</h3>

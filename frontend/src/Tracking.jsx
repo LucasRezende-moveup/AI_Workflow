@@ -98,6 +98,7 @@ function TrackedRow({ item, onDelete, onCheck }) {
   const [history, setHistory]   = useState(null);
   const [checking, setChecking] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   async function loadHistory() {
     if (history) return;
@@ -131,7 +132,7 @@ function TrackedRow({ item, onDelete, onCheck }) {
       borderRadius: 10, overflow: 'hidden', transition: 'border-color 0.2s',
     }}
       onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'}
-      onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; setConfirmDelete(false); }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px' }}>
         {/* Position */}
@@ -168,22 +169,29 @@ function TrackedRow({ item, onDelete, onCheck }) {
 
         {/* Actions */}
         <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-          <button onClick={handleExpand} title="History" style={btnStyle}>
-            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          <button onClick={handleExpand} title="History" aria-label="View history" aria-expanded={expanded} style={btnStyle}>
+            {expanded ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
           </button>
-          <button onClick={handleCheck} disabled={checking} title="Re-check now" style={btnStyle}>
-            <RefreshCw size={13} style={{ animation: checking ? 'spin 1s linear infinite' : 'none' }} />
+          <button onClick={handleCheck} disabled={checking} title="Re-check now" aria-label="Re-check now" style={btnStyle}>
+            <RefreshCw size={13} aria-hidden="true" style={{ animation: checking ? 'spin 1s linear infinite' : 'none' }} />
           </button>
-          <button onClick={handleDelete} disabled={deleting} title="Remove" style={{ ...btnStyle, color: '#f87171' }}>
-            <Trash2 size={13} />
-          </button>
+          {confirmDelete ? (
+            <button onClick={handleDelete} disabled={deleting} title="Confirm delete" aria-label="Confirm delete keyword"
+              style={{ ...btnStyle, color: '#fff', background: 'rgba(248,113,113,0.9)', borderColor: 'rgba(248,113,113,0.9)', gap: 4, padding: '5px 9px', fontSize: '0.72rem' }}>
+              <Trash2 size={13} aria-hidden="true" /> Confirm
+            </button>
+          ) : (
+            <button onClick={() => setConfirmDelete(true)} disabled={deleting} title="Remove" aria-label="Delete keyword" style={{ ...btnStyle, color: '#f87171' }}>
+              <Trash2 size={13} aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
 
       {expanded && (
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', padding: '14px 16px' }}>
           {history === null ? (
-            <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading…</div>
+            <div role="status" style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading…</div>
           ) : (
             <PositionChart history={history} />
           )}
@@ -239,17 +247,17 @@ function AddForm({ onAdded, onClose }) {
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <span style={{ fontWeight: 600, fontSize: '0.88rem', color: '#fff' }}>Track a keyword</span>
-        <button onClick={onClose} style={{ ...btnStyle, padding: '3px 5px' }}><X size={13} /></button>
+        <button onClick={onClose} aria-label="Close" style={{ ...btnStyle, padding: '3px 5px' }}><X size={13} aria-hidden="true" /></button>
       </div>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <input className="glass-input" placeholder="Keyword *" required value={keyword} onChange={e => setKeyword(e.target.value)} />
-        <input className="glass-input" placeholder="Your URL (optional)" value={url} onChange={e => setUrl(e.target.value)} />
-        <select className="glass-input glass-select" value={location} onChange={e => setLocation(e.target.value)}>
+        <input className="glass-input" placeholder="Keyword *" aria-label="Keyword" required value={keyword} onChange={e => setKeyword(e.target.value)} />
+        <input className="glass-input" placeholder="Your URL (optional)" aria-label="Your URL (optional)" value={url} onChange={e => setUrl(e.target.value)} />
+        <select className="glass-input glass-select" aria-label="Geolocation" value={location} onChange={e => setLocation(e.target.value)}>
           {geoList.map(g => <option key={g} value={g}>{g}</option>)}
         </select>
         {error && <div style={{ fontSize: '0.78rem', color: '#f87171' }}>{error}</div>}
         <button type="submit" className="btn-primary" disabled={loading} style={{ padding: '9px', fontSize: '0.84rem' }}>
-          {loading ? 'Checking live SERP…' : 'Add & check now'}
+          {loading ? 'Checking live SERP…' : 'Add & Check Now'}
         </button>
       </form>
     </div>
@@ -313,8 +321,8 @@ export default function Tracking() {
           {items.length} keyword{items.length !== 1 ? 's' : ''} tracked
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={load} style={btnStyle}>
-            <RefreshCw size={13} />
+          <button onClick={load} aria-label="Refresh rankings" style={btnStyle}>
+            <RefreshCw size={13} aria-hidden="true" />
           </button>
           <button onClick={() => setShowForm(v => !v)} className="btn-primary"
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.82rem' }}>
@@ -326,13 +334,13 @@ export default function Tracking() {
       {showForm && <AddForm onAdded={handleAdded} onClose={() => setShowForm(false)} />}
 
       {error && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171' }}>
+        <div role="alert" style={{ padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171' }}>
           {error}
         </div>
       )}
 
       {loading && (
-        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Loading…</div>
+        <div role="status" style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Loading…</div>
       )}
 
       {!loading && !error && items.length === 0 && !showForm && (

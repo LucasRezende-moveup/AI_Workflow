@@ -103,8 +103,8 @@ export default function ScreamingFrog({ onData } = {}) {
       {!result ? (
         <>
           <div 
-            className={`glass-panel flex flex-col items-center justify-center p-12 transition-all ${isDragging ? 'border-primary' : ''}`}
-            style={{borderStyle: 'dashed', borderWidth: '2px', borderColor: isDragging ? 'var(--primary)' : 'rgba(255,255,255,0.2)'}}
+            className={`glass-panel flex flex-col items-center justify-center p-12 ${isDragging ? 'border-primary' : ''}`}
+            style={{borderStyle: 'dashed', borderWidth: '2px', borderColor: isDragging ? 'var(--primary)' : 'rgba(255,255,255,0.2)', transition: 'border-color 0.15s'}}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -124,19 +124,22 @@ export default function ScreamingFrog({ onData } = {}) {
             {file && <div className="mt-4 text-green-400 font-semibold">{file.name}</div>}
             {file && (
               <button className="btn-primary mt-4" style={{width: '100%', padding: '16px', fontSize: '1.1rem'}} onClick={handleAnalyze} disabled={loading}>
-                {loading ? <div className="loader"/> : "🚀 Start Analysis"}
+                {loading ? <div className="loader" role="status"/> : "🚀 Start Analysis"}
               </button>
             )}
           </div>
 
           <div className="glass-panel p-0 overflow-hidden">
-            <div 
+            <button
+              type="button"
               className="flex justify-between items-center p-4 cursor-pointer hover:bg-white/5"
               onClick={() => setCliOpen(!cliOpen)}
+              aria-expanded={cliOpen}
+              style={{ background: 'none', border: 'none', width: '100%', textAlign: 'left', font: 'inherit', color: 'inherit', cursor: 'pointer' }}
             >
               <h4 className="flex items-center gap-2 m-0"><Terminal size={18}/> CLI Automation & Headless Setup</h4>
               {cliOpen ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
-            </div>
+            </button>
             {cliOpen && (
               <div className="p-4 border-t border-white/10 flex gap-6">
                 <div className="flex-1">
@@ -150,8 +153,8 @@ export default function ScreamingFrog({ onData } = {}) {
                 </div>
                 <div className="flex-1">
                   <h5 className="mb-2">Command Generator</h5>
-                  <input className="glass-input mb-3" placeholder="Target URL" value={cliTarget} onChange={e => setCliTarget(e.target.value)} />
-                  <select className="glass-input glass-select mb-3" value={cliStorage} onChange={e => setCliStorage(e.target.value)}>
+                  <input className="glass-input mb-3" type="url" aria-label="Target URL" placeholder="Target URL" value={cliTarget} onChange={e => setCliTarget(e.target.value)} />
+                  <select className="glass-input glass-select mb-3" aria-label="Storage" value={cliStorage} onChange={e => setCliStorage(e.target.value)}>
                     <option value="Database">Database Storage</option>
                     <option value="Memory">Memory Storage</option>
                   </select>
@@ -199,7 +202,7 @@ export default function ScreamingFrog({ onData } = {}) {
             {!insights ? (
               <div className="text-center p-6">
                 <button className="btn-primary" onClick={getInsights} disabled={insightsLoading}>
-                  {insightsLoading ? <div className="loader"/> : "Generate AI Insights"}
+                  {insightsLoading ? <div className="loader" role="status"/> : "Generate AI Insights"}
                 </button>
                 <p className="mt-4 text-sm text-gray-400">Analyzes aggregate metrics and the top 50 URLs to find SEO opportunities.</p>
               </div>

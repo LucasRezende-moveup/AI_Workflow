@@ -89,6 +89,7 @@ export default function UrlComparator() {
           <Globe size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <select
             className="glass-input glass-select"
+            aria-label="Geolocation"
             style={{ flex: 1, padding: '6px 10px', fontSize: '0.82rem' }}
             value={serpLocation}
             onChange={e => setSerpLocation(e.target.value)}
@@ -121,7 +122,7 @@ export default function UrlComparator() {
           ].map((item, i) => (
             <div key={i}>
               <label className="metric-label mb-2 block">{item.label}</label>
-              <input className="glass-input mb-2" placeholder="https://example.com/page" value={item.url} onChange={e => item.setUrl(e.target.value)} />
+              <input className="glass-input mb-2" type="url" placeholder="https://example.com/page" value={item.url} onChange={e => item.setUrl(e.target.value)} />
               <label className="metric-label mb-1 block" style={{fontSize: '0.7rem'}}>SERP Position</label>
               <input type="number" className="glass-input" min={1} value={item.pos} onChange={e => item.setPos(Number(e.target.value))} />
             </div>
@@ -147,9 +148,9 @@ export default function UrlComparator() {
         </div>
 
         <button className="btn-primary w-full" onClick={handleCompare} disabled={loading || !keyword || !url1 || !url2}>
-          {loading ? <><div className="loader" /> Scraping &amp; Analyzing...</> : '⚙️ Compare Pages'}
+          {loading ? <span role="status"><div className="loader" /> Scraping &amp; Analyzing…</span> : '⚙️ Compare Pages'}
         </button>
-        {error && <div className="banner banner-error mt-4">{error}</div>}
+        {error && <div className="banner banner-error mt-4" role="alert">{error}</div>}
       </div>
 
       {result && (

@@ -19,7 +19,7 @@ function PaaItem({ question, answer }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ borderRadius: 8, border: '1px solid rgba(255,255,255,0.07)', overflow: 'hidden' }}>
-      <button onClick={() => setOpen(!open)} style={{
+      <button onClick={() => setOpen(!open)} aria-expanded={open} style={{
         width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         padding: '10px 13px', background: open ? 'rgba(255,255,255,0.04)' : 'transparent',
         border: 'none', color: 'var(--text-main)', cursor: 'pointer', textAlign: 'left', gap: 10,
@@ -71,7 +71,7 @@ function ExportButton({ onClick, icon: Icon, label, active }) {
       background: active ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)',
       border: active ? '1px solid rgba(74,222,128,0.4)' : '1px solid rgba(255,255,255,0.12)',
       color: active ? '#4ade80' : 'var(--text-muted)',
-      cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+      cursor: 'pointer', transition: 'background 0.15s, border-color 0.15s, color 0.15s', whiteSpace: 'nowrap',
     }}>
       <Icon size={13} />
       {label}
@@ -271,20 +271,20 @@ export default function FsStealer() {
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="metric-label mb-2 block">Target Keyword</label>
-            <input className="glass-input" placeholder="e.g. código promocional betano"
+            <input className="glass-input" aria-label="Target Keyword" placeholder="e.g. código promocional betano"
               value={keyword} onChange={e => setKeyword(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !loading && handleAnalyze()} />
           </div>
           <div>
             <label className="metric-label mb-2 block">URL you want to have the FS</label>
-            <input className="glass-input" placeholder="https://yoursite.com/page"
+            <input className="glass-input" aria-label="URL you want to have the FS" placeholder="https://yoursite.com/page"
               value={targetUrl} onChange={e => setTargetUrl(e.target.value)} />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="metric-label mb-2 block"><Globe size={12} style={{ display: 'inline', marginRight: 4 }} />Geolocation</label>
-            <select className="glass-input glass-select" value={location} onChange={e => setLocation(e.target.value)}>
+            <select className="glass-input glass-select" aria-label="Geolocation" value={location} onChange={e => setLocation(e.target.value)}>
               {geolocations.map(g => <option key={g} value={g}>{g}</option>)}
             </select>
           </div>
@@ -296,18 +296,18 @@ export default function FsStealer() {
           </div>
         </div>
         <div>
-          <button onClick={() => setShowAuth(!showAuth)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.82rem', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button onClick={() => setShowAuth(!showAuth)} aria-expanded={showAuth} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.82rem', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
             🔒 Auth for target URL (optional) {showAuth ? '▲' : '▼'}
           </button>
           {showAuth && (
             <div className="grid grid-cols-2 gap-4 mt-3">
               <div>
                 <label className="metric-label mb-2 block">Username</label>
-                <input className="glass-input" placeholder="user" value={authUser} onChange={e => setAuthUser(e.target.value)} />
+                <input className="glass-input" aria-label="Username" placeholder="user" value={authUser} onChange={e => setAuthUser(e.target.value)} />
               </div>
               <div>
                 <label className="metric-label mb-2 block">Password</label>
-                <input className="glass-input" type="password" placeholder="password" value={authPass} onChange={e => setAuthPass(e.target.value)} />
+                <input className="glass-input" type="password" aria-label="Password" placeholder="password" value={authPass} onChange={e => setAuthPass(e.target.value)} />
               </div>
             </div>
           )}
@@ -315,11 +315,11 @@ export default function FsStealer() {
       </div>
 
       {/* ── Error ── */}
-      {error && <div className="banner banner-error">{error}</div>}
+      {error && <div className="banner banner-error" role="alert">{error}</div>}
 
       {/* ── Loading ── */}
       {loading && (
-        <div className="glass-panel" style={{ padding: 48, textAlign: 'center' }}>
+        <div className="glass-panel" role="status" style={{ padding: 48, textAlign: 'center' }}>
           <div className="loader" style={{ width: 44, height: 44, borderWidth: 4, margin: '0 auto 20px' }} />
           <p style={{ color: 'var(--text-muted)', marginBottom: 8 }}>{phase || 'Starting analysis…'}</p>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Fetching live Google SERP and running AI analysis — takes 20–40 s</p>
@@ -359,7 +359,7 @@ export default function FsStealer() {
                   border: tracked ? '1px solid rgba(74,222,128,0.35)' : '1px solid rgba(226,0,113,0.35)',
                   background: tracked ? 'rgba(74,222,128,0.08)' : 'rgba(226,0,113,0.08)',
                   color: tracked ? '#4ade80' : 'var(--primary)',
-                  transition: 'all 0.2s',
+                  transition: 'background 0.2s, border-color 0.2s, color 0.2s',
                 }}
               >
                 {tracked ? <BookmarkCheck size={14} /> : <BookmarkPlus size={14} />}
@@ -447,7 +447,7 @@ export default function FsStealer() {
                       <button key={i} onClick={() => { setKeyword(kw); setResult(null); }} style={{
                         background: 'rgba(226,0,113,0.07)', border: '1px solid rgba(226,0,113,0.22)',
                         borderRadius: 20, padding: '4px 11px', fontSize: '0.78rem', color: 'var(--text-muted)',
-                        cursor: 'pointer', transition: 'all 0.15s',
+                        cursor: 'pointer', transition: 'background 0.15s, color 0.15s',
                       }}
                         onMouseEnter={e => { e.currentTarget.style.background = 'rgba(226,0,113,0.17)'; e.currentTarget.style.color = '#fff'; }}
                         onMouseLeave={e => { e.currentTarget.style.background = 'rgba(226,0,113,0.07)'; e.currentTarget.style.color = 'var(--text-muted)'; }}>

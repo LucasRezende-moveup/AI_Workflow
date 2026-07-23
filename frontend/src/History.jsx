@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Clock, Search, Target, RefreshCw, ChevronDown, ChevronUp, MapPin, Link } from 'lucide-react';
+import { Clock, RefreshCw, ChevronDown, ChevronUp, MapPin, Link } from 'lucide-react';
 
 const TOOL_META = {
   fs_stealer:       { label: 'FS Stealer',       color: '#E20071', bg: 'rgba(226,0,113,0.12)' },
@@ -15,7 +15,7 @@ const TOOL_META = {
 };
 
 const ALL_TOOLS = [
-  { value: '',                 label: 'All tools' },
+  { value: '',                 label: 'All Tools' },
   { value: 'fs_stealer',       label: 'FS Stealer' },
   { value: 'serp_analyzer',    label: 'SERP Analyzer' },
   { value: 'seo_health',       label: 'SEO Health' },
@@ -94,6 +94,7 @@ function RunCard({ run, onExpand, expanded }) {
 
         <button
           onClick={() => onExpand(run.id)}
+          aria-expanded={expanded}
           style={{
             background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
             borderRadius: 6, padding: '5px 8px', cursor: 'pointer', color: 'var(--text-muted)',
@@ -123,7 +124,7 @@ function RunDetail({ runId }) {
   }, [runId]);
 
   if (loading) return (
-    <div style={{ marginTop: 12, padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+    <div role="status" style={{ marginTop: 12, padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
       Loading…
     </div>
   );
@@ -301,6 +302,7 @@ export default function History() {
         <div style={{ display: 'flex', gap: 8 }}>
           {ALL_TOOLS.map(t => (
             <button key={t.value} onClick={() => { setToolFilter(t.value); setExpandedId(null); }}
+              aria-pressed={toolFilter === t.value}
               style={{
                 padding: '5px 12px', borderRadius: 6, fontSize: '0.78rem', cursor: 'pointer',
                 border: toolFilter === t.value ? '1px solid #E20071' : '1px solid rgba(255,255,255,0.1)',
@@ -328,7 +330,7 @@ export default function History() {
         </div>
       )}
 
-      {error && <div className="banner banner-error">{error}</div>}
+      {error && <div role="alert" className="banner banner-error">{error}</div>}
 
       {!loading && !error && runs.length === 0 && (
         <div className="empty-state">

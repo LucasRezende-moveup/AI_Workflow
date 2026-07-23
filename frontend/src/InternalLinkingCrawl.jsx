@@ -371,7 +371,7 @@ export default function InternalLinkingCrawl() {
             {loading ? <><div className="loader" /> Parsing crawl…</> : '🐸 Audit Internal Links'}
           </button>
         )}
-        {error && <div className="banner banner-error mt-4" style={{ maxWidth: 480 }}>{error}</div>}
+        {error && <div className="banner banner-error mt-4" role="alert" style={{ maxWidth: 480 }}>{error}</div>}
       </div>
       )}
 
@@ -444,38 +444,40 @@ export default function InternalLinkingCrawl() {
                     const open = !!openConflicts[c.anchor];
                     return (
                       <div key={i} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(245,158,11,0.15)', borderRadius: 8, overflow: 'hidden' }}>
-                        <button
-                          onClick={() => setOpenConflicts(p => ({ ...p, [c.anchor]: !p[c.anchor] }))}
-                          style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', textAlign: 'left' }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#d8d8e6' }}>"{c.anchor}"</span>
-                            <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '1px 8px', borderRadius: 10, background: 'rgba(245,158,11,.1)', color: '#f59e0b' }}>
-                              {c.destinations.length} destinations
-                            </span>
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{c.total} links</span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                            <span
-                              role="button"
-                              title="Show only this anchor's links in the table"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setAnchorExact(c.anchor);
-                                setQuery('');
-                                setStatusFilter('all');
-                                setPositionFilter('all');
-                                setOriginFilter('all');
-                                setPathQuery('');
-                                setPage(1);
-                              }}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: 'var(--text-muted)' }}
-                            >
-                              <Filter size={12} /> isolate
-                            </span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 14px' }}>
+                          <button
+                            type="button"
+                            onClick={() => setOpenConflicts(p => ({ ...p, [c.anchor]: !p[c.anchor] }))}
+                            aria-expanded={open}
+                            style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: 0, background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', textAlign: 'left' }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#d8d8e6' }}>"{c.anchor}"</span>
+                              <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '1px 8px', borderRadius: 10, background: 'rgba(245,158,11,.1)', color: '#f59e0b' }}>
+                                {c.destinations.length} destinations
+                              </span>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{c.total} links</span>
+                            </div>
                             {open ? <ChevronUp size={14} color="var(--text-muted)" /> : <ChevronDown size={14} color="var(--text-muted)" />}
-                          </div>
-                        </button>
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Isolate links with anchor "${c.anchor}"`}
+                            title="Show only this anchor's links in the table"
+                            onClick={() => {
+                              setAnchorExact(c.anchor);
+                              setQuery('');
+                              setStatusFilter('all');
+                              setPositionFilter('all');
+                              setOriginFilter('all');
+                              setPathQuery('');
+                              setPage(1);
+                            }}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0 }}
+                          >
+                            <Filter size={12} /> isolate
+                          </button>
+                        </div>
                         {open && (
                           <div style={{ padding: '0 14px 12px' }}>
                             {c.destinations.map((d, j) => (
@@ -513,7 +515,11 @@ export default function InternalLinkingCrawl() {
                 {anchorExact && (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, padding: '3px 6px 3px 10px', borderRadius: 20, background: 'rgba(245,158,11,.12)', color: '#f59e0b' }}>
                     anchor = "{anchorExact}"
-                    <X size={13} style={{ cursor: 'pointer' }} onClick={() => { setAnchorExact(''); setPage(1); }} />
+                    <button type="button" aria-label="Clear filter"
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'inline-flex' }}
+                      onClick={() => { setAnchorExact(''); setPage(1); }}>
+                      <X size={13} />
+                    </button>
                   </span>
                 )}
               </h3>
@@ -527,14 +533,18 @@ export default function InternalLinkingCrawl() {
                 <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                 <input
                   className="glass-input"
+                  aria-label="Filter by URL or anchor text"
                   style={{ paddingLeft: 34 }}
                   placeholder="Filter by URL or anchor text…"
                   value={query}
                   onChange={(e) => { setQuery(e.target.value); setPage(1); }}
                 />
                 {query && (
-                  <X size={14} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', cursor: 'pointer' }}
-                    onClick={() => { setQuery(''); setPage(1); }} />
+                  <button type="button" aria-label="Clear filter"
+                    style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'inline-flex' }}
+                    onClick={() => { setQuery(''); setPage(1); }}>
+                    <X size={14} />
+                  </button>
                 )}
               </div>
               <select
@@ -583,14 +593,18 @@ export default function InternalLinkingCrawl() {
                   <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                   <input
                     className="glass-input"
+                    aria-label="Filter by link path"
                     style={{ paddingLeft: 34 }}
                     placeholder="Filter by link path…"
                     value={pathQuery}
                     onChange={(e) => { setPathQuery(e.target.value); setPage(1); }}
                   />
                   {pathQuery && (
-                    <X size={14} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', cursor: 'pointer' }}
-                      onClick={() => { setPathQuery(''); setPage(1); }} />
+                    <button type="button" aria-label="Clear filter"
+                      style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'inline-flex' }}
+                      onClick={() => { setPathQuery(''); setPage(1); }}>
+                      <X size={14} />
+                    </button>
                   )}
                 </div>
               )}

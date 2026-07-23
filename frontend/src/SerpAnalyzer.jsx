@@ -66,14 +66,14 @@ export default function SerpAnalyzer() {
           </div>
           <div>
             <label className="metric-label mb-2 block">Geolocation</label>
-            <select className="glass-input glass-select" value={location} onChange={e => setLocation(e.target.value)}>
+            <select className="glass-input glass-select" aria-label="Geolocation" value={location} onChange={e => setLocation(e.target.value)}>
               {geolocations.map(g => <option key={g} value={g}>{g}</option>)}
             </select>
           </div>
         </div>
         <div className="mb-4">
           <label className="metric-label mb-2 block">Target URL (Optional — for gap analysis)</label>
-          <input className="glass-input" placeholder="https://yourpage.com/article" value={targetUrl} onChange={e => setTargetUrl(e.target.value)} />
+          <input className="glass-input" type="url" placeholder="https://yourpage.com/article" value={targetUrl} onChange={e => setTargetUrl(e.target.value)} />
         </div>
 
         <div className="mb-4">
@@ -95,9 +95,9 @@ export default function SerpAnalyzer() {
         </div>
 
         <button className="btn-primary w-full" onClick={handleAnalyze} disabled={loading || !keyword}>
-          {loading ? <><div className="loader" /> Fetching SERP Results...</> : '📱 Analyze Mobile SERP'}
+          {loading ? <span role="status"><div className="loader" /> Fetching SERP Results…</span> : '📱 Analyze Mobile SERP'}
         </button>
-        {error && <div className="banner banner-error mt-4">{error}</div>}
+        {error && <div className="banner banner-error mt-4" role="alert">{error}</div>}
       </div>
 
       {result && (
