@@ -43,7 +43,7 @@ export default function ContentFreshness() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
-  const [onlyStale, setOnlyStale] = useState(true);
+  const [onlyStale, setOnlyStale] = useState(false);
 
   useEffect(() => {
     fetch('/api/indexation/gsc-sites', { headers: { Authorization: `Bearer ${token()}` } })
@@ -165,7 +165,7 @@ export default function ContentFreshness() {
             <input className="glass-input" id="cf-threshold" type="number" min="0" inputMode="numeric"
               value={thresholdDays} onChange={e => setThresholdDays(e.target.value)} />
             <label className="metric-label mb-2 block mt-3" htmlFor="cf-limit">Max pages to check</label>
-            <input className="glass-input" id="cf-limit" type="number" min="1" max="300" inputMode="numeric"
+            <input className="glass-input" id="cf-limit" type="number" min="1" max="500" inputMode="numeric"
               value={limit} onChange={e => setLimit(e.target.value)} />
           </div>
         </div>

@@ -4239,7 +4239,7 @@ def freshness_check(req: FreshnessRequest):
         raise HTTPException(status_code=400, detail="No URLs found to check.")
 
     total_found = len(targets)
-    cap = min(max(req.limit, 1), 300)
+    cap = min(max(req.limit, 1), 500)
     targets = targets[:cap]
     auth = (req.auth_user, req.auth_pass) if req.auth_user else None
 
