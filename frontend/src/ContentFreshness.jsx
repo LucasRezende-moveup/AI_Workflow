@@ -36,6 +36,8 @@ export default function ContentFreshness() {
   const [sitemapUrl, setSitemapUrl] = useState('');
   const [thresholdDays, setThresholdDays] = useState(4);
   const [limit, setLimit] = useState(80);
+  const [include, setInclude] = useState('');
+  const [exclude, setExclude] = useState('');
   const [showAuth, setShowAuth] = useState(false);
   const [authUser, setAuthUser] = useState('');
   const [authPass, setAuthPass] = useState('');
@@ -70,6 +72,8 @@ export default function ContentFreshness() {
         if (!sitemapUrl.trim()) { setError('Paste a sitemap URL first.'); setLoading(false); return; }
         body.sitemap_url = sitemapUrl.trim();
       }
+      if (include.trim()) body.include = include.trim();
+      if (exclude.trim()) body.exclude = exclude.trim();
       if (showAuth && authUser) { body.auth_user = authUser; body.auth_pass = authPass; }
 
       const res = await fetch('/api/freshness/check', {
@@ -170,6 +174,24 @@ export default function ContentFreshness() {
           </div>
         </div>
 
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="metric-label mb-2 block" htmlFor="cf-include">Only crawl URLs containing</label>
+            <input className="glass-input" id="cf-include" aria-label="Only crawl URLs containing"
+              placeholder="e.g. /se/, /blog/  (comma-separated, matches any)"
+              value={include} onChange={e => setInclude(e.target.value)} />
+          </div>
+          <div>
+            <label className="metric-label mb-2 block" htmlFor="cf-exclude">Skip URLs containing</label>
+            <input className="glass-input" id="cf-exclude" aria-label="Skip URLs containing"
+              placeholder="e.g. /tag/, ?utm  (comma-separated)"
+              value={exclude} onChange={e => setExclude(e.target.value)} />
+          </div>
+          <div style={{ gridColumn: 'span 2', fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: -6 }}>
+            Filters run before crawling, so the page cap applies to the pages you keep. Leave blank to check the whole sitemap.
+          </div>
+        </div>
+
         <div className="mb-4">
           <button type="button" className="flex items-center gap-2 text-sm mb-3" style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
             onClick={() => setShowAuth(v => !v)} aria-expanded={showAuth}>
@@ -206,9 +228,14 @@ export default function ContentFreshness() {
             <StatCard label="Pages checked" value={result.checked} />
           </div>
 
+          {result.filtered && (
+            <div className="banner banner-info" role="note">
+              Filter matched {result.matched.toLocaleString()} of {result.sitemap_total.toLocaleString()} URLs in the sitemap.
+            </div>
+          )}
           {result.capped && (
             <div className="banner banner-info" role="note">
-              Checked the first {result.cap} of {result.total_urls.toLocaleString()} URLs in the sitemap. Raise “Max pages to check” to cover more.
+              Checked the first {result.cap} of {result.total_urls.toLocaleString()} {result.filtered ? 'matching' : 'sitemap'} URLs. Raise “Max pages to check” to cover more.
             </div>
           )}
 

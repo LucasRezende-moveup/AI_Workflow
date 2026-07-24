@@ -4212,6 +4212,8 @@ class FreshnessRequest(BaseModel):
     urls: Optional[List[str]] = None
     threshold_days: int = 4
     limit: int = 80
+    include: Optional[str] = None   # comma-separated substrings; keep URLs matching ANY
+    exclude: Optional[str] = None   # comma-separated substrings; drop URLs matching ANY
     auth_user: Optional[str] = None
     auth_pass: Optional[str] = None
 
@@ -4238,7 +4240,20 @@ def freshness_check(req: FreshnessRequest):
     if not targets:
         raise HTTPException(status_code=400, detail="No URLs found to check.")
 
-    total_found = len(targets)
+    # Pre-crawl filter: keep only the pages the user wants fetched, so the cap and
+    # crawl budget apply to the chosen subset (not the whole sitemap).
+    sitemap_total = len(targets)
+    inc = [p.strip().lower() for p in (req.include or "").split(",") if p.strip()]
+    exc = [p.strip().lower() for p in (req.exclude or "").split(",") if p.strip()]
+    if inc:
+        targets = [(u, lm) for (u, lm) in targets if any(p in u.lower() for p in inc)]
+    if exc:
+        targets = [(u, lm) for (u, lm) in targets if not any(p in u.lower() for p in exc)]
+    matched = len(targets)
+    if not targets:
+        raise HTTPException(status_code=400, detail=f"No URLs matched the filter (out of {sitemap_total} found).")
+
+    total_found = matched
     cap = min(max(req.limit, 1), 500)
     targets = targets[:cap]
     auth = (req.auth_user, req.auth_pass) if req.auth_user else None
@@ -4263,6 +4278,9 @@ def freshness_check(req: FreshnessRequest):
         "threshold_days": threshold,
         "checked": len(results),
         "total_urls": total_found,
+        "sitemap_total": sitemap_total,
+        "matched": matched,
+        "filtered": bool(inc or exc),
         "capped": total_found > cap,
         "cap": cap,
         "stale_count": len(stale),
