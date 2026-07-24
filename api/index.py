@@ -233,6 +233,17 @@ def _ensure_schema():
                     ALTER TABLE index_snapshots
                     ADD COLUMN IF NOT EXISTS important_not_indexed JSONB
                 """)
+                # Coverage context that URL-inspection alone can't give: how many URLs the
+                # sitemap submits, and how many pages actually receive search traffic (a
+                # provable-indexed floor). Lets the UI show an honest sample vs. an estimate.
+                cur.execute("""
+                    ALTER TABLE index_snapshots
+                    ADD COLUMN IF NOT EXISTS submitted INTEGER
+                """)
+                cur.execute("""
+                    ALTER TABLE index_snapshots
+                    ADD COLUMN IF NOT EXISTS pages_with_traffic INTEGER
+                """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS index_alerts (
                         id          TEXT PRIMARY KEY,
@@ -3698,6 +3709,30 @@ def _aggregate_inspection(rows: list) -> dict:
     }
 
 
+def _sitemap_submitted(site_slug: str) -> dict:
+    """Total URLs the site's sitemaps submit to Google, from the GSC Sitemaps report.
+    Google's API no longer returns the indexed count (always null), so we only trust
+    `submitted` here — it's the discovery denominator, not an indexed figure."""
+    try:
+        sms = _seo_get(f"gsc/{site_slug}/sitemaps") or []
+        if not isinstance(sms, list):
+            return {"submitted": None, "sitemap_count": 0}
+        submitted = sum(int(s.get("submitted") or 0) for s in sms)
+        return {"submitted": submitted or None, "sitemap_count": len(sms)}
+    except Exception:
+        return {"submitted": None, "sitemap_count": 0}
+
+
+def _pages_with_traffic(site_slug: str) -> Optional[int]:
+    """How many pages have received search impressions. A page can't get impressions
+    without being indexed, so this is a provable lower bound on indexed pages."""
+    try:
+        pages = _seo_get(f"gsc/{site_slug}/page") or []
+        return len(pages) if isinstance(pages, list) else None
+    except Exception:
+        return None
+
+
 def _norm_page(u: str) -> str:
     """Normalize a page URL for matching GSC vs URL-inspection rows (drop fragment, trailing slash, case)."""
     if not u:
@@ -3828,6 +3863,17 @@ def _snapshot_indexation_one(site_slug: str) -> dict:
 
     agg = _aggregate_inspection(rows)
     agg["important_not_indexed"] = _important_not_indexed(site_slug, rows)
+    # Coverage context beyond the (indexed-skewed) inspection sample.
+    sm = _sitemap_submitted(site_slug)
+    agg["submitted"] = sm.get("submitted")
+    agg["sitemap_count"] = sm.get("sitemap_count", 0)
+    agg["pages_with_traffic"] = _pages_with_traffic(site_slug)
+    # Estimated coverage: pages proven-indexed (via traffic) over URLs submitted.
+    # A conservative floor, explicitly not GSC's Pages-report figure.
+    if agg.get("submitted") and agg.get("pages_with_traffic") is not None:
+        agg["estimated_coverage"] = round(agg["pages_with_traffic"] / agg["submitted"] * 100, 1)
+    else:
+        agg["estimated_coverage"] = None
     today = datetime.now(timezone.utc).date()
 
     # Load the most recent prior snapshot (before today) to diff against
@@ -3855,18 +3901,19 @@ def _snapshot_indexation_one(site_slug: str) -> dict:
                     """INSERT INTO index_snapshots
                        (id, site_slug, snapshot_date, page_count, indexed_count, not_indexed_count,
                         pass_count, neutral_count, fail_count, canonical_mismatch_count, index_rate,
-                        important_not_indexed)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        important_not_indexed, submitted, pages_with_traffic)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                        ON CONFLICT (site_slug, snapshot_date) DO UPDATE SET
                         page_count=EXCLUDED.page_count, indexed_count=EXCLUDED.indexed_count,
                         not_indexed_count=EXCLUDED.not_indexed_count, pass_count=EXCLUDED.pass_count,
                         neutral_count=EXCLUDED.neutral_count, fail_count=EXCLUDED.fail_count,
                         canonical_mismatch_count=EXCLUDED.canonical_mismatch_count, index_rate=EXCLUDED.index_rate,
-                        important_not_indexed=EXCLUDED.important_not_indexed""",
+                        important_not_indexed=EXCLUDED.important_not_indexed,
+                        submitted=EXCLUDED.submitted, pages_with_traffic=EXCLUDED.pages_with_traffic""",
                     (str(uuid.uuid4()), site_slug, today, agg["page_count"], agg["indexed_count"],
                      agg["not_indexed_count"], agg["pass_count"], agg["neutral_count"], agg["fail_count"],
                      agg["canonical_mismatch_count"], agg["index_rate"],
-                     json.dumps(agg["important_not_indexed"])),
+                     json.dumps(agg["important_not_indexed"]), agg.get("submitted"), agg.get("pages_with_traffic")),
                 )
             conn.commit()
     except Exception as exc:
@@ -3917,7 +3964,7 @@ def indexation_history(site_slug: str, days: int = 60):
                 cur.execute(
                     """SELECT snapshot_date, page_count, indexed_count, not_indexed_count,
                               pass_count, neutral_count, fail_count, canonical_mismatch_count, index_rate,
-                              important_not_indexed
+                              submitted, pages_with_traffic, important_not_indexed
                        FROM index_snapshots WHERE site_slug = %s
                        ORDER BY snapshot_date DESC LIMIT %s""",
                     (site_slug, min(max(days, 1), 180)),
@@ -3932,6 +3979,8 @@ def indexation_history(site_slug: str, days: int = 60):
             r["snapshot_date"] = str(r["snapshot_date"])
         if r.get("index_rate") is not None:
             r["index_rate"] = float(r["index_rate"])
+        sub, traf = r.get("submitted"), r.get("pages_with_traffic")
+        r["estimated_coverage"] = round(traf / sub * 100, 1) if sub and traf is not None else None
         r.pop("important_not_indexed", None)
     rows.reverse()
     return {"history": rows, "important_not_indexed": latest_important or []}
@@ -3945,7 +3994,7 @@ def indexation_overview():
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT site_slug, snapshot_date, page_count, indexed_count, not_indexed_count,
-                           fail_count, index_rate, important_not_indexed,
+                           fail_count, index_rate, submitted, pages_with_traffic, important_not_indexed,
                            ROW_NUMBER() OVER (PARTITION BY site_slug ORDER BY snapshot_date DESC) AS rn
                     FROM index_snapshots
                 """)
@@ -3968,6 +4017,9 @@ def indexation_overview():
         p = prev.get(slug)
         delta = round(rate - float(p["index_rate"]), 1) if p and p.get("index_rate") is not None else None
         imp = r.get("important_not_indexed") or []
+        submitted = r.get("submitted")
+        traffic = r.get("pages_with_traffic")
+        est_cov = round(traffic / submitted * 100, 1) if submitted and traffic is not None else None
         out.append({
             "site_slug": slug,
             "snapshot_date": str(r["snapshot_date"]),
@@ -3977,12 +4029,247 @@ def indexation_overview():
             "fail_count": r["fail_count"],
             "index_rate": rate,
             "rate_delta": delta,
+            "submitted": submitted,
+            "pages_with_traffic": traffic,
+            "estimated_coverage": est_cov,
             "important_down": len(imp),
             "active_alerts": alert_counts.get(slug, 0),
         })
     # Needs-attention order: active alerts, then important pages down, then worst rate, then FAILs
     out.sort(key=lambda x: (-x["active_alerts"], -x["important_down"], x["index_rate"], -x["fail_count"]))
     return {"sites": out}
+
+
+# --- Content freshness monitor -------------------------------------------------
+# Flags pages whose content hasn't been updated recently, judged by the page's own
+# "last updated" signals: schema dateModified (most authoritative), then meta
+# modified-time tags, then sitemap <lastmod>, then the HTTP Last-Modified header.
+
+_FRESH_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
+
+
+def _parse_dt(s):
+    """Best-effort parse of the date formats these signals arrive in. Returns tz-aware UTC or None."""
+    if not s:
+        return None
+    s = str(s).strip()
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        pass
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d", "%a, %d %b %Y %H:%M:%S %Z",
+                "%a, %d %b %Y %H:%M:%S %z", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+    return None
+
+
+def _schema_dates(data):
+    """Walk a JSON-LD structure (dict / list / @graph) collecting (key, value) date fields."""
+    found = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k in ("dateModified", "datePublished"):
+                if o.get(k):
+                    found.append((k, o[k]))
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(data)
+    return found
+
+
+def _page_freshness(url, sitemap_lastmod=None, auth=None):
+    """Fetch one page and pick its 'content last updated' date by source priority."""
+    import json as _jl
+    candidates = {}  # source label -> datetime
+
+    def add(label, raw):
+        dt = _parse_dt(raw)
+        if dt:
+            candidates.setdefault(label, dt)
+
+    if sitemap_lastmod:
+        add("sitemap lastmod", sitemap_lastmod)
+
+    result = {"url": url, "last_modified": None, "source": None, "age_days": None,
+              "all_sources": {}, "error": None}
+    try:
+        resp = http_requests.get(url, headers=_FRESH_UA, timeout=12, auth=auth)
+        if resp.headers.get("Last-Modified"):
+            add("http last-modified", resp.headers["Last-Modified"])
+        if resp.ok and resp.text:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for attrs, label in [
+                ({"property": "article:modified_time"}, "meta article:modified_time"),
+                ({"property": "og:updated_time"}, "meta og:updated_time"),
+                ({"name": "last-modified"}, "meta last-modified"),
+                ({"itemprop": "dateModified"}, "meta itemprop dateModified"),
+            ]:
+                m = soup.find("meta", attrs=attrs)
+                if m and m.get("content"):
+                    add(label, m["content"])
+            for s in soup.find_all("script", type="application/ld+json"):
+                try:
+                    data = _jl.loads(s.string or "")
+                except Exception:
+                    continue
+                for (k, v) in _schema_dates(data):
+                    add(f"schema {k}", v)
+        elif not resp.ok:
+            result["error"] = f"HTTP {resp.status_code}"
+    except Exception as e:
+        result["error"] = str(e)[:200]
+
+    # Authority order — schema dateModified wins; HTTP Last-Modified (often just render
+    # time) and datePublished are last resorts.
+    priority = [
+        "schema dateModified", "meta article:modified_time", "meta itemprop dateModified",
+        "meta og:updated_time", "meta last-modified", "sitemap lastmod",
+        "http last-modified", "schema datePublished",
+    ]
+    chosen = next((p for p in priority if p in candidates), None)
+    if chosen is None and candidates:
+        chosen = next(iter(candidates))
+    if chosen:
+        dt = candidates[chosen]
+        result["last_modified"] = dt.isoformat()
+        result["source"] = chosen
+        result["age_days"] = (datetime.now(timezone.utc) - dt).days
+    result["all_sources"] = {k: v.isoformat() for k, v in candidates.items()}
+    return result
+
+
+def _sitemap_urls_with_lastmod(sitemap_url, max_urls=2000):
+    """Return [(loc, lastmod)] from a sitemap or sitemap index (recurses one level)."""
+    import xml.etree.ElementTree as ET
+
+    def _local(t):
+        return t.split("}")[-1].lower()
+
+    def _fetch(u):
+        r = http_requests.get(u, headers=_FRESH_UA, timeout=15)
+        r.raise_for_status()
+        return ET.fromstring(r.content)
+
+    def _read_urlset(root, out):
+        for url in root:
+            if _local(url.tag) != "url":
+                continue
+            loc = lastmod = None
+            for c in url:
+                lt = _local(c.tag)
+                if lt == "loc" and c.text:
+                    loc = c.text.strip()
+                elif lt == "lastmod" and c.text:
+                    lastmod = c.text.strip()
+            if loc:
+                out.append((loc, lastmod))
+            if len(out) >= max_urls:
+                break
+
+    try:
+        root = _fetch(sitemap_url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not fetch sitemap: {e}")
+
+    out = []
+    if _local(root.tag) == "sitemapindex":
+        child = []
+        for sm in root:
+            for c in sm:
+                if _local(c.tag) == "loc" and c.text:
+                    child.append(c.text.strip())
+        for cu in child[:30]:
+            if len(out) >= max_urls:
+                break
+            try:
+                _read_urlset(_fetch(cu), out)
+            except Exception:
+                pass
+    else:
+        _read_urlset(root, out)
+
+    seen, uniq = set(), []
+    for loc, lm in out:
+        if loc not in seen:
+            seen.add(loc)
+            uniq.append((loc, lm))
+    return uniq
+
+
+class FreshnessRequest(BaseModel):
+    site_slug: Optional[str] = None
+    sitemap_url: Optional[str] = None
+    urls: Optional[List[str]] = None
+    threshold_days: int = 4
+    limit: int = 80
+    auth_user: Optional[str] = None
+    auth_pass: Optional[str] = None
+
+
+@app.post("/api/freshness/check")
+def freshness_check(req: FreshnessRequest):
+    """Flag pages whose content hasn't been updated within `threshold_days`, using each
+    page's own last-updated signals (schema dateModified, meta tags, sitemap lastmod)."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Build the (url, sitemap_lastmod) work list.
+    if req.urls:
+        targets = [(u.strip(), None) for u in req.urls if u.strip()]
+    else:
+        sitemap_url = req.sitemap_url
+        if not sitemap_url and req.site_slug:
+            sms = _seo_get(f"gsc/{req.site_slug}/sitemaps") or []
+            paths = [s.get("path") for s in sms if isinstance(s, dict) and s.get("path")]
+            sitemap_url = paths[0] if paths else None
+        if not sitemap_url:
+            raise HTTPException(status_code=400, detail="Provide urls, a sitemap_url, or a site_slug that has a sitemap.")
+        targets = _sitemap_urls_with_lastmod(sitemap_url)
+
+    if not targets:
+        raise HTTPException(status_code=400, detail="No URLs found to check.")
+
+    total_found = len(targets)
+    cap = min(max(req.limit, 1), 300)
+    targets = targets[:cap]
+    auth = (req.auth_user, req.auth_pass) if req.auth_user else None
+
+    results = []
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futs = [ex.submit(_page_freshness, u, lm, auth) for (u, lm) in targets]
+        for f in as_completed(futs):
+            try:
+                results.append(f.result())
+            except Exception:
+                pass
+
+    threshold = max(int(req.threshold_days or 4), 0)
+    for r in results:
+        r["flagged"] = (r["age_days"] is None) or (r["age_days"] > threshold)
+    # Unknown-date pages first, then oldest → newest.
+    results.sort(key=lambda r: (r["age_days"] is not None, -(r["age_days"] or 0)))
+
+    stale = [r for r in results if r["flagged"]]
+    return {
+        "threshold_days": threshold,
+        "checked": len(results),
+        "total_urls": total_found,
+        "capped": total_found > cap,
+        "cap": cap,
+        "stale_count": len(stale),
+        "fresh_count": len(results) - len(stale),
+        "unknown_count": sum(1 for r in results if r["age_days"] is None),
+        "results": results,
+    }
 
 
 @app.get("/api/indexation/alerts")

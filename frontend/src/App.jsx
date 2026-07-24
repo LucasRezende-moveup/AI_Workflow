@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Activity, LayoutDashboard, Link2, Search, Layers, LogOut, Settings, Target, BarChart2, Globe, Users as UsersIcon, Clock, TrendingUp, Bell } from 'lucide-react';
+import { Activity, LayoutDashboard, Link2, Search, Layers, LogOut, Settings, Target, BarChart2, Globe, Users as UsersIcon, Clock, TrendingUp, Bell, CalendarClock } from 'lucide-react';
 import moveupLogo from './assets/logo.png';
 import GscDashboard from './GscDashboard';
 import TechnicalAudit from './TechnicalAudit';
@@ -13,6 +13,7 @@ import IndexationControl from './IndexationControl';
 import Users from './Users';
 import History from './History';
 import Tracking from './Tracking';
+import ContentFreshness from './ContentFreshness';
 import './index.css';
 
 const NAV_GROUPS = [
@@ -27,6 +28,7 @@ const NAV_GROUPS = [
     { name: 'On-Page Auditor',    icon: <Layers size={17} /> },
     { name: 'Internal Linking',   icon: <LayoutDashboard size={17} /> },
     { name: 'URL Comparator',     icon: <Link2 size={17} /> },
+    { name: 'Content Freshness',  icon: <CalendarClock size={17} /> },
   ]},
   { label: 'Research', items: [
     { name: 'SERP Analyzer',      icon: <Search size={17} /> },
@@ -49,6 +51,7 @@ function renderPage(page, user) {
     case 'SERP Analyzer':      return <SerpAnalyzer />;
     case 'FS Stealer':         return <FsStealer />;
     case 'Tracking':           return <Tracking />;
+    case 'Content Freshness':  return <ContentFreshness />;
     case 'History':            return <History />;
     case 'Users':
     case 'My Account':         return <Users currentUser={user} />;

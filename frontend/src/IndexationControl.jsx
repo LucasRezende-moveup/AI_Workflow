@@ -1107,7 +1107,8 @@ function IndexOverviewPanel({ sites, selectedSite, onSelect }) {
                   <th>Site</th>
                   <th style={{ textAlign: 'right' }}>Index rate</th>
                   <th style={{ textAlign: 'right' }}>Δ 1d</th>
-                  <th style={{ textAlign: 'right' }}>Indexed</th>
+                  <th style={{ textAlign: 'right' }} title="Indexed pages in the URL-inspection sample">Indexed</th>
+                  <th style={{ textAlign: 'right' }}>Est. cov.</th>
                   <th style={{ textAlign: 'right' }}>FAIL</th>
                   <th style={{ textAlign: 'right' }}>Top pages down</th>
                   <th style={{ textAlign: 'right' }}>Alerts</th>
@@ -1133,6 +1134,9 @@ function IndexOverviewPanel({ sites, selectedSite, onSelect }) {
                       </td>
                       <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
                         {(s.indexed_count || 0).toLocaleString()}<span style={{ color: 'var(--text-dim)' }}>/{(s.page_count || 0).toLocaleString()}</span>
+                      </td>
+                      <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                        {s.estimated_coverage != null ? s.estimated_coverage + '%' : '—'}
                       </td>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.fail_count > 0 ? '#f59e0b' : 'var(--text-dim)' }}>{s.fail_count || 0}</td>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.important_down > 0 ? '#f87171' : 'var(--text-dim)', fontWeight: s.important_down > 0 ? 700 : 400 }}>{s.important_down || 0}</td>
@@ -1224,17 +1228,41 @@ function IndexHealthPanel({ site }) {
           <div>
             <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 3 }}>Index Health</div>
             {latest ? (
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                <span style={{ fontSize: '1.9rem', fontWeight: 800, lineHeight: 1, color: rateColor(latest.index_rate) }}>{latest.index_rate}%</span>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                  {latest.indexed_count.toLocaleString()}/{latest.page_count.toLocaleString()} indexed
-                </span>
-                {delta != null && (
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : 'var(--text-muted)' }}>
-                    {delta > 0 ? '+' : ''}{delta} pts
-                  </span>
+              <>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: '1.9rem', fontWeight: 800, lineHeight: 1, color: rateColor(latest.index_rate) }}>{latest.index_rate}%</span>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Sample index rate</span>
+                  {delta != null && (
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : 'var(--text-muted)' }}>
+                      {delta > 0 ? '+' : ''}{delta} pts
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                  {latest.indexed_count.toLocaleString()} of {latest.page_count.toLocaleString()} inspected pages indexed <span style={{ color: 'var(--text-dim)' }}>(sample)</span>
+                </div>
+                {(latest.submitted != null || latest.estimated_coverage != null) && (
+                  <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginTop: 8 }}>
+                    {latest.submitted != null && (
+                      <div>
+                        <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 2 }}>Submitted (sitemap)</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#d8d8e6', fontVariantNumeric: 'tabular-nums' }}>{latest.submitted.toLocaleString()}</div>
+                      </div>
+                    )}
+                    {latest.estimated_coverage != null && (
+                      <div>
+                        <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 2 }}>Est. coverage</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#d8d8e6', fontVariantNumeric: 'tabular-nums' }}>{latest.estimated_coverage}%</div>
+                        {latest.pages_with_traffic != null && latest.submitted != null && (
+                          <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                            {latest.pages_with_traffic.toLocaleString()} of {latest.submitted.toLocaleString()} pages get search traffic
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
-              </div>
+              </>
             ) : (
               <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>No history yet — capture the first snapshot.</div>
             )}
@@ -1304,6 +1332,12 @@ function IndexHealthPanel({ site }) {
               <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>+{important.length - 8} more</span>
             )}
           </div>
+        </div>
+      )}
+
+      {latest && (
+        <div className="banner banner-info" role="note" style={{ marginTop: 14, fontSize: '0.74rem' }}>
+          These figures come from a URL-inspection sample (skewed toward already-indexed pages) plus sitemap data. Google no longer exposes the exact indexed count from its Pages report via API, so this won't match GSC's Coverage numbers exactly. “Est. coverage” counts pages that receive search traffic (provably indexed) against the URLs your sitemap submits — a conservative floor.
         </div>
       )}
     </div>
