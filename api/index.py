@@ -4087,8 +4087,26 @@ def _schema_dates(data):
     return found
 
 
-def _page_freshness(url, sitemap_lastmod=None, auth=None):
-    """Fetch one page and pick its 'content last updated' date by source priority."""
+def _gsc_crawl_map(site_slug):
+    """Map normalized page URL -> Google's last_crawl_time, from the site's URL-inspection
+    list (one upstream call for the whole site instead of one per page)."""
+    out = {}
+    try:
+        rows = _seo_get(f"gsc/{site_slug}/url-inspection") or []
+        if isinstance(rows, list):
+            for r in rows:
+                pu = r.get("page_url")
+                if pu:
+                    out[_norm_page(pu)] = r.get("last_crawl_time")
+    except Exception:
+        pass
+    return out
+
+
+def _page_freshness(url, sitemap_lastmod=None, auth=None, gsc_crawl_map=None, gsc_fallback=False):
+    """Fetch one page and pick its 'content last updated' date by source priority.
+    Also resolves Google's last crawl time (from a prefetched site map, or a per-URL
+    inspection lookup when no map is available)."""
     import json as _jl
     candidates = {}  # source label -> datetime
 
@@ -4101,6 +4119,7 @@ def _page_freshness(url, sitemap_lastmod=None, auth=None):
         add("sitemap lastmod", sitemap_lastmod)
 
     result = {"url": url, "last_modified": None, "source": None, "age_days": None,
+              "gsc_last_crawl": None, "gsc_crawl_age_days": None,
               "all_sources": {}, "error": None}
     try:
         resp = http_requests.get(url, headers=_FRESH_UA, timeout=12, auth=auth)
@@ -4145,6 +4164,23 @@ def _page_freshness(url, sitemap_lastmod=None, auth=None):
         result["source"] = chosen
         result["age_days"] = (datetime.now(timezone.utc) - dt).days
     result["all_sources"] = {k: v.isoformat() for k, v in candidates.items()}
+
+    # Google's last crawl: from the prefetched site map, else a per-URL inspection lookup.
+    gsc_crawl = None
+    if gsc_crawl_map is not None:
+        gsc_crawl = gsc_crawl_map.get(_norm_page(url))
+    if gsc_crawl is None and gsc_fallback:
+        try:
+            insp = _seo_get("gsc/url-inspection", {"url": url})
+            if isinstance(insp, dict):
+                gsc_crawl = insp.get("last_crawl_time")
+        except Exception:
+            pass
+    if gsc_crawl:
+        result["gsc_last_crawl"] = gsc_crawl
+        gdt = _parse_dt(gsc_crawl)
+        if gdt:
+            result["gsc_crawl_age_days"] = (datetime.now(timezone.utc) - gdt).days
     return result
 
 
@@ -4258,9 +4294,14 @@ def freshness_check(req: FreshnessRequest):
     targets = targets[:cap]
     auth = (req.auth_user, req.auth_pass) if req.auth_user else None
 
+    # Google last-crawl: one site-wide inspection call when we have a slug; otherwise
+    # fall back to per-URL inspection lookups inside each worker.
+    crawl_map = _gsc_crawl_map(req.site_slug) if req.site_slug else None
+    gsc_fallback = crawl_map is None
+
     results = []
     with ThreadPoolExecutor(max_workers=10) as ex:
-        futs = [ex.submit(_page_freshness, u, lm, auth) for (u, lm) in targets]
+        futs = [ex.submit(_page_freshness, u, lm, auth, crawl_map, gsc_fallback) for (u, lm) in targets]
         for f in as_completed(futs):
             try:
                 results.append(f.result())

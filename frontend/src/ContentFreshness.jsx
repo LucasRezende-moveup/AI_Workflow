@@ -93,12 +93,14 @@ export default function ContentFreshness() {
 
   function exportCsv() {
     if (!result) return;
-    const rows = [['URL', 'Last updated', 'Age (days)', 'Source', 'Status']];
+    const rows = [['URL', 'Last updated', 'Age (days)', 'Source', 'Google last crawl', 'Google crawl age (days)', 'Status']];
     result.results.forEach(r => rows.push([
       r.url,
       r.last_modified || '',
       r.age_days == null ? '' : r.age_days,
       r.source || '',
+      r.gsc_last_crawl || '',
+      r.gsc_crawl_age_days == null ? '' : r.gsc_crawl_age_days,
       r.flagged ? 'Stale' : 'Fresh',
     ]));
     const csv = rows.map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -272,6 +274,7 @@ export default function ContentFreshness() {
                       <th>Page</th>
                       <th>Last updated</th>
                       <th style={{ textAlign: 'right' }}>Age</th>
+                      <th title="The last time Google crawled this page (GSC URL inspection)">Google last crawl</th>
                       <th>Source</th>
                       <th style={{ textAlign: 'center' }}>Status</th>
                     </tr>
@@ -290,6 +293,13 @@ export default function ContentFreshness() {
                         <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.last_modified)}</td>
                         <td style={{ textAlign: 'right', fontWeight: 600, color: r.age_days == null ? '#f59e0b' : r.flagged ? '#f87171' : '#4ade80' }}>
                           {ageLabel(r.age_days)}
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {r.gsc_last_crawl ? (
+                            <span>{fmtDate(r.gsc_last_crawl)} <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem' }}>({ageLabel(r.gsc_crawl_age_days)} ago)</span></span>
+                          ) : (
+                            <span style={{ color: 'var(--text-dim)' }}>Not inspected</span>
+                          )}
                         </td>
                         <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{r.source || (r.error ? `error: ${r.error}` : '—')}</td>
                         <td style={{ textAlign: 'center' }}>
