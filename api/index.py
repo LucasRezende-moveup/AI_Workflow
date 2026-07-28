@@ -2831,8 +2831,10 @@ def cron_seo_health_snapshot(authorization: str = Header(None)):
     cwv_results = _snapshot_cwv_all()
     index_results = _snapshot_indexation_all()
     log_results = _check_log_404_all()
+    freshness_results = _check_freshness_all()
     return {"recorded": len(results), "results": results, "cwv": cwv_results,
-            "indexation": index_results, "log_404": log_results}
+            "indexation": index_results, "log_404": log_results,
+            "freshness": freshness_results}
 
 
 # --- CWV Analysis Endpoints ---
@@ -4254,19 +4256,19 @@ class FreshnessRequest(BaseModel):
     auth_pass: Optional[str] = None
 
 
-@app.post("/api/freshness/check")
-def freshness_check(req: FreshnessRequest):
-    """Flag pages whose content hasn't been updated within `threshold_days`, using each
-    page's own last-updated signals (schema dateModified, meta tags, sitemap lastmod)."""
+def _run_freshness(site_slug=None, sitemap_url=None, urls=None, threshold_days=4,
+                   limit=80, include=None, exclude=None, auth_user=None, auth_pass=None,
+                   resolve_gsc=True):
+    """Core freshness check shared by the API endpoint and the daily cron sweep.
+    Raises HTTPException on bad input (the endpoint surfaces it; the cron catches it)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Build the (url, sitemap_lastmod) work list.
-    if req.urls:
-        targets = [(u.strip(), None) for u in req.urls if u.strip()]
+    if urls:
+        targets = [(u.strip(), None) for u in urls if u.strip()]
     else:
-        sitemap_url = req.sitemap_url
-        if not sitemap_url and req.site_slug:
-            sms = _seo_get(f"gsc/{req.site_slug}/sitemaps") or []
+        if not sitemap_url and site_slug:
+            sms = _seo_get(f"gsc/{site_slug}/sitemaps") or []
             paths = [s.get("path") for s in sms if isinstance(s, dict) and s.get("path")]
             sitemap_url = paths[0] if paths else None
         if not sitemap_url:
@@ -4279,8 +4281,8 @@ def freshness_check(req: FreshnessRequest):
     # Pre-crawl filter: keep only the pages the user wants fetched, so the cap and
     # crawl budget apply to the chosen subset (not the whole sitemap).
     sitemap_total = len(targets)
-    inc = [p.strip().lower() for p in (req.include or "").split(",") if p.strip()]
-    exc = [p.strip().lower() for p in (req.exclude or "").split(",") if p.strip()]
+    inc = [p.strip().lower() for p in (include or "").split(",") if p.strip()]
+    exc = [p.strip().lower() for p in (exclude or "").split(",") if p.strip()]
     if inc:
         targets = [(u, lm) for (u, lm) in targets if any(p in u.lower() for p in inc)]
     if exc:
@@ -4290,14 +4292,15 @@ def freshness_check(req: FreshnessRequest):
         raise HTTPException(status_code=400, detail=f"No URLs matched the filter (out of {sitemap_total} found).")
 
     total_found = matched
-    cap = min(max(req.limit, 1), 500)
+    cap = min(max(limit, 1), 500)
     targets = targets[:cap]
-    auth = (req.auth_user, req.auth_pass) if req.auth_user else None
+    auth = (auth_user, auth_pass) if auth_user else None
 
     # Google last-crawl: one site-wide inspection call when we have a slug; otherwise
-    # fall back to per-URL inspection lookups inside each worker.
-    crawl_map = _gsc_crawl_map(req.site_slug) if req.site_slug else None
-    gsc_fallback = crawl_map is None
+    # fall back to per-URL inspection lookups inside each worker. Skipped entirely when
+    # resolve_gsc is False (the daily cron only needs content age, not crawl data).
+    crawl_map = _gsc_crawl_map(site_slug) if (resolve_gsc and site_slug) else None
+    gsc_fallback = resolve_gsc and crawl_map is None
 
     results = []
     with ThreadPoolExecutor(max_workers=10) as ex:
@@ -4308,7 +4311,7 @@ def freshness_check(req: FreshnessRequest):
             except Exception:
                 pass
 
-    threshold = max(int(req.threshold_days or 4), 0)
+    threshold = max(int(threshold_days or 4), 0)
     for r in results:
         r["flagged"] = (r["age_days"] is None) or (r["age_days"] > threshold)
     # Unknown-date pages first, then oldest → newest.
@@ -4329,6 +4332,81 @@ def freshness_check(req: FreshnessRequest):
         "unknown_count": sum(1 for r in results if r["age_days"] is None),
         "results": results,
     }
+
+
+@app.post("/api/freshness/check")
+def freshness_check(req: FreshnessRequest):
+    """Flag pages whose content hasn't been updated within `threshold_days`, using each
+    page's own last-updated signals (schema dateModified, meta tags, sitemap lastmod)."""
+    return _run_freshness(
+        site_slug=req.site_slug, sitemap_url=req.sitemap_url, urls=req.urls,
+        threshold_days=req.threshold_days, limit=req.limit,
+        include=req.include, exclude=req.exclude,
+        auth_user=req.auth_user, auth_pass=req.auth_pass,
+    )
+
+
+# --- Content-freshness daily sweep + Slack alert -------------------------------
+
+_FRESHNESS_SITES_DEFAULT = [
+    {"name": "Estado de Minas", "sitemap_url": "https://www.em.com.br/apostas/sitemap_index.xml"},
+    {"name": "Olhar Digital",   "sitemap_url": "https://olhardigital.com.br/apostas/sitemap_index.xml"},
+    {"name": "Netflu",          "sitemap_url": "https://netflu.com.br/apostas/sitemap_index.xml"},
+    {"name": "Netvasco",        "sitemap_url": "https://www.netvasco.com.br/apostas/sitemap_index.xml"},
+]
+
+
+def _check_freshness_all(sites: list = None) -> list:
+    """Sweep each configured site's sitemap for stale content and push a Slack summary.
+    Sites come from the FRESHNESS_SITES env (JSON list of {name, sitemap_url, threshold_days?,
+    limit?, include?, exclude?}) or the built-in default. Best-effort per site."""
+    if sites is None:
+        raw = os.getenv("FRESHNESS_SITES")
+        try:
+            sites = _json_mod.loads(raw) if raw else _FRESHNESS_SITES_DEFAULT
+        except Exception:
+            sites = _FRESHNESS_SITES_DEFAULT
+
+    summary, alert_blocks = [], []
+    for s in sites:
+        name = s.get("name") or s.get("sitemap_url") or "site"
+        thr = int(s.get("threshold_days", 4))
+        try:
+            out = _run_freshness(
+                site_slug=s.get("site_slug"), sitemap_url=s.get("sitemap_url"),
+                threshold_days=thr, limit=int(s.get("limit", 200)),
+                include=s.get("include"), exclude=s.get("exclude"),
+                resolve_gsc=False,
+            )
+        except Exception as e:
+            summary.append({"site": name, "error": str(e)[:200]})
+            continue
+
+        # Alert only on pages with a KNOWN age over the threshold (not "unknown date").
+        stale = [r for r in out["results"] if r["age_days"] is not None and r["age_days"] > thr]
+        stale.sort(key=lambda r: -(r["age_days"] or 0))
+        summary.append({"site": name, "checked": out["checked"], "stale": len(stale),
+                        "sitemap_total": out["sitemap_total"]})
+        if stale:
+            top = stale[:10]
+            lines = "\n".join(f"  • {r['url']} — {r['age_days']}d" for r in top)
+            more = f"\n  …and {len(stale) - len(top)} more" if len(stale) > len(top) else ""
+            alert_blocks.append(
+                f"*{name}* — {len(stale)} page(s) not updated in >{thr} days "
+                f"(of {out['checked']} checked):\n{lines}{more}"
+            )
+
+    if alert_blocks:
+        _notify_slack("🕒 *Content freshness alert*\n\n" + "\n\n".join(alert_blocks))
+    return summary
+
+
+@app.post("/api/cron/freshness-check")
+def cron_freshness_check(authorization: str = Header(None)):
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret and authorization != f"Bearer {cron_secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return {"results": _check_freshness_all()}
 
 
 @app.get("/api/indexation/alerts")
