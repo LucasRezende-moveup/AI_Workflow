@@ -4348,11 +4348,14 @@ def freshness_check(req: FreshnessRequest):
 
 # --- Content-freshness daily sweep + Slack alert -------------------------------
 
+# `exclude: "palpite"` skips dated match-prediction pages (Netvasco's /palpites/ folder
+# and Netflu's ...-palpites-... slugs) — they're tied to a past event date and never get
+# updated, so the alert focuses on evergreen pages (bonuses, apps, guides) that should stay current.
 _FRESHNESS_SITES_DEFAULT = [
-    {"name": "Estado de Minas", "sitemap_url": "https://www.em.com.br/apostas/sitemap_index.xml"},
-    {"name": "Olhar Digital",   "sitemap_url": "https://olhardigital.com.br/apostas/sitemap_index.xml"},
-    {"name": "Netflu",          "sitemap_url": "https://netflu.com.br/apostas/sitemap_index.xml"},
-    {"name": "Netvasco",        "sitemap_url": "https://www.netvasco.com.br/apostas/sitemap_index.xml"},
+    {"name": "Estado de Minas", "sitemap_url": "https://www.em.com.br/apostas/sitemap_index.xml", "exclude": "palpite"},
+    {"name": "Olhar Digital",   "sitemap_url": "https://olhardigital.com.br/apostas/sitemap_index.xml", "exclude": "palpite"},
+    {"name": "Netflu",          "sitemap_url": "https://netflu.com.br/apostas/sitemap_index.xml", "exclude": "palpite"},
+    {"name": "Netvasco",        "sitemap_url": "https://www.netvasco.com.br/apostas/sitemap_index.xml", "exclude": "palpite"},
 ]
 
 
