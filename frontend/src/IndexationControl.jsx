@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Globe, CheckCircle, AlertCircle, ArrowUpDown, ExternalLink, Filter, Map, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, ShieldAlert, RefreshCw, Link2, Download } from 'lucide-react';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -647,8 +648,9 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
         </table>
       </div>
 
-      {/* ── Floating tooltip ── */}
-      {tip && (
+      {/* ── Floating tooltip (portaled to <body> so position:fixed anchors to the
+             viewport, not the backdrop-filtered .glass-panel that wraps the grid) ── */}
+      {tip && createPortal((
         <div style={{
           position: 'fixed', left: tip.x + 14, top: tip.y - 10, zIndex: 9999,
           background: 'rgba(8,14,28,0.98)', border: '1px solid rgba(255,255,255,0.11)',
@@ -711,7 +713,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
             </div>
           )}
         </div>
-      )}
+      ), document.body)}
     </div>
   );
 }
