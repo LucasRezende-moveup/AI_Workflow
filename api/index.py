@@ -3193,6 +3193,25 @@ def fs_stealer_analyze(req: FsStealerRequest):
     related_keywords = serp.get("related_keywords", [])
     fs_holder = organic[0]
 
+    # Fetch the ACTUAL page content so recommendations reflect what the target already has.
+    # Without this, Gemini guesses from the URL alone and suggests changes already in place.
+    from concurrent.futures import ThreadPoolExecutor
+    _auth = (req.auth_user, req.auth_pass) if req.auth_user else None
+
+    def _safe_fetch(url, a=None):
+        try:
+            return _fetch_page_text(url, auth=a)
+        except Exception as e:
+            return f"[could not fetch this page: {str(e)[:120]}]"
+
+    with ThreadPoolExecutor(max_workers=2) as _ex:
+        _f_target = _ex.submit(_safe_fetch, target_url, _auth)
+        _f_holder = _ex.submit(_safe_fetch, fs_holder["link"])
+        target_content = _f_target.result()
+        holder_content = _f_holder.result()
+    target_excerpt = target_content[:12000]
+    holder_excerpt = holder_content[:8000]
+
     serp_context = "\n".join(
         f"#{i+1} — {r['title']}\n   URL: {r['link']}\n   Snippet: {r['snippet']}"
         for i, r in enumerate(organic[:5])
@@ -3219,6 +3238,12 @@ URL: {fs_holder["link"]}
 Title: {fs_holder["title"]}
 Snippet: {fs_holder["snippet"]}
 
+═══ TARGET PAGE — CURRENT LIVE CONTENT (source of truth for what already exists) ═══
+{target_excerpt}
+
+═══ FS HOLDER — CURRENT LIVE CONTENT ═══
+{holder_excerpt}
+
 FS TYPE WINNING STRATEGIES:
 - Paragraph FS → 40-60 word direct answer right after the H2/H3 matching the query.
 - Numbered List FS → <ol> with 5-8 steps under a "Como…"/"How to…" heading; each step ≤ 80 words.
@@ -3226,6 +3251,11 @@ FS TYPE WINNING STRATEGIES:
 - Table FS → <table> with clear caption and ≥2 columns; rows labeled with user-scanned keywords.
 
 ---
+
+CRITICAL RULES:
+1. The "TARGET PAGE — CURRENT LIVE CONTENT" above is the source of truth for what the page ALREADY has. Do NOT recommend anything already present there. If the target already has a direct answer, list, table, matching heading, schema, or covers a keyword, acknowledge it and SKIP it — never suggest adding what exists.
+2. Every action-plan step must close a REAL gap: something the FS holder does (visible in its content above) that the target genuinely lacks or does worse. If the target already matches or beats the holder on a factor, say "already optimized" and move on.
+3. If the target content shows "[could not fetch this page: …]", state that you could not read the live page and clearly label recommendations as unverified/general.
 
 Provide the Featured Snippet Steal Action Plan in clean Markdown:
 
@@ -3241,12 +3271,12 @@ One sentence confirming the {intent} intent and what content format Google rewar
 ## 🧩 Semantic Gap — Related Keywords Analysis
 | Related Keyword | Covered on Target Page? | Recommended Placement |
 |-----------------|------------------------|-----------------------|
-[5-7 rows — base "Covered?" on your knowledge of {target_url}]
+[5-7 rows — set "Covered?" to ✅/❌ based STRICTLY on the TARGET PAGE CURRENT LIVE CONTENT above. Only give a "Recommended Placement" for the ❌ (missing) rows.]
 
 ## 📊 Gap Analysis — Target vs FS Holder
 | Factor | FS Holder ({fs_holder["link"]}) | Target Page ({target_url}) | Priority |
 |--------|--------------------------------|---------------------------|----------|
-[rows: Direct answer placement, Content format, Word count of answer block, Header structure, Schema markup, Reading level, Mobile formatting, Semantic coverage]
+[Fill the Target Page column from its CURRENT LIVE CONTENT above (not assumptions). Rows: Direct answer placement, Content format, Word count of answer block, Header structure, Schema markup, Reading level, Mobile formatting, Semantic coverage. Set Priority to "—" / "already optimized" for any factor the target already handles well.]
 
 ## 🎯 Step-by-Step Action Plan
 [5-8 numbered steps. Each must have:
