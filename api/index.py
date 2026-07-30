@@ -286,6 +286,18 @@ def _ensure_schema():
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
+                # Remembers which pages are currently flagged stale per site, so the daily
+                # freshness alert only pings on NEWLY stale pages and self-heals when fixed.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS freshness_stale (
+                        site       TEXT NOT NULL,
+                        url        TEXT NOT NULL,
+                        age_days   INTEGER,
+                        first_seen TIMESTAMPTZ DEFAULT NOW(),
+                        last_seen  TIMESTAMPTZ DEFAULT NOW(),
+                        PRIMARY KEY (site, url)
+                    )
+                """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS serp_cache_created_idx ON serp_cache (created_at)
                 """)
@@ -2826,15 +2838,31 @@ def cron_seo_health_snapshot(authorization: str = Header(None)):
             results.append({"site": name, "score": out.get("score")})
         except Exception as e:
             results.append({"site": name, "error": str(e)})
-    # Piggyback the daily Core Web Vitals + indexation snapshots + log 404 check here
-    # to stay within Vercel's cron limit
-    cwv_results = _snapshot_cwv_all()
-    index_results = _snapshot_indexation_all()
-    log_results = _check_log_404_all()
-    freshness_results = _check_freshness_all()
+    # Piggyback the daily Core Web Vitals + indexation snapshots + log 404 check +
+    # content-freshness sweep here to stay within Vercel's cron limit. Each is isolated
+    # so one failure can't skip the others, and any failure is surfaced (return + Slack).
+    failures = {}
+
+    def _step(name, fn):
+        try:
+            return fn()
+        except Exception as e:
+            failures[name] = str(e)[:300]
+            return {"error": str(e)[:300]}
+
+    cwv_results       = _step("cwv", _snapshot_cwv_all)
+    index_results     = _step("indexation", _snapshot_indexation_all)
+    log_results       = _step("log_404", _check_log_404_all)
+    freshness_results = _step("freshness", _check_freshness_all)
+
+    if failures:
+        _notify_slack("⚠️ *Daily cron: step(s) failed*\n" +
+                      "\n".join(f"• {k}: {v}" for k, v in failures.items()))
+
     return {"recorded": len(results), "results": results, "cwv": cwv_results,
             "indexation": index_results, "log_404": log_results,
-            "freshness": freshness_results}
+            "freshness": freshness_results,
+            "failures": failures or None}
 
 
 # --- CWV Analysis Endpoints ---
@@ -4359,6 +4387,35 @@ _FRESHNESS_SITES_DEFAULT = [
 ]
 
 
+def _freshness_update_state(site, current):
+    """Upsert the current stale set for a site and return the URLs that are NEWLY stale
+    (present now, absent last run). Pages no longer stale are forgotten (self-healing).
+    Fails open (returns all current URLs, no dedup) if the DB is unavailable."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT url FROM freshness_stale WHERE site=%s", (site,))
+                existing = {row["url"] for row in cur.fetchall()}
+                new_urls = [u for u in current if u not in existing]
+                for u, age in current.items():
+                    cur.execute(
+                        """INSERT INTO freshness_stale (site, url, age_days, first_seen, last_seen)
+                           VALUES (%s,%s,%s,NOW(),NOW())
+                           ON CONFLICT (site, url) DO UPDATE SET age_days=EXCLUDED.age_days, last_seen=NOW()""",
+                        (site, u, age),
+                    )
+                # Forget pages that are fresh again so they can re-alert if they lapse later.
+                if current:
+                    cur.execute("DELETE FROM freshness_stale WHERE site=%s AND NOT (url = ANY(%s))",
+                                (site, list(current.keys())))
+                else:
+                    cur.execute("DELETE FROM freshness_stale WHERE site=%s", (site,))
+            conn.commit()
+        return set(new_urls)
+    except Exception:
+        return set(current.keys())
+
+
 def _check_freshness_all(sites: list = None) -> list:
     """Sweep each configured site's sitemap for stale content and push a Slack summary.
     Sites come from the FRESHNESS_SITES env (JSON list of {name, sitemap_url, threshold_days?,
@@ -4388,15 +4445,20 @@ def _check_freshness_all(sites: list = None) -> list:
         # Alert only on pages with a KNOWN age over the threshold (not "unknown date").
         stale = [r for r in out["results"] if r["age_days"] is not None and r["age_days"] > thr]
         stale.sort(key=lambda r: -(r["age_days"] or 0))
+        # Dedup against the last run: only ping on pages that became stale since then, and
+        # forget pages that are fresh again — so the daily alert stops repeating itself.
+        current = {r["url"]: r["age_days"] for r in stale}
+        new_stale = _freshness_update_state(name, current)
         summary.append({"site": name, "checked": out["checked"], "stale": len(stale),
-                        "sitemap_total": out["sitemap_total"]})
-        if stale:
-            top = stale[:10]
+                        "new_stale": len(new_stale), "sitemap_total": out["sitemap_total"]})
+        if new_stale:
+            newly = [r for r in stale if r["url"] in new_stale]
+            top = newly[:10]
             lines = "\n".join(f"  • {r['url']} — {r['age_days']}d" for r in top)
-            more = f"\n  …and {len(stale) - len(top)} more" if len(stale) > len(top) else ""
+            more = f"\n  …and {len(newly) - len(top)} more" if len(newly) > len(top) else ""
+            still = f" · {len(stale)} stale in total" if len(stale) > len(newly) else ""
             alert_blocks.append(
-                f"*{name}* — {len(stale)} page(s) not updated in >{thr} days "
-                f"(of {out['checked']} checked):\n{lines}{more}"
+                f"*{name}* — {len(newly)} newly stale page(s) (>{thr}d){still}:\n{lines}{more}"
             )
 
     if alert_blocks:
