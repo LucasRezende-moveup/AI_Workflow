@@ -16,11 +16,28 @@ function fmtPos(raw) {
   return isNaN(n) ? '—' : n.toFixed(1);
 }
 
+// Ensure a page URL ends with a trailing slash. Leaves file-like paths (…/sitemap.xml)
+// and the query/fragment untouched.
+function withSlash(url) {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    if (!u.pathname.endsWith('/') && !/\.[a-z0-9]{1,8}$/i.test(u.pathname)) {
+      u.pathname += '/';
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 function shortPath(url) {
   try {
     const { pathname, hostname } = new URL(url);
-    const path = pathname.replace(/\/$/, '') || '/';
-    return path === '/' ? hostname : path;
+    let path = pathname;
+    // keep/append a trailing slash on page paths; leave file paths (.xml, .html…) alone
+    if (!path.endsWith('/') && !/\.[a-z0-9]{1,8}$/i.test(path)) path += '/';
+    return path === '/' ? hostname + '/' : path;
   } catch {
     return url.length > 60 ? url.slice(0, 57) + '…' : url;
   }
@@ -423,10 +440,10 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                                           position: 'sticky', left: 0, zIndex: 1, background: ri % 2 === 0 ? 'rgba(8,14,28,0.98)' : 'rgba(15,22,40,0.98)',
                                           padding: '3px 12px 3px 0', maxWidth: 240,
                                         }}>
-                                          <a href={row.url} target="_blank" rel="noopener noreferrer"
+                                          <a href={withSlash(row.url)} target="_blank" rel="noopener noreferrer"
                                             onClick={e => e.stopPropagation()}
                                             style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--primary)', textDecoration: 'none' }}>
-                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.url}>{shortPath(row.url)}</span>
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={withSlash(row.url)}>{shortPath(row.url)}</span>
                                             <ExternalLink size={8} style={{ flexShrink: 0, opacity: 0.4 }} />
                                           </a>
                                         </td>
@@ -502,7 +519,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                           width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
                           background: coverageColor, boxShadow: `0 0 5px ${coverageColor}55`,
                         }} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'rgba(255,255,255,0.72)', fontSize: '0.75rem', flex: 1, minWidth: 0 }} title={row.url}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'rgba(255,255,255,0.72)', fontSize: '0.75rem', flex: 1, minWidth: 0 }} title={withSlash(row.url)}>
                           {shortPath(row.url)}
                         </span>
                         <span style={{ flexShrink: 0, color: 'rgba(255,255,255,0.25)', transition: 'transform 0.15s', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
@@ -574,9 +591,9 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                         <div style={{ padding: '14px 20px 14px 0' }}>
                           {/* URL header */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                            <a href={row.url} target="_blank" rel="noopener noreferrer"
+                            <a href={withSlash(row.url)} target="_blank" rel="noopener noreferrer"
                               style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--primary)', textDecoration: 'none', fontSize: '0.78rem', fontWeight: 600 }}>
-                              {row.url}
+                              {withSlash(row.url)}
                               <ExternalLink size={11} style={{ opacity: 0.6 }} />
                             </a>
                           </div>
@@ -840,7 +857,7 @@ function IndexVerdict({ selectedSite }) {
     };
     const header = ['Page URL', 'Verdict', 'Indexed', 'Coverage reason', 'Last crawl', 'Canonical mismatch'];
     const body = filtered.map(r => [
-      r.page_url, r.verdict, r.is_indexed ? 'Yes' : 'No',
+      withSlash(r.page_url), r.verdict, r.is_indexed ? 'Yes' : 'No',
       r.coverage_state, r.last_crawl_time, r.canonical_mismatch ? 'Yes' : 'No',
     ].map(esc).join(','));
     const blob = new Blob([[header.join(','), ...body].join('\n')], { type: 'text/csv;charset=utf-8' });
@@ -968,9 +985,9 @@ function IndexVerdict({ selectedSite }) {
                 {filtered.slice(0, 500).map((row, i) => (
                   <tr key={i}>
                     <td style={{ maxWidth: 300 }}>
-                      <a href={row.page_url} target="_blank" rel="noopener noreferrer"
+                      <a href={withSlash(row.page_url)} target="_blank" rel="noopener noreferrer"
                         style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--primary)', textDecoration: 'none', fontSize: '0.8rem' }}>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.page_url}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={withSlash(row.page_url)}>
                           {shortPath(row.page_url)}
                         </span>
                         <ExternalLink size={9} style={{ flexShrink: 0, opacity: 0.5 }} />
@@ -1323,7 +1340,7 @@ function IndexHealthPanel({ site }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {important.slice(0, 8).map((p, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.76rem', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                <a href={p.url} target="_blank" rel="noopener noreferrer" title={p.url}
+                <a href={withSlash(p.url)} target="_blank" rel="noopener noreferrer" title={withSlash(p.url)}
                   style={{ color: 'var(--primary)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {shortPath(p.url)}
                 </a>
@@ -1789,10 +1806,10 @@ export default function IndexationControl() {
                             style={{ cursor: 'pointer' }}
                           >
                             <td style={{ maxWidth: 280 }}>
-                              <a href={row.url} target="_blank" rel="noopener noreferrer"
+                              <a href={withSlash(row.url)} target="_blank" rel="noopener noreferrer"
                                 onClick={e => e.stopPropagation()}
                                 style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--primary)', textDecoration: 'none', fontSize: '0.8rem' }}>
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.url}>{shortPath(row.url)}</span>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={withSlash(row.url)}>{shortPath(row.url)}</span>
                                 <ExternalLink size={10} style={{ flexShrink: 0, opacity: 0.6 }} />
                               </a>
                             </td>
@@ -1943,9 +1960,9 @@ export default function IndexationControl() {
                         return (
                           <tr key={i}>
                             <td style={{ maxWidth: 340 }}>
-                              <a href={p.page} target="_blank" rel="noopener noreferrer"
+                              <a href={withSlash(p.page)} target="_blank" rel="noopener noreferrer"
                                 style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--primary)', textDecoration: 'none', fontSize: '0.8rem' }}>
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.page}>{shortPath(p.page)}</span>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={withSlash(p.page)}>{shortPath(p.page)}</span>
                                 <ExternalLink size={9} style={{ flexShrink: 0, opacity: 0.5 }} />
                               </a>
                             </td>
@@ -2078,9 +2095,9 @@ export default function IndexationControl() {
                       {filteredSitemapUrls.slice(0, 500).map((row, i) => (
                         <tr key={i}>
                           <td style={{ maxWidth: 340 }}>
-                            <a href={row.url} target="_blank" rel="noopener noreferrer"
+                            <a href={withSlash(row.url)} target="_blank" rel="noopener noreferrer"
                               style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--primary)', textDecoration: 'none', fontSize: '0.8rem' }}>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.url}>{shortPath(row.url)}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={withSlash(row.url)}>{shortPath(row.url)}</span>
                               <ExternalLink size={9} style={{ flexShrink: 0, opacity: 0.5 }} />
                             </a>
                           </td>
