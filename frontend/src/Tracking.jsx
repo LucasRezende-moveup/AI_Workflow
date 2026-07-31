@@ -45,32 +45,82 @@ function PositionBadge({ position }) {
   );
 }
 
-function PositionChart({ history }) {
+const SERP_PALETTE = ['#60a5fa', '#f59e0b', '#a78bfa', '#4ade80', '#f472b6', '#22d3ee', '#fb923c'];
+
+function PositionChart({ history, targetDomain }) {
   if (!history || history.length < 2) return (
     <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
       Need at least 2 checks to show a chart.
     </div>
   );
-  const data = history.map((r, i) => ({
-    i, position: r.position,
-    label: new Date(r.checked_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-    fs: r.fs_holder_domain,
+
+  // Rank domains that have appeared in the top 10 across snapshots (frequency, then best position).
+  const freq = {}, best = {};
+  history.forEach(s => (s.top_domains || []).forEach(t => {
+    if (!t.domain) return;
+    freq[t.domain] = (freq[t.domain] || 0) + 1;
+    best[t.domain] = Math.min(best[t.domain] ?? 99, t.position);
   }));
-  const positions = data.map(d => d.position).filter(p => p != null);
-  const minPos = Math.max(1, Math.min(...positions) - 1);
-  const maxPos = Math.min(20, Math.max(...positions) + 2);
+  const hasSerp = Object.keys(freq).length > 0;
+
+  // Fallback for old snapshots without top_domains: single line of our own position.
+  if (!hasSerp) {
+    const data = history.map(r => ({ label: new Date(r.checked_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), position: r.position }));
+    const positions = data.map(d => d.position).filter(p => p != null);
+    return (
+      <ResponsiveContainer width="100%" height={160}>
+        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+          <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(data.length / 5)} />
+          <YAxis domain={[Math.max(1, Math.min(...positions) - 1), Math.min(20, Math.max(...positions) + 2)]} reversed tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={v => `#${v}`} />
+          <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.78rem' }} labelStyle={{ color: '#94a3b8' }} formatter={v => [`#${v}`, 'Position']} />
+          <Line type="monotone" dataKey="position" stroke="#E20071" strokeWidth={2} dot={{ fill: '#E20071', r: 3 }} activeDot={{ r: 5 }} connectNulls={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  }
+
+  const tgt = targetDomain && freq[targetDomain] ? targetDomain : null;
+  const ranked = Object.keys(freq).sort((a, b) => (freq[b] - freq[a]) || (best[a] - best[b]));
+  const selected = [];
+  if (tgt) selected.push(tgt);
+  for (const d of ranked) { if (selected.length >= 6) break; if (d !== tgt) selected.push(d); }
+
+  const colors = {};
+  let ci = 0;
+  selected.forEach(d => { colors[d] = d === tgt ? '#E20071' : SERP_PALETTE[ci++ % SERP_PALETTE.length]; });
+
+  const data = history.map(s => {
+    const row = { label: new Date(s.checked_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
+    const map = {};
+    (s.top_domains || []).forEach(t => { map[t.domain] = t.position; });
+    selected.forEach(d => { row[d] = map[d] ?? null; });
+    return row;
+  });
+
   return (
-    <ResponsiveContainer width="100%" height={160}>
-      <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
-        <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(data.length / 5)} />
-        <YAxis domain={[minPos, maxPos]} reversed tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={v => `#${v}`} />
-        <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.78rem' }}
-          labelStyle={{ color: '#94a3b8' }} formatter={(val) => [`#${val}`, 'Position']} />
-        {positions.length > 0 && <ReferenceLine y={1} stroke="rgba(226,0,113,0.25)" strokeDasharray="4 3" />}
-        <Line type="monotone" dataKey="position" stroke="#E20071" strokeWidth={2}
-          dot={{ fill: '#E20071', r: 3, strokeWidth: 0 }} activeDot={{ r: 5, fill: '#E20071' }} connectNulls={false} />
-      </LineChart>
-    </ResponsiveContainer>
+    <div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+        {selected.map(d => (
+          <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: d === tgt ? '#fff' : 'var(--text-muted)', fontWeight: d === tgt ? 700 : 500 }}>
+            <span style={{ width: 11, height: 3, background: colors[d], borderRadius: 2, display: 'inline-block' }} />{d}{d === tgt ? ' (us)' : ''}
+          </span>
+        ))}
+      </div>
+      <ResponsiveContainer width="100%" height={200}>
+        <LineChart data={data} margin={{ top: 8, right: 10, bottom: 0, left: -20 }}>
+          <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(data.length / 6)} />
+          <YAxis domain={[1, 10]} reversed ticks={[1, 3, 5, 10]} tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={v => `#${v}`} allowDecimals={false} />
+          <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.76rem' }} labelStyle={{ color: '#94a3b8' }} formatter={(v, name) => [`#${v}`, name]} />
+          {selected.map(d => (
+            <Line key={d} type="monotone" dataKey={d} stroke={colors[d]} strokeWidth={d === tgt ? 2.5 : 1.5}
+              dot={{ fill: colors[d], r: d === tgt ? 3 : 2, strokeWidth: 0 }} activeDot={{ r: 4 }} connectNulls={false} />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+      <div style={{ fontSize: '0.64rem', color: 'var(--text-dim)', marginTop: 6, textAlign: 'center' }}>
+        Top domains in the SERP over time — a gap means the domain dropped out of the top 10 that day.
+      </div>
+    </div>
   );
 }
 
@@ -233,7 +283,7 @@ function TrackedRow({ item, onDelete, onCheck }) {
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', padding: '14px 16px' }}>
           {history === null
             ? <div role="status" style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading…</div>
-            : <PositionChart history={history} />}
+            : <PositionChart history={history} targetDomain={hostname(item.target_url)} />}
         </div>
       )}
     </div>
