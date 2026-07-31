@@ -773,7 +773,8 @@ def tracking_add(req: TrackingAddRequest, current_user=Depends(_decode_token)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     ranking = _run_tracking_check(tid, req.keyword.strip(), req.target_url, req.location)
-    return {"id": tid, "keyword": req.keyword.strip(), **ranking}
+    return {"id": tid, "keyword": req.keyword.strip(),
+            "target_url": req.target_url or None, "location": req.location, **ranking}
 
 
 @app.get("/api/tracking")
@@ -783,7 +784,7 @@ def tracking_list(current_user=Depends(_decode_token)):
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT kt.id, kt.keyword, kt.target_url, kt.location, kt.created_at,
-                           kr.position, kr.fs_holder_domain, kr.checked_at as last_checked
+                           kr.position, kr.ranking_url, kr.fs_holder_domain, kr.checked_at as last_checked
                     FROM keyword_tracking kt
                     LEFT JOIN LATERAL (
                         SELECT * FROM keyword_rankings

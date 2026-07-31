@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, RefreshCw, Trash2, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, Globe, Link, X } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, Globe, Link, X, Target } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 const API = (path, opts = {}) => {
@@ -10,6 +10,11 @@ const API = (path, opts = {}) => {
 function hostname(url) {
   if (!url) return '';
   try { return new URL(url).hostname.replace('www.', ''); } catch { return url; }
+}
+
+function urlPath(url) {
+  if (!url) return '';
+  try { const p = new URL(url).pathname; return p === '/' ? '/ (homepage)' : p; } catch { return url; }
 }
 
 function timeAgo(isoStr) {
@@ -140,15 +145,27 @@ function TrackedRow({ item, onDelete, onCheck }) {
           <PositionBadge position={item.position} />
         </div>
 
-        {/* Keyword + meta */}
+        {/* Keyword + target site + meta */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#fff', marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {item.keyword}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+              {item.keyword}
+            </span>
+            {/* Which site we're targeting to rank */}
+            {item.target_url ? (
+              <span title={item.target_url} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 700, color: 'var(--primary)', background: 'rgba(226,0,113,0.12)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 20, padding: '2px 9px', flexShrink: 0 }}>
+                <Target size={11} aria-hidden="true" /> {hostname(item.target_url)}
+              </span>
+            ) : (
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', fontStyle: 'italic', border: '1px dashed rgba(255,255,255,0.15)', borderRadius: 20, padding: '2px 9px', flexShrink: 0 }}>
+                no target site
+              </span>
+            )}
           </div>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            {item.target_url && (
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                <Link size={10} />{hostname(item.target_url)}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            {item.target_url && item.position != null && item.ranking_url && (
+              <span title={item.ranking_url} style={{ fontSize: '0.72rem', color: '#4ade80', display: 'flex', alignItems: 'center', gap: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 300 }}>
+                <Link size={10} aria-hidden="true" /> ranking page: {urlPath(item.ranking_url)}
               </span>
             )}
             {item.location && item.location !== 'Global (No Geolocation)' && (
@@ -251,7 +268,15 @@ function AddForm({ onAdded, onClose }) {
       </div>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <input className="glass-input" placeholder="Keyword *" aria-label="Keyword" required value={keyword} onChange={e => setKeyword(e.target.value)} />
-        <input className="glass-input" placeholder="Your URL (optional)" aria-label="Your URL (optional)" value={url} onChange={e => setUrl(e.target.value)} />
+        <div>
+          <input className="glass-input" type="url" style={{ width: '100%' }}
+            placeholder="Target site to rank — e.g. https://netvasco.com.br/apostas/…"
+            aria-label="Target site or page URL to rank"
+            value={url} onChange={e => setUrl(e.target.value)} />
+          <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', marginTop: 4 }}>
+            The site/page we want ranking — its position is tracked over time. Leave blank to only watch the Featured Snippet holder.
+          </div>
+        </div>
         <select className="glass-input glass-select" aria-label="Geolocation" value={location} onChange={e => setLocation(e.target.value)}>
           {geoList.map(g => <option key={g} value={g}>{g}</option>)}
         </select>
@@ -307,6 +332,7 @@ export default function Tracking() {
       target_url: data.target_url,
       location: data.location,
       position: data.position,
+      ranking_url: data.ranking_url,
       fs_holder_domain: data.fs_holder_domain,
       last_checked: new Date().toISOString(),
     }, ...prev]);
