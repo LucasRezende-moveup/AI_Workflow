@@ -181,6 +181,11 @@ def _ensure_schema():
                     CREATE INDEX IF NOT EXISTS keyword_rankings_tid_idx
                     ON keyword_rankings (tracking_id, checked_at DESC)
                 """)
+                # Top 3 organic domains for the keyword (who's winning the SERP), per snapshot.
+                cur.execute("""
+                    ALTER TABLE keyword_rankings
+                    ADD COLUMN IF NOT EXISTS top_domains JSONB
+                """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS alerts (
                         id          TEXT PRIMARY KEY,
@@ -609,6 +614,16 @@ class TrackingAddRequest(BaseModel):
     location: str = "Global (No Geolocation)"
 
 
+class TrackingBulkItem(BaseModel):
+    keyword: str
+    target_url: Optional[str] = None
+
+
+class TrackingBulkRequest(BaseModel):
+    items: List[TrackingBulkItem]
+    location: str = "Global (No Geolocation)"
+
+
 def _fire_alerts(tracking_id: str, keyword: str, prev: dict, curr: dict):
     """Compare two ranking snapshots and insert alert rows for significant changes."""
     from urllib.parse import urlparse
@@ -716,6 +731,16 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
     except Exception:
         pass
 
+    # Top 3 organic domains (with their positions) — who's winning this SERP.
+    top_domains = []
+    for i, r in enumerate(organic[:3]):
+        try:
+            dom = urlparse(r.get("link", "")).netloc.replace("www.", "")
+        except Exception:
+            dom = ""
+        if dom:
+            top_domains.append({"position": i + 1, "domain": dom})
+
     # Load previous snapshot before saving new one
     prev_snapshot = {}
     try:
@@ -738,9 +763,9 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
             with conn.cursor() as cur:
                 cur.execute(
                     """INSERT INTO keyword_rankings
-                       (id, tracking_id, position, ranking_url, fs_holder_url, fs_holder_domain, total_results)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                    (row_id, tracking_id, position, ranking_url, fs_url, fs_domain, len(organic))
+                       (id, tracking_id, position, ranking_url, fs_holder_url, fs_holder_domain, total_results, top_domains)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (row_id, tracking_id, position, ranking_url, fs_url, fs_domain, len(organic), json.dumps(top_domains))
                 )
             conn.commit()
     except Exception:
@@ -756,6 +781,7 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
         "fs_holder_url": fs_url,
         "fs_holder_domain": fs_domain,
         "total_results": len(organic),
+        "top_domains": top_domains,
     }
 
 
@@ -777,6 +803,53 @@ def tracking_add(req: TrackingAddRequest, current_user=Depends(_decode_token)):
             "target_url": req.target_url or None, "location": req.location, **ranking}
 
 
+@app.post("/api/tracking/bulk")
+def tracking_add_bulk(req: TrackingBulkRequest, current_user=Depends(_decode_token)):
+    """Add many keyword+target-URL pairs at once (deduped, capped at 50), then check
+    their live positions concurrently so they land with rankings already populated."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    seen, clean = set(), []
+    for it in req.items:
+        kw = (it.keyword or "").strip()
+        if not kw or kw.lower() in seen:
+            continue
+        seen.add(kw.lower())
+        clean.append((kw, ((it.target_url or "").strip() or None)))
+    clean = clean[:50]
+    if not clean:
+        raise HTTPException(status_code=400, detail="No valid keywords provided.")
+
+    rows = []
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                for kw, url in clean:
+                    tid = str(uuid.uuid4())
+                    cur.execute(
+                        "INSERT INTO keyword_tracking (id, keyword, target_url, location) VALUES (%s,%s,%s,%s)",
+                        (tid, kw, url, req.location),
+                    )
+                    rows.append((tid, kw, url))
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    def _chk(tid, kw, url):
+        base = {"id": tid, "keyword": kw, "target_url": url, "location": req.location}
+        try:
+            return {**base, **_run_tracking_check(tid, kw, url, req.location)}
+        except Exception as e:
+            return {**base, "error": str(e)[:150]}
+
+    out = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = [ex.submit(_chk, tid, kw, url) for (tid, kw, url) in rows]
+        for f in as_completed(futs):
+            out.append(f.result())
+    return {"added": len(out), "capped": len(req.items) > 50, "items": out}
+
+
 @app.get("/api/tracking")
 def tracking_list(current_user=Depends(_decode_token)):
     try:
@@ -784,7 +857,8 @@ def tracking_list(current_user=Depends(_decode_token)):
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT kt.id, kt.keyword, kt.target_url, kt.location, kt.created_at,
-                           kr.position, kr.ranking_url, kr.fs_holder_domain, kr.checked_at as last_checked
+                           kr.position, kr.ranking_url, kr.fs_holder_domain, kr.top_domains,
+                           kr.checked_at as last_checked
                     FROM keyword_tracking kt
                     LEFT JOIN LATERAL (
                         SELECT * FROM keyword_rankings

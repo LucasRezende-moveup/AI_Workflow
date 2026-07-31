@@ -173,15 +173,26 @@ function TrackedRow({ item, onDelete, onCheck }) {
                 <Globe size={10} />{item.location}
               </span>
             )}
-            {item.fs_holder_domain && (
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                FS: <span style={{ color: '#E20071' }}>{item.fs_holder_domain}</span>
-              </span>
-            )}
             <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
               checked {timeAgo(item.last_checked)}
             </span>
           </div>
+          {Array.isArray(item.top_domains) && item.top_domains.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 5 }}>
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Top 3</span>
+              {item.top_domains.map(t => {
+                const mine = item.target_url && t.domain === hostname(item.target_url);
+                return (
+                  <span key={t.position} style={{
+                    fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4,
+                    color: mine ? 'var(--primary)' : 'var(--text-muted)', fontWeight: mine ? 700 : 500,
+                  }}>
+                    <span style={{ fontSize: '0.62rem', opacity: 0.7, fontVariantNumeric: 'tabular-nums' }}>{t.position}.</span>{t.domain}{mine ? ' (us)' : ''}
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Actions */}
@@ -224,9 +235,18 @@ const btnStyle = {
   display: 'flex', alignItems: 'center', transition: 'background 0.15s',
 };
 
-function AddForm({ onAdded, onClose }) {
+function parseBulk(text) {
+  return text.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const parts = l.split(/\s*(?:[,|]|\t)\s*/);
+    return { keyword: (parts[0] || '').trim(), target_url: (parts[1] || '').trim() || null };
+  }).filter(x => x.keyword);
+}
+
+function AddForm({ onAdded, onBulkAdded, onClose }) {
+  const [mode,     setMode]     = useState('single');   // 'single' | 'bulk'
   const [keyword,  setKeyword]  = useState('');
   const [url,      setUrl]      = useState('');
+  const [bulkText, setBulkText] = useState('');
   const [location, setLocation] = useState('Global (No Geolocation)');
   const [geoList,  setGeoList]  = useState(['Global (No Geolocation)']);
   const [loading,  setLoading]  = useState(false);
@@ -238,51 +258,93 @@ function AddForm({ onAdded, onClose }) {
       .catch(() => {});
   }, []);
 
+  const bulkCount = mode === 'bulk' ? parseBulk(bulkText).length : 0;
+
   async function submit(e) {
     e.preventDefault();
-    if (!keyword.trim()) return;
-    setLoading(true); setError('');
-    try {
-      const res = await API('/api/tracking', {
-        method: 'POST',
-        body: JSON.stringify({ keyword: keyword.trim(), target_url: url.trim() || null, location }),
-      });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
-      const data = await res.json();
-      onAdded(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+    setError('');
+    if (mode === 'single') {
+      if (!keyword.trim()) return;
+      setLoading(true);
+      try {
+        const res = await API('/api/tracking', {
+          method: 'POST',
+          body: JSON.stringify({ keyword: keyword.trim(), target_url: url.trim() || null, location }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+        onAdded(await res.json());
+      } catch (err) { setError(err.message); } finally { setLoading(false); }
+    } else {
+      const items = parseBulk(bulkText);
+      if (!items.length) { setError('Add at least one keyword (one per line).'); return; }
+      setLoading(true);
+      try {
+        const res = await API('/api/tracking/bulk', {
+          method: 'POST',
+          body: JSON.stringify({ items, location }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+        const data = await res.json();
+        onBulkAdded(data.items || []);
+      } catch (err) { setError(err.message); } finally { setLoading(false); }
     }
   }
+
+  const tabStyle = active => active ? { padding: '5px 14px', fontSize: '0.8rem' } : {
+    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+    color: 'var(--text-muted)', padding: '5px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem',
+  };
 
   return (
     <div style={{
       background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(226,0,113,0.3)',
       borderRadius: 12, padding: '18px 20px', marginBottom: 4,
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <span style={{ fontWeight: 600, fontSize: '0.88rem', color: '#fff' }}>Track a keyword</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <span style={{ fontWeight: 600, fontSize: '0.88rem', color: '#fff' }}>Track keywords</span>
         <button onClick={onClose} aria-label="Close" style={{ ...btnStyle, padding: '3px 5px' }}><X size={13} aria-hidden="true" /></button>
       </div>
+
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+        <button type="button" onClick={() => setMode('single')} aria-pressed={mode === 'single'}
+          className={mode === 'single' ? 'btn-primary' : ''} style={tabStyle(mode === 'single')}>Single</button>
+        <button type="button" onClick={() => setMode('bulk')} aria-pressed={mode === 'bulk'}
+          className={mode === 'bulk' ? 'btn-primary' : ''} style={tabStyle(mode === 'bulk')}>Bulk</button>
+      </div>
+
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <input className="glass-input" placeholder="Keyword *" aria-label="Keyword" required value={keyword} onChange={e => setKeyword(e.target.value)} />
-        <div>
-          <input className="glass-input" type="url" style={{ width: '100%' }}
-            placeholder="Target site to rank — e.g. https://netvasco.com.br/apostas/…"
-            aria-label="Target site or page URL to rank"
-            value={url} onChange={e => setUrl(e.target.value)} />
-          <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', marginTop: 4 }}>
-            The site/page we want ranking — its position is tracked over time. Leave blank to only watch the Featured Snippet holder.
+        {mode === 'single' ? (
+          <>
+            <input className="glass-input" placeholder="Keyword *" aria-label="Keyword" required value={keyword} onChange={e => setKeyword(e.target.value)} />
+            <div>
+              <input className="glass-input" type="url" style={{ width: '100%' }}
+                placeholder="Target site to rank — e.g. https://netvasco.com.br/apostas/…"
+                aria-label="Target site or page URL to rank"
+                value={url} onChange={e => setUrl(e.target.value)} />
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', marginTop: 4 }}>
+                The site/page we want ranking — its position is tracked over time. Leave blank to only watch the Featured Snippet holder.
+              </div>
+            </div>
+          </>
+        ) : (
+          <div>
+            <textarea className="glass-input" rows={6} aria-label="Bulk keywords"
+              placeholder={'One per line — keyword, target URL:\ncodigo betano, https://netvasco.com.br/apostas/codigo/codigo-betano/\napp brazino777, https://netvasco.com.br/apostas/app/brazino777-app/\nmelhores casas de apostas'}
+              value={bulkText} onChange={e => setBulkText(e.target.value)}
+              style={{ width: '100%', resize: 'vertical', fontFamily: 'ui-monospace, monospace', fontSize: '0.78rem', lineHeight: 1.5 }} />
+            <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', marginTop: 4 }}>
+              One keyword per line; add an optional target URL after a comma. Up to 50 at once.{bulkCount > 0 && <strong style={{ color: 'var(--primary)' }}> {bulkCount} detected</strong>}
+            </div>
           </div>
-        </div>
+        )}
         <select className="glass-input glass-select" aria-label="Geolocation" value={location} onChange={e => setLocation(e.target.value)}>
           {geoList.map(g => <option key={g} value={g}>{g}</option>)}
         </select>
-        {error && <div style={{ fontSize: '0.78rem', color: '#f87171' }}>{error}</div>}
-        <button type="submit" className="btn-primary" disabled={loading} style={{ padding: '9px', fontSize: '0.84rem' }}>
-          {loading ? 'Checking live SERP…' : 'Add & Check Now'}
+        {error && <div role="alert" style={{ fontSize: '0.78rem', color: '#f87171' }}>{error}</div>}
+        <button type="submit" className="btn-primary" disabled={loading || (mode === 'bulk' && bulkCount === 0)} style={{ padding: '9px', fontSize: '0.84rem' }}>
+          {loading
+            ? (mode === 'bulk' ? `Checking ${bulkCount} live SERP${bulkCount !== 1 ? 's' : ''}…` : 'Checking live SERP…')
+            : (mode === 'bulk' ? `Add & Check ${bulkCount || ''} keyword${bulkCount !== 1 ? 's' : ''}`.replace('  ', ' ') : 'Add & Check Now')}
         </button>
       </form>
     </div>
@@ -340,6 +402,17 @@ export default function Tracking() {
     setShowForm(false);
   }
 
+  function handleBulkAdded(added) {
+    const now = new Date().toISOString();
+    const rows = (added || []).map(d => ({
+      id: d.id, keyword: d.keyword, target_url: d.target_url, location: d.location,
+      position: d.position, ranking_url: d.ranking_url, fs_holder_domain: d.fs_holder_domain,
+      top_domains: d.top_domains, last_checked: now,
+    }));
+    setItems(prev => [...rows, ...prev]);
+    setShowForm(false);
+  }
+
   // Group tracked keywords by target site for the filter.
   const siteCounts = {};
   let noneCount = 0;
@@ -355,6 +428,17 @@ export default function Tracking() {
     if (siteFilter === '__none__') return !i.target_url;
     return hostname(i.target_url) === siteFilter;
   });
+
+  // Per-site performance summary (only when filtered to a specific site).
+  const siteSummary = (siteFilter && siteFilter !== '__none__' && shown.length) ? (() => {
+    const ranked = shown.filter(i => i.position != null);
+    return {
+      avg: ranked.length ? Math.round(ranked.reduce((s, i) => s + i.position, 0) / ranked.length * 10) / 10 : null,
+      top3: shown.filter(i => i.position != null && i.position <= 3).length,
+      top10: shown.filter(i => i.position != null && i.position <= 10).length,
+      notRanking: shown.filter(i => i.position == null).length,
+    };
+  })() : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -385,7 +469,26 @@ export default function Tracking() {
         </div>
       </div>
 
-      {showForm && <AddForm onAdded={handleAdded} onClose={() => setShowForm(false)} />}
+      {showForm && <AddForm onAdded={handleAdded} onBulkAdded={handleBulkAdded} onClose={() => setShowForm(false)} />}
+
+      {siteSummary && (
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center', padding: '11px 16px', background: 'rgba(226,0,113,0.06)', border: '1px solid rgba(226,0,113,0.18)', borderRadius: 10 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 700, fontSize: '0.82rem', color: '#fff' }}>
+            <Target size={13} color="var(--primary)" aria-hidden="true" /> {siteFilter}
+          </span>
+          {[
+            ['Avg. position', siteSummary.avg != null ? `#${siteSummary.avg}` : '—'],
+            ['Top 3', siteSummary.top3],
+            ['Top 10', siteSummary.top10],
+            ['Not ranking', siteSummary.notRanking],
+          ].map(([label, val]) => (
+            <span key={label} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
+              <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{val}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div role="alert" style={{ padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171' }}>
