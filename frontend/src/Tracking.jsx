@@ -294,6 +294,7 @@ export default function Tracking() {
   const [loading,    setLoading]  = useState(true);
   const [error,      setError]    = useState('');
   const [showForm,   setShowForm] = useState(false);
+  const [siteFilter, setSiteFilter] = useState('');   // '' = all, '__none__' = no target site
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -339,12 +340,39 @@ export default function Tracking() {
     setShowForm(false);
   }
 
+  // Group tracked keywords by target site for the filter.
+  const siteCounts = {};
+  let noneCount = 0;
+  items.forEach(i => {
+    const h = hostname(i.target_url);
+    if (h) siteCounts[h] = (siteCounts[h] || 0) + 1;
+    else noneCount++;
+  });
+  const siteOptions = Object.keys(siteCounts).sort();
+  const showFilter = siteOptions.length > 1 || (siteOptions.length >= 1 && noneCount > 0);
+  const shown = items.filter(i => {
+    if (!siteFilter) return true;
+    if (siteFilter === '__none__') return !i.target_url;
+    return hostname(i.target_url) === siteFilter;
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-          {items.length} keyword{items.length !== 1 ? 's' : ''} tracked
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+            {siteFilter ? `${shown.length} of ${items.length}` : items.length} keyword{items.length !== 1 ? 's' : ''} tracked
+          </div>
+          {showFilter && (
+            <select className="glass-input glass-select" aria-label="Filter by target site"
+              value={siteFilter} onChange={e => setSiteFilter(e.target.value)}
+              style={{ fontSize: '0.8rem', padding: '5px 30px 5px 10px', width: 'auto' }}>
+              <option value="">All sites ({items.length})</option>
+              {siteOptions.map(s => <option key={s} value={s}>{s} ({siteCounts[s]})</option>)}
+              {noneCount > 0 && <option value="__none__">No target site ({noneCount})</option>}
+            </select>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={load} aria-label="Refresh rankings" style={btnStyle}>
@@ -379,9 +407,16 @@ export default function Tracking() {
         </div>
       )}
 
-      {!loading && items.length > 0 && (
+      {!loading && items.length > 0 && shown.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+          No keywords for this site.{' '}
+          <button onClick={() => setSiteFilter('')} style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.85rem', padding: 0 }}>Show all</button>
+        </div>
+      )}
+
+      {!loading && shown.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {items.map(item => (
+          {shown.map(item => (
             <TrackedRow key={item.id} item={item} onDelete={handleDelete} onCheck={handleCheck} />
           ))}
         </div>
