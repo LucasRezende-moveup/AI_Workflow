@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, RefreshCw, Trash2, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, Globe, Link, X, Target } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, Globe, Link, X, Target, ArrowLeft, Folder } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 const API = (path, opts = {}) => {
@@ -29,27 +29,20 @@ function timeAgo(isoStr) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+const btnStyle = {
+  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)',
+  borderRadius: 6, padding: '5px 7px', cursor: 'pointer', color: 'var(--text-muted)',
+  display: 'flex', alignItems: 'center', transition: 'background 0.15s',
+};
+
 function PositionBadge({ position }) {
   if (position == null) return (
     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>not ranking</span>
   );
   const color = position === 1 ? '#E20071' : position <= 3 ? '#f59e0b' : position <= 10 ? '#4ade80' : '#94a3b8';
   return (
-    <span style={{
-      fontWeight: 800, fontSize: '1.1rem', color,
-      fontVariantNumeric: 'tabular-nums',
-    }}>#{position}</span>
+    <span style={{ fontWeight: 800, fontSize: '1.1rem', color, fontVariantNumeric: 'tabular-nums' }}>#{position}</span>
   );
-}
-
-function TrendIcon({ history }) {
-  if (!history || history.length < 2) return <Minus size={14} color="#94a3b8" />;
-  const prev = history[history.length - 2]?.position;
-  const curr = history[history.length - 1]?.position;
-  if (prev == null || curr == null) return <Minus size={14} color="#94a3b8" />;
-  if (curr < prev) return <TrendingUp size={14} color="#4ade80" title="Improved" />;
-  if (curr > prev) return <TrendingDown size={14} color="#f87171" title="Dropped" />;
-  return <Minus size={14} color="#94a3b8" title="Stable" />;
 }
 
 function PositionChart({ history }) {
@@ -58,44 +51,24 @@ function PositionChart({ history }) {
       Need at least 2 checks to show a chart.
     </div>
   );
-
   const data = history.map((r, i) => ({
-    i,
-    position: r.position,
+    i, position: r.position,
     label: new Date(r.checked_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
     fs: r.fs_holder_domain,
   }));
-
   const positions = data.map(d => d.position).filter(p => p != null);
   const minPos = Math.max(1, Math.min(...positions) - 1);
   const maxPos = Math.min(20, Math.max(...positions) + 2);
-
   return (
     <ResponsiveContainer width="100%" height={160}>
       <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
-        <XAxis
-          dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }}
-          tickLine={false} axisLine={false}
-          interval={Math.floor(data.length / 5)}
-        />
-        <YAxis
-          domain={[minPos, maxPos]} reversed
-          tick={{ fontSize: 10, fill: '#64748b' }}
-          tickLine={false} axisLine={false}
-          tickFormatter={v => `#${v}`}
-        />
-        <Tooltip
-          contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.78rem' }}
-          labelStyle={{ color: '#94a3b8' }}
-          formatter={(val, _, props) => [`#${val}`, 'Position']}
-        />
+        <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(data.length / 5)} />
+        <YAxis domain={[minPos, maxPos]} reversed tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={v => `#${v}`} />
+        <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.78rem' }}
+          labelStyle={{ color: '#94a3b8' }} formatter={(val) => [`#${val}`, 'Position']} />
         {positions.length > 0 && <ReferenceLine y={1} stroke="rgba(226,0,113,0.25)" strokeDasharray="4 3" />}
-        <Line
-          type="monotone" dataKey="position" stroke="#E20071" strokeWidth={2}
-          dot={{ fill: '#E20071', r: 3, strokeWidth: 0 }}
-          activeDot={{ r: 5, fill: '#E20071' }}
-          connectNulls={false}
-        />
+        <Line type="monotone" dataKey="position" stroke="#E20071" strokeWidth={2}
+          dot={{ fill: '#E20071', r: 3, strokeWidth: 0 }} activeDot={{ r: 5, fill: '#E20071' }} connectNulls={false} />
       </LineChart>
     </ResponsiveContainer>
   );
@@ -114,47 +87,25 @@ function TrackedRow({ item, onDelete, onCheck }) {
     const d = await res.json();
     setHistory(d.history || []);
   }
-
-  async function handleExpand() {
-    const next = !expanded;
-    setExpanded(next);
-    if (next) loadHistory();
-  }
-
+  async function handleExpand() { const next = !expanded; setExpanded(next); if (next) loadHistory(); }
   async function handleCheck() {
-    setChecking(true);
-    await onCheck(item.id);
-    setHistory(null); // force reload
-    setChecking(false);
-    if (expanded) loadHistory();
+    setChecking(true); await onCheck(item.id); setHistory(null); setChecking(false); if (expanded) loadHistory();
   }
-
-  async function handleDelete() {
-    setDeleting(true);
-    await onDelete(item.id);
-  }
+  async function handleDelete() { setDeleting(true); await onDelete(item.id); }
 
   return (
-    <div style={{
-      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
-      borderRadius: 10, overflow: 'hidden', transition: 'border-color 0.2s',
-    }}
+    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, overflow: 'hidden', transition: 'border-color 0.2s' }}
       onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; setConfirmDelete(false); }}
-    >
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; setConfirmDelete(false); }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px' }}>
-        {/* Position */}
         <div style={{ width: 52, textAlign: 'center', flexShrink: 0 }}>
           <PositionBadge position={item.position} />
         </div>
-
-        {/* Keyword + target site + meta */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
               {item.keyword}
             </span>
-            {/* Which site we're targeting to rank */}
             {item.target_url ? (
               <span title={item.target_url} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 700, color: 'var(--primary)', background: 'rgba(226,0,113,0.12)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 20, padding: '2px 9px', flexShrink: 0 }}>
                 <Target size={11} aria-hidden="true" /> {hostname(item.target_url)}
@@ -176,9 +127,7 @@ function TrackedRow({ item, onDelete, onCheck }) {
                 <Globe size={10} />{item.location}
               </span>
             )}
-            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-              checked {timeAgo(item.last_checked)}
-            </span>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>checked {timeAgo(item.last_checked)}</span>
           </div>
           {Array.isArray(item.top_domains) && item.top_domains.length > 0 && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 5 }}>
@@ -186,10 +135,7 @@ function TrackedRow({ item, onDelete, onCheck }) {
               {item.top_domains.slice(0, 3).map(t => {
                 const mine = item.target_url && t.domain === hostname(item.target_url);
                 return (
-                  <span key={t.position} style={{
-                    fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4,
-                    color: mine ? 'var(--primary)' : 'var(--text-muted)', fontWeight: mine ? 700 : 500,
-                  }}>
+                  <span key={t.position} style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4, color: mine ? 'var(--primary)' : 'var(--text-muted)', fontWeight: mine ? 700 : 500 }}>
                     <span style={{ fontSize: '0.62rem', opacity: 0.7, fontVariantNumeric: 'tabular-nums' }}>{t.position}.</span>{t.domain}{mine ? ' (us)' : ''}
                   </span>
                 );
@@ -202,8 +148,6 @@ function TrackedRow({ item, onDelete, onCheck }) {
             </div>
           )}
         </div>
-
-        {/* Actions */}
         <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
           <button onClick={handleExpand} title="History" aria-label="View history" aria-expanded={expanded} style={btnStyle}>
             {expanded ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
@@ -223,25 +167,16 @@ function TrackedRow({ item, onDelete, onCheck }) {
           )}
         </div>
       </div>
-
       {expanded && (
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', padding: '14px 16px' }}>
-          {history === null ? (
-            <div role="status" style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading…</div>
-          ) : (
-            <PositionChart history={history} />
-          )}
+          {history === null
+            ? <div role="status" style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading…</div>
+            : <PositionChart history={history} />}
         </div>
       )}
     </div>
   );
 }
-
-const btnStyle = {
-  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)',
-  borderRadius: 6, padding: '5px 7px', cursor: 'pointer', color: 'var(--text-muted)',
-  display: 'flex', alignItems: 'center', transition: 'background 0.15s',
-};
 
 function parseBulk(text) {
   return text.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
@@ -250,20 +185,20 @@ function parseBulk(text) {
   }).filter(x => x.keyword);
 }
 
-function AddForm({ onAdded, onBulkAdded, onClose }) {
-  const [mode,     setMode]     = useState('single');   // 'single' | 'bulk'
+// ── Add keywords (scoped to a project) ────────────────────────────────────────
+function AddForm({ project, onSaved, onClose }) {
+  const [mode,     setMode]     = useState('single');
   const [keyword,  setKeyword]  = useState('');
   const [url,      setUrl]      = useState('');
   const [bulkText, setBulkText] = useState('');
-  const [location, setLocation] = useState('Global (No Geolocation)');
+  const [location, setLocation] = useState(project?.location || 'Global (No Geolocation)');
   const [geoList,  setGeoList]  = useState(['Global (No Geolocation)']);
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
 
   useEffect(() => {
     fetch('/api/serp/geolocations').then(r => r.json())
-      .then(d => { if (d.geolocations?.length) setGeoList(d.geolocations); })
-      .catch(() => {});
+      .then(d => { if (d.geolocations?.length) setGeoList(d.geolocations); }).catch(() => {});
   }, []);
 
   const bulkCount = mode === 'bulk' ? parseBulk(bulkText).length : 0;
@@ -271,16 +206,17 @@ function AddForm({ onAdded, onBulkAdded, onClose }) {
   async function submit(e) {
     e.preventDefault();
     setError('');
+    const projectField = project ? { project_id: project.id } : {};
     if (mode === 'single') {
       if (!keyword.trim()) return;
       setLoading(true);
       try {
         const res = await API('/api/tracking', {
           method: 'POST',
-          body: JSON.stringify({ keyword: keyword.trim(), target_url: url.trim() || null, location }),
+          body: JSON.stringify({ keyword: keyword.trim(), target_url: url.trim() || null, location, ...projectField }),
         });
         if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
-        onAdded(await res.json());
+        await res.json(); onSaved();
       } catch (err) { setError(err.message); } finally { setLoading(false); }
     } else {
       const items = parseBulk(bulkText);
@@ -289,11 +225,10 @@ function AddForm({ onAdded, onBulkAdded, onClose }) {
       try {
         const res = await API('/api/tracking/bulk', {
           method: 'POST',
-          body: JSON.stringify({ items, location }),
+          body: JSON.stringify({ items, location, ...projectField }),
         });
         if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
-        const data = await res.json();
-        onBulkAdded(data.items || []);
+        await res.json(); onSaved();
       } catch (err) { setError(err.message); } finally { setLoading(false); }
     }
   }
@@ -302,46 +237,46 @@ function AddForm({ onAdded, onBulkAdded, onClose }) {
     background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
     color: 'var(--text-muted)', padding: '5px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem',
   };
+  const urlPlaceholder = project
+    ? `Optional exact page — defaults to ${project.domain}`
+    : 'Target site to rank — e.g. https://netvasco.com.br/apostas/…';
 
   return (
-    <div style={{
-      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(226,0,113,0.3)',
-      borderRadius: 12, padding: '18px 20px', marginBottom: 4,
-    }}>
+    <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 12, padding: '18px 20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <span style={{ fontWeight: 600, fontSize: '0.88rem', color: '#fff' }}>Track keywords</span>
+        <span style={{ fontWeight: 600, fontSize: '0.88rem', color: '#fff' }}>
+          Add keywords{project ? ` to ${project.domain}` : ''}
+        </span>
         <button onClick={onClose} aria-label="Close" style={{ ...btnStyle, padding: '3px 5px' }}><X size={13} aria-hidden="true" /></button>
       </div>
-
       <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        <button type="button" onClick={() => setMode('single')} aria-pressed={mode === 'single'}
-          className={mode === 'single' ? 'btn-primary' : ''} style={tabStyle(mode === 'single')}>Single</button>
-        <button type="button" onClick={() => setMode('bulk')} aria-pressed={mode === 'bulk'}
-          className={mode === 'bulk' ? 'btn-primary' : ''} style={tabStyle(mode === 'bulk')}>Bulk</button>
+        <button type="button" onClick={() => setMode('single')} aria-pressed={mode === 'single'} className={mode === 'single' ? 'btn-primary' : ''} style={tabStyle(mode === 'single')}>Single</button>
+        <button type="button" onClick={() => setMode('bulk')} aria-pressed={mode === 'bulk'} className={mode === 'bulk' ? 'btn-primary' : ''} style={tabStyle(mode === 'bulk')}>Bulk</button>
       </div>
-
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {mode === 'single' ? (
           <>
             <input className="glass-input" placeholder="Keyword *" aria-label="Keyword" required value={keyword} onChange={e => setKeyword(e.target.value)} />
             <div>
-              <input className="glass-input" type="url" style={{ width: '100%' }}
-                placeholder="Target site to rank — e.g. https://netvasco.com.br/apostas/…"
-                aria-label="Target site or page URL to rank"
-                value={url} onChange={e => setUrl(e.target.value)} />
+              <input className="glass-input" type="url" style={{ width: '100%' }} placeholder={urlPlaceholder}
+                aria-label="Target page URL" value={url} onChange={e => setUrl(e.target.value)} />
               <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', marginTop: 4 }}>
-                The site/page we want ranking — its position is tracked over time. Leave blank to only watch the Featured Snippet holder.
+                {project
+                  ? `Tracks whether ${project.domain} ranks for this keyword. Add a specific URL to track an exact page.`
+                  : 'The site/page we want ranking — its position is tracked over time.'}
               </div>
             </div>
           </>
         ) : (
           <div>
             <textarea className="glass-input" rows={6} aria-label="Bulk keywords"
-              placeholder={'One per line — keyword, target URL:\ncodigo betano, https://netvasco.com.br/apostas/codigo/codigo-betano/\napp brazino777, https://netvasco.com.br/apostas/app/brazino777-app/\nmelhores casas de apostas'}
+              placeholder={project
+                ? 'One keyword per line (optional URL after a comma):\ncodigo betano\napp brazino777, https://…/app/brazino777-app/\nmelhores casas de apostas'
+                : 'One per line — keyword, target URL:\ncodigo betano, https://netvasco.com.br/apostas/codigo/codigo-betano/\nmelhores casas de apostas'}
               value={bulkText} onChange={e => setBulkText(e.target.value)}
               style={{ width: '100%', resize: 'vertical', fontFamily: 'ui-monospace, monospace', fontSize: '0.78rem', lineHeight: 1.5 }} />
             <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', marginTop: 4 }}>
-              One keyword per line; add an optional target URL after a comma. Up to 50 at once.{bulkCount > 0 && <strong style={{ color: 'var(--primary)' }}> {bulkCount} detected</strong>}
+              One keyword per line{project ? ` (all target ${project.domain} unless a URL is given)` : '; optional target URL after a comma'}. Up to 50 at once.{bulkCount > 0 && <strong style={{ color: 'var(--primary)' }}> {bulkCount} detected</strong>}
             </div>
           </div>
         )}
@@ -359,25 +294,136 @@ function AddForm({ onAdded, onBulkAdded, onClose }) {
   );
 }
 
+// ── Register a domain (project) ───────────────────────────────────────────────
+function RegisterForm({ onSaved, onClose }) {
+  const [domain, setDomain]     = useState('');
+  const [name, setName]         = useState('');
+  const [location, setLocation] = useState('Global (No Geolocation)');
+  const [geoList, setGeoList]   = useState(['Global (No Geolocation)']);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
+
+  useEffect(() => {
+    fetch('/api/serp/geolocations').then(r => r.json())
+      .then(d => { if (d.geolocations?.length) setGeoList(d.geolocations); }).catch(() => {});
+  }, []);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!domain.trim()) return;
+    setLoading(true); setError('');
+    try {
+      const res = await API('/api/tracking/projects', {
+        method: 'POST',
+        body: JSON.stringify({ domain: domain.trim(), name: name.trim() || null, location }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+      onSaved();
+    } catch (err) { setError(err.message); } finally { setLoading(false); }
+  }
+
+  return (
+    <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 12, padding: '18px 20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <span style={{ fontWeight: 600, fontSize: '0.88rem', color: '#fff' }}>Register a project (domain)</span>
+        <button onClick={onClose} aria-label="Close" style={{ ...btnStyle, padding: '3px 5px' }}><X size={13} aria-hidden="true" /></button>
+      </div>
+      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <input className="glass-input" placeholder="Domain * — e.g. netvasco.com.br" aria-label="Domain" required value={domain} onChange={e => setDomain(e.target.value)} />
+        <input className="glass-input" placeholder="Display name (optional)" aria-label="Project name" value={name} onChange={e => setName(e.target.value)} />
+        <select className="glass-input glass-select" aria-label="Default location" value={location} onChange={e => setLocation(e.target.value)}>
+          {geoList.map(g => <option key={g} value={g}>{g}</option>)}
+        </select>
+        {error && <div role="alert" style={{ fontSize: '0.78rem', color: '#f87171' }}>{error}</div>}
+        <button type="submit" className="btn-primary" disabled={loading} style={{ padding: '9px', fontSize: '0.84rem' }}>
+          {loading ? 'Creating…' : 'Create project'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function Kpi({ label, value, color }) {
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
+      <span style={{ fontSize: '1rem', fontWeight: 800, color: color || '#fff', fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+    </span>
+  );
+}
+
+function ProjectCard({ project, onOpen, onDelete }) {
+  const [confirm, setConfirm] = useState(false);
+  const vis = project.visibility || 0;
+  const visColor = vis >= 60 ? '#4ade80' : vis >= 30 ? '#f59e0b' : '#f87171';
+  return (
+    <div className="glass-panel" style={{ padding: 0, overflow: 'hidden', cursor: 'pointer', transition: 'border-color 0.2s' }}
+      role="button" tabIndex={0} onClick={() => onOpen(project)}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(project); } }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(226,0,113,0.4)'}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = ''; setConfirm(false); }}>
+      <div style={{ padding: '16px 18px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <Globe size={15} color="var(--primary)" aria-hidden="true" style={{ flexShrink: 0 }} />
+              <span style={{ fontWeight: 700, fontSize: '0.95rem', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.domain}</span>
+            </div>
+            {project.name && project.name !== project.domain && (
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>{project.name}</div>
+            )}
+          </div>
+          {confirm ? (
+            <button onClick={e => { e.stopPropagation(); onDelete(project.id); }} aria-label="Confirm delete project"
+              style={{ ...btnStyle, color: '#fff', background: 'rgba(248,113,113,0.9)', borderColor: 'rgba(248,113,113,0.9)', fontSize: '0.7rem', gap: 4, padding: '4px 8px', flexShrink: 0 }}>
+              <Trash2 size={12} aria-hidden="true" /> Delete
+            </button>
+          ) : (
+            <button onClick={e => { e.stopPropagation(); setConfirm(true); }} aria-label="Delete project"
+              style={{ ...btnStyle, color: '#f87171', flexShrink: 0 }}><Trash2 size={13} aria-hidden="true" /></button>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+          <Kpi label="Keywords" value={project.keyword_count} />
+          <Kpi label="Avg. pos" value={project.avg_position != null ? `#${project.avg_position}` : '—'} />
+          <Kpi label="Top 3" value={project.top3} color={project.top3 > 0 ? '#4ade80' : undefined} />
+          <Kpi label="Top 10" value={project.top10} />
+        </div>
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.62rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+            <span>Visibility (top 10)</span><span style={{ color: visColor, fontWeight: 700 }}>{vis}%</span>
+          </div>
+          <div style={{ height: 5, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${vis}%`, background: visColor, borderRadius: 3 }} />
+          </div>
+        </div>
+      </div>
+      <div style={{ padding: '8px 18px', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '0.68rem', color: 'var(--text-dim)', display: 'flex', justifyContent: 'space-between' }}>
+        <span>checked {timeAgo(project.last_checked)}</span>
+        <span style={{ color: 'var(--primary)', fontWeight: 600 }}>Open →</span>
+      </div>
+    </div>
+  );
+}
+
 export default function Tracking() {
-  const [items,      setItems]    = useState([]);
-  const [loading,    setLoading]  = useState(true);
-  const [error,      setError]    = useState('');
-  const [showForm,   setShowForm] = useState(false);
-  const [siteFilter, setSiteFilter] = useState('');   // '' = all, '__none__' = no target site
+  const [projects, setProjects] = useState([]);
+  const [items, setItems]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState('');
+  const [activeId, setActiveId] = useState(null);      // project id, '__none__', or null (overview)
+  const [showForm, setShowForm] = useState(false);
+  const [showRegister, setShowRegister] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const res = await API('/api/tracking');
-      if (!res.ok) throw new Error(await res.text());
-      const d = await res.json();
-      setItems(d.tracked || []);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+      const [pr, kr] = await Promise.all([API('/api/tracking/projects'), API('/api/tracking')]);
+      if (!pr.ok) throw new Error(await pr.text());
+      if (!kr.ok) throw new Error(await kr.text());
+      setProjects((await pr.json()).projects || []);
+      setItems((await kr.json()).tracked || []);
+    } catch (e) { setError(e.message); } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -386,154 +432,137 @@ export default function Tracking() {
     const res = await API(`/api/tracking/${id}/check`, { method: 'POST' });
     if (!res.ok) return;
     const ranking = await res.json();
-    setItems(prev => prev.map(it =>
-      it.id === id ? { ...it, ...ranking, last_checked: new Date().toISOString() } : it
-    ));
+    setItems(prev => prev.map(it => it.id === id ? { ...it, ...ranking, last_checked: new Date().toISOString() } : it));
   }
-
   async function handleDelete(id) {
     await API(`/api/tracking/${id}`, { method: 'DELETE' });
     setItems(prev => prev.filter(it => it.id !== id));
   }
-
-  function handleAdded(data) {
-    setItems(prev => [{
-      id: data.id,
-      keyword: data.keyword,
-      target_url: data.target_url,
-      location: data.location,
-      position: data.position,
-      ranking_url: data.ranking_url,
-      fs_holder_domain: data.fs_holder_domain,
-      last_checked: new Date().toISOString(),
-    }, ...prev]);
-    setShowForm(false);
+  async function handleDeleteProject(id) {
+    await API(`/api/tracking/projects/${id}`, { method: 'DELETE' });
+    if (activeId === id) setActiveId(null);
+    load();
   }
+  function afterSave() { setShowForm(false); setShowRegister(false); load(); }
 
-  function handleBulkAdded(added) {
-    const now = new Date().toISOString();
-    const rows = (added || []).map(d => ({
-      id: d.id, keyword: d.keyword, target_url: d.target_url, location: d.location,
-      position: d.position, ranking_url: d.ranking_url, fs_holder_domain: d.fs_holder_domain,
-      top_domains: d.top_domains, last_checked: now,
-    }));
-    setItems(prev => [...rows, ...prev]);
-    setShowForm(false);
-  }
+  // Unassigned keywords (no project) become a virtual card.
+  const unassigned = items.filter(i => !i.project_id);
 
-  // Group tracked keywords by target site for the filter.
-  const siteCounts = {};
-  let noneCount = 0;
-  items.forEach(i => {
-    const h = hostname(i.target_url);
-    if (h) siteCounts[h] = (siteCounts[h] || 0) + 1;
-    else noneCount++;
-  });
-  const siteOptions = Object.keys(siteCounts).sort();
-  const showFilter = siteOptions.length > 1 || (siteOptions.length >= 1 && noneCount > 0);
-  const shown = items.filter(i => {
-    if (!siteFilter) return true;
-    if (siteFilter === '__none__') return !i.target_url;
-    return hostname(i.target_url) === siteFilter;
-  });
+  const activeProject = activeId && activeId !== '__none__' ? projects.find(p => p.id === activeId) : null;
+  const detailItems = activeId
+    ? items.filter(i => activeId === '__none__' ? !i.project_id : i.project_id === activeId)
+    : [];
 
-  // Per-site performance summary (only when filtered to a specific site).
-  const siteSummary = (siteFilter && siteFilter !== '__none__' && shown.length) ? (() => {
-    const ranked = shown.filter(i => i.position != null);
+  // Client-side KPIs for the detail header (fresh after re-checks).
+  const detailSummary = activeId && detailItems.length ? (() => {
+    const ranked = detailItems.filter(i => i.position != null);
     return {
       avg: ranked.length ? Math.round(ranked.reduce((s, i) => s + i.position, 0) / ranked.length * 10) / 10 : null,
-      top3: shown.filter(i => i.position != null && i.position <= 3).length,
-      top10: shown.filter(i => i.position != null && i.position <= 10).length,
-      notRanking: shown.filter(i => i.position == null).length,
+      top3: detailItems.filter(i => i.position != null && i.position <= 3).length,
+      top10: detailItems.filter(i => i.position != null && i.position <= 10).length,
+      notRanking: detailItems.filter(i => i.position == null).length,
     };
   })() : null;
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-            {siteFilter ? `${shown.length} of ${items.length}` : items.length} keyword{items.length !== 1 ? 's' : ''} tracked
+  const spin = <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>;
+
+  // ── Project detail view ─────────────────────────────────────────────────────
+  if (activeId) {
+    const label = activeProject ? activeProject.domain : 'Keywords without a target site';
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button onClick={() => { setActiveId(null); setShowForm(false); }} aria-label="Back to projects" style={btnStyle}><ArrowLeft size={15} aria-hidden="true" /></button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Globe size={18} color="var(--primary)" aria-hidden="true" />
+              <span style={{ fontWeight: 700, fontSize: '1.05rem', color: '#fff' }}>{label}</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>· {detailItems.length} keyword{detailItems.length !== 1 ? 's' : ''}</span>
+            </div>
           </div>
-          {showFilter && (
-            <select className="glass-input glass-select" aria-label="Filter by target site"
-              value={siteFilter} onChange={e => setSiteFilter(e.target.value)}
-              style={{ fontSize: '0.8rem', padding: '5px 30px 5px 10px', width: 'auto' }}>
-              <option value="">All sites ({items.length})</option>
-              {siteOptions.map(s => <option key={s} value={s}>{s} ({siteCounts[s]})</option>)}
-              {noneCount > 0 && <option value="__none__">No target site ({noneCount})</option>}
-            </select>
+          {activeProject && (
+            <button onClick={() => setShowForm(v => !v)} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.82rem' }}>
+              <Plus size={14} /> Add keyword
+            </button>
           )}
         </div>
+
+        {detailSummary && (
+          <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'center', padding: '13px 18px', background: 'rgba(226,0,113,0.06)', border: '1px solid rgba(226,0,113,0.18)', borderRadius: 10 }}>
+            <Kpi label="Avg. position" value={detailSummary.avg != null ? `#${detailSummary.avg}` : '—'} />
+            <Kpi label="Top 3" value={detailSummary.top3} color="#4ade80" />
+            <Kpi label="Top 10" value={detailSummary.top10} />
+            <Kpi label="Not ranking" value={detailSummary.notRanking} color="#f87171" />
+          </div>
+        )}
+
+        {showForm && activeProject && <AddForm project={activeProject} onSaved={afterSave} onClose={() => setShowForm(false)} />}
+
+        {detailItems.length === 0 && !showForm && (
+          <div style={{ textAlign: 'center', padding: '50px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+            <TrendingUp size={28} style={{ marginBottom: 10, opacity: 0.3 }} />
+            <div>No keywords in this project yet.</div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {detailItems.map(item => <TrackedRow key={item.id} item={item} onDelete={handleDelete} onCheck={handleCheck} />)}
+        </div>
+        {spin}
+      </div>
+    );
+  }
+
+  // ── Projects overview ───────────────────────────────────────────────────────
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+          {projects.length} project{projects.length !== 1 ? 's' : ''} · {items.length} keyword{items.length !== 1 ? 's' : ''}
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={load} aria-label="Refresh rankings" style={btnStyle}>
-            <RefreshCw size={13} aria-hidden="true" />
-          </button>
-          <button onClick={() => setShowForm(v => !v)} className="btn-primary"
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.82rem' }}>
-            <Plus size={14} /> Track keyword
+          <button onClick={load} aria-label="Refresh" style={btnStyle}><RefreshCw size={13} aria-hidden="true" /></button>
+          <button onClick={() => setShowRegister(v => !v)} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.82rem' }}>
+            <Plus size={14} /> Register domain
           </button>
         </div>
       </div>
 
-      {showForm && <AddForm onAdded={handleAdded} onBulkAdded={handleBulkAdded} onClose={() => setShowForm(false)} />}
-
-      {siteSummary && (
-        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center', padding: '11px 16px', background: 'rgba(226,0,113,0.06)', border: '1px solid rgba(226,0,113,0.18)', borderRadius: 10 }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 700, fontSize: '0.82rem', color: '#fff' }}>
-            <Target size={13} color="var(--primary)" aria-hidden="true" /> {siteFilter}
-          </span>
-          {[
-            ['Avg. position', siteSummary.avg != null ? `#${siteSummary.avg}` : '—'],
-            ['Top 3', siteSummary.top3],
-            ['Top 10', siteSummary.top10],
-            ['Not ranking', siteSummary.notRanking],
-          ].map(([label, val]) => (
-            <span key={label} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
-              <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{val}</span>
-            </span>
-          ))}
-        </div>
-      )}
+      {showRegister && <RegisterForm onSaved={afterSave} onClose={() => setShowRegister(false)} />}
 
       {error && (
-        <div role="alert" style={{ padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171' }}>
-          {error}
-        </div>
+        <div role="alert" style={{ padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171' }}>{error}</div>
       )}
+      {loading && <div role="status" style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Loading…</div>}
 
-      {loading && (
-        <div role="status" style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Loading…</div>
-      )}
-
-      {!loading && !error && items.length === 0 && !showForm && (
+      {!loading && !error && projects.length === 0 && unassigned.length === 0 && !showRegister && (
         <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-          <TrendingUp size={28} style={{ marginBottom: 10, opacity: 0.3 }} />
-          <div>No keywords tracked yet.</div>
-          <div style={{ fontSize: '0.78rem', marginTop: 4, opacity: 0.6 }}>
-            Add keywords to monitor their Featured Snippet position over time.
-          </div>
+          <Folder size={28} style={{ marginBottom: 10, opacity: 0.3 }} />
+          <div>No projects yet.</div>
+          <div style={{ fontSize: '0.78rem', marginTop: 4, opacity: 0.6 }}>Register a domain to start tracking its keyword rankings.</div>
         </div>
       )}
 
-      {!loading && items.length > 0 && shown.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-          No keywords for this site.{' '}
-          <button onClick={() => setSiteFilter('')} style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.85rem', padding: 0 }}>Show all</button>
+      {!loading && (projects.length > 0 || unassigned.length > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+          {projects.map(p => <ProjectCard key={p.id} project={p} onOpen={pr => setActiveId(pr.id)} onDelete={handleDeleteProject} />)}
+          {unassigned.length > 0 && (
+            <div className="glass-panel" style={{ padding: '16px 18px', cursor: 'pointer' }}
+              role="button" tabIndex={0} onClick={() => setActiveId('__none__')}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveId('__none__'); } }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+                <Folder size={15} color="var(--text-muted)" aria-hidden="true" />
+                <span style={{ fontWeight: 700, fontSize: '0.95rem', color: '#fff' }}>Unassigned</span>
+              </div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                {unassigned.length} keyword{unassigned.length !== 1 ? 's' : ''} without a target site.
+              </div>
+              <div style={{ marginTop: 10, fontSize: '0.68rem', color: 'var(--primary)', fontWeight: 600 }}>Open →</div>
+            </div>
+          )}
         </div>
       )}
-
-      {!loading && shown.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {shown.map(item => (
-            <TrackedRow key={item.id} item={item} onDelete={handleDelete} onCheck={handleCheck} />
-          ))}
-        </div>
-      )}
-
-      <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
+      {spin}
     </div>
   );
 }

@@ -156,6 +156,16 @@ def _ensure_schema():
                     CREATE INDEX IF NOT EXISTS analysis_runs_tool_idx
                     ON analysis_runs (tool, created_at DESC)
                 """)
+                # A project = a registered domain (like SE Ranking). Keywords belong to a project.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS tracking_projects (
+                        id         TEXT PRIMARY KEY,
+                        name       TEXT NOT NULL,
+                        domain     TEXT NOT NULL UNIQUE,
+                        location   TEXT NOT NULL DEFAULT 'Global (No Geolocation)',
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS keyword_tracking (
                         id         TEXT PRIMARY KEY,
@@ -164,6 +174,10 @@ def _ensure_schema():
                         location   TEXT NOT NULL DEFAULT 'Global (No Geolocation)',
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     )
+                """)
+                cur.execute("""
+                    ALTER TABLE keyword_tracking
+                    ADD COLUMN IF NOT EXISTS project_id TEXT REFERENCES tracking_projects(id) ON DELETE CASCADE
                 """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS keyword_rankings (
@@ -612,6 +626,7 @@ class TrackingAddRequest(BaseModel):
     keyword: str
     target_url: Optional[str] = None
     location: str = "Global (No Geolocation)"
+    project_id: Optional[str] = None
 
 
 class TrackingBulkItem(BaseModel):
@@ -622,6 +637,72 @@ class TrackingBulkItem(BaseModel):
 class TrackingBulkRequest(BaseModel):
     items: List[TrackingBulkItem]
     location: str = "Global (No Geolocation)"
+    project_id: Optional[str] = None
+
+
+class ProjectRequest(BaseModel):
+    domain: str
+    name: Optional[str] = None
+    location: str = "Global (No Geolocation)"
+
+
+def _clean_domain(s: str) -> str:
+    """Normalize any URL or bare domain to a lowercase host (no scheme, no www, no path)."""
+    from urllib.parse import urlparse
+    s = (s or "").strip().lower()
+    if not s:
+        return ""
+    if "//" not in s:
+        s = "https://" + s
+    try:
+        host = urlparse(s).netloc.replace("www.", "")
+        return host or ""
+    except Exception:
+        return ""
+
+
+def _ensure_project(domain: str, name: str = None, location: str = None) -> Optional[str]:
+    """Get-or-create a project for a domain; returns its id (or None if no domain)."""
+    dom = _clean_domain(domain)
+    if not dom:
+        return None
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM tracking_projects WHERE domain = %s", (dom,))
+                row = cur.fetchone()
+                if row:
+                    return row["id"]
+                pid = str(uuid.uuid4())
+                cur.execute(
+                    "INSERT INTO tracking_projects (id, name, domain, location) VALUES (%s,%s,%s,%s) "
+                    "ON CONFLICT (domain) DO UPDATE SET domain = EXCLUDED.domain RETURNING id",
+                    (pid, name or dom, dom, location or "Global (No Geolocation)"),
+                )
+                return cur.fetchone()["id"]
+    except Exception:
+        return None
+
+
+def _backfill_projects():
+    """Link keywords that have a target_url but no project to a project derived from the domain."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, target_url FROM keyword_tracking WHERE project_id IS NULL AND target_url IS NOT NULL")
+                rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            dom = _clean_domain(r["target_url"])
+            if not dom:
+                continue
+            pid = _ensure_project(dom)
+            if pid:
+                with _db_connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("UPDATE keyword_tracking SET project_id = %s WHERE id = %s", (pid, r["id"]))
+                    conn.commit()
+    except Exception:
+        pass
 
 
 def _fire_alerts(tracking_id: str, keyword: str, prev: dict, curr: dict):
@@ -789,22 +870,46 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
     }
 
 
+def _project_domain(project_id: str) -> Optional[str]:
+    if not project_id:
+        return None
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT domain FROM tracking_projects WHERE id = %s", (project_id,))
+                row = cur.fetchone()
+                return row["domain"] if row else None
+    except Exception:
+        return None
+
+
 @app.post("/api/tracking")
 def tracking_add(req: TrackingAddRequest, current_user=Depends(_decode_token)):
     tid = str(uuid.uuid4())
+    kw = req.keyword.strip()
+    project_id = req.project_id
+    target_url = (req.target_url or "").strip() or None
+    # If added under a project with no explicit URL, target the project's domain.
+    if project_id and not target_url:
+        dom = _project_domain(project_id)
+        if dom:
+            target_url = "https://" + dom + "/"
+    # If a URL was given without a project, file it under a get-or-create project.
+    if not project_id and target_url:
+        project_id = _ensure_project(target_url)
     try:
         with _db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO keyword_tracking (id, keyword, target_url, location) VALUES (%s,%s,%s,%s)",
-                    (tid, req.keyword.strip(), req.target_url or None, req.location)
+                    "INSERT INTO keyword_tracking (id, keyword, target_url, location, project_id) VALUES (%s,%s,%s,%s,%s)",
+                    (tid, kw, target_url, req.location, project_id)
                 )
             conn.commit()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-    ranking = _run_tracking_check(tid, req.keyword.strip(), req.target_url, req.location)
-    return {"id": tid, "keyword": req.keyword.strip(),
-            "target_url": req.target_url or None, "location": req.location, **ranking}
+    ranking = _run_tracking_check(tid, kw, target_url, req.location)
+    return {"id": tid, "keyword": kw, "target_url": target_url,
+            "location": req.location, "project_id": project_id, **ranking}
 
 
 @app.post("/api/tracking/bulk")
@@ -824,23 +929,29 @@ def tracking_add_bulk(req: TrackingBulkRequest, current_user=Depends(_decode_tok
     if not clean:
         raise HTTPException(status_code=400, detail="No valid keywords provided.")
 
+    # Resolve project context: if added under a project, default missing URLs to its domain.
+    proj_domain = _project_domain(req.project_id) if req.project_id else None
+
     rows = []
     try:
         with _db_connect() as conn:
             with conn.cursor() as cur:
                 for kw, url in clean:
+                    if not url and proj_domain:
+                        url = "https://" + proj_domain + "/"
+                    pid = req.project_id or (_ensure_project(url) if url else None)
                     tid = str(uuid.uuid4())
                     cur.execute(
-                        "INSERT INTO keyword_tracking (id, keyword, target_url, location) VALUES (%s,%s,%s,%s)",
-                        (tid, kw, url, req.location),
+                        "INSERT INTO keyword_tracking (id, keyword, target_url, location, project_id) VALUES (%s,%s,%s,%s,%s)",
+                        (tid, kw, url, req.location, pid),
                     )
-                    rows.append((tid, kw, url))
+                    rows.append((tid, kw, url, pid))
             conn.commit()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
-    def _chk(tid, kw, url):
-        base = {"id": tid, "keyword": kw, "target_url": url, "location": req.location}
+    def _chk(tid, kw, url, pid):
+        base = {"id": tid, "keyword": kw, "target_url": url, "location": req.location, "project_id": pid}
         try:
             return {**base, **_run_tracking_check(tid, kw, url, req.location)}
         except Exception as e:
@@ -848,7 +959,7 @@ def tracking_add_bulk(req: TrackingBulkRequest, current_user=Depends(_decode_tok
 
     out = []
     with ThreadPoolExecutor(max_workers=8) as ex:
-        futs = [ex.submit(_chk, tid, kw, url) for (tid, kw, url) in rows]
+        futs = [ex.submit(_chk, tid, kw, url, pid) for (tid, kw, url, pid) in rows]
         for f in as_completed(futs):
             out.append(f.result())
     return {"added": len(out), "capped": len(req.items) > 50, "items": out}
@@ -860,7 +971,7 @@ def tracking_list(current_user=Depends(_decode_token)):
         with _db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT kt.id, kt.keyword, kt.target_url, kt.location, kt.created_at,
+                    SELECT kt.id, kt.keyword, kt.target_url, kt.location, kt.created_at, kt.project_id,
                            kr.position, kr.ranking_url, kr.fs_holder_domain, kr.top_domains,
                            kr.checked_at as last_checked
                     FROM keyword_tracking kt
@@ -879,6 +990,72 @@ def tracking_list(current_user=Depends(_decode_token)):
                 return {"tracked": rows}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/tracking/projects")
+def tracking_projects_list(current_user=Depends(_decode_token)):
+    """Projects (registered domains) with per-domain KPIs — the SE-Ranking-style overview."""
+    _backfill_projects()   # organize any legacy keywords into projects (idempotent)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT p.id, p.name, p.domain, p.location, p.created_at,
+                           COUNT(kt.id)                                        AS keyword_count,
+                           COUNT(kr.position)                                  AS ranking_count,
+                           ROUND(AVG(kr.position)::numeric, 1)                 AS avg_position,
+                           COUNT(*) FILTER (WHERE kr.position <= 3)            AS top3,
+                           COUNT(*) FILTER (WHERE kr.position <= 10)           AS top10,
+                           MAX(kr.checked_at)                                  AS last_checked
+                    FROM tracking_projects p
+                    LEFT JOIN keyword_tracking kt ON kt.project_id = p.id
+                    LEFT JOIN LATERAL (
+                        SELECT position, checked_at FROM keyword_rankings
+                        WHERE tracking_id = kt.id ORDER BY checked_at DESC LIMIT 1
+                    ) kr ON true
+                    GROUP BY p.id
+                    ORDER BY COUNT(kt.id) DESC, p.created_at DESC
+                """)
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        r["avg_position"] = float(r["avg_position"]) if r["avg_position"] is not None else None
+        for k in ("keyword_count", "ranking_count", "top3", "top10"):
+            r[k] = int(r[k] or 0)
+        for k in ("created_at", "last_checked"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+        kc = r["keyword_count"] or 0
+        r["visibility"] = round(r["top10"] / kc * 100) if kc else 0   # % of keywords in top 10
+    return {"projects": rows}
+
+
+@app.post("/api/tracking/projects")
+def tracking_project_add(req: ProjectRequest, current_user=Depends(_decode_token)):
+    dom = _clean_domain(req.domain)
+    if not dom:
+        raise HTTPException(status_code=400, detail="Enter a valid domain (e.g. example.com).")
+    pid = _ensure_project(dom, name=(req.name or dom), location=req.location)
+    if not pid:
+        raise HTTPException(status_code=500, detail="Could not create project.")
+    return {"id": pid, "domain": dom, "name": req.name or dom, "location": req.location}
+
+
+@app.delete("/api/tracking/projects/{project_id}")
+def tracking_project_delete(project_id: str, current_user=Depends(_decode_token)):
+    """Delete a project and all its keywords (cascade)."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM tracking_projects WHERE id = %s RETURNING id", (project_id,))
+                deleted = cur.fetchone()
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"ok": True}
 
 
 @app.get("/api/tracking/{tracking_id}/history")
