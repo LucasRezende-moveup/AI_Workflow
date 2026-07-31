@@ -137,7 +137,7 @@ def fetch_serp_via_serpapi(query, location_name="Global (No Geolocation)"):
 
     params = {
         "q": query,
-        "num": 30,
+        "num": 10,
         "api_key": api_key,
         "engine": "google",
     }
@@ -158,7 +158,7 @@ def fetch_serp_via_serpapi(query, location_name="Global (No Geolocation)"):
         organic = [
             {"title": r.get("title", ""), "link": r.get("link", ""), "snippet": r.get("snippet", "N/A"),
              "position": r.get("position")}
-            for r in data.get("organic_results", [])[:30]
+            for r in data.get("organic_results", [])[:10]
         ]
         related_keywords = [r["query"] for r in data.get("related_searches", [])[:8] if r.get("query")]
         paa = [

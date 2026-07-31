@@ -734,9 +734,10 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
     except Exception:
         pass
 
-    # Top 3 organic domains (with their positions) — who's winning this SERP.
+    # Store the day's top 10 organic domains (with positions) — a record of who's winning
+    # the SERP, kept even when our target isn't in the top 10.
     top_domains = []
-    for i, r in enumerate(organic[:3]):
+    for i, r in enumerate(organic[:10]):
         try:
             dom = urlparse(r.get("link", "")).netloc.replace("www.", "")
         except Exception:

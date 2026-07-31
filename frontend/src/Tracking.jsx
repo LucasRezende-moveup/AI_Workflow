@@ -183,7 +183,7 @@ function TrackedRow({ item, onDelete, onCheck }) {
           {Array.isArray(item.top_domains) && item.top_domains.length > 0 && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 5 }}>
               <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Top 3</span>
-              {item.top_domains.map(t => {
+              {item.top_domains.slice(0, 3).map(t => {
                 const mine = item.target_url && t.domain === hostname(item.target_url);
                 return (
                   <span key={t.position} style={{
@@ -194,6 +194,11 @@ function TrackedRow({ item, onDelete, onCheck }) {
                   </span>
                 );
               })}
+              {item.top_domains.length > 3 && (
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }} title={item.top_domains.slice(3).map(t => `${t.position}. ${t.domain}`).join('\n')}>
+                  +{item.top_domains.length - 3} more (top 10 stored)
+                </span>
+              )}
             </div>
           )}
         </div>
