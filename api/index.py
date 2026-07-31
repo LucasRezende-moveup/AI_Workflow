@@ -1064,9 +1064,9 @@ def tracking_history(tracking_id: str, current_user=Depends(_decode_token)):
         with _db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT position, fs_holder_domain, checked_at
+                    """SELECT position, ranking_url, fs_holder_domain, top_domains, checked_at
                        FROM keyword_rankings WHERE tracking_id = %s
-                       ORDER BY checked_at ASC LIMIT 90""",
+                       ORDER BY checked_at ASC LIMIT 180""",
                     (tracking_id,)
                 )
                 rows = [dict(r) for r in cur.fetchall()]
@@ -1076,6 +1076,59 @@ def tracking_history(tracking_id: str, current_user=Depends(_decode_token)):
                 return {"history": rows}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/tracking/projects/{project_id}/history")
+def tracking_project_history(project_id: str, days: int = 90, current_user=Depends(_decode_token)):
+    """Daily project-level ranking trends, aggregated from the stored keyword snapshots
+    (latest check per keyword per day) — the SE-Ranking-style 'project dynamics' series."""
+    days = min(max(days, 1), 365)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    WITH daily AS (
+                        SELECT (kr.checked_at AT TIME ZONE 'UTC')::date AS d,
+                               kr.tracking_id, kr.position,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY kr.tracking_id, (kr.checked_at AT TIME ZONE 'UTC')::date
+                                   ORDER BY kr.checked_at DESC
+                               ) AS rn
+                        FROM keyword_rankings kr
+                        JOIN keyword_tracking kt ON kt.id = kr.tracking_id
+                        WHERE kt.project_id = %s
+                          AND kr.checked_at > NOW() - (%s || ' days')::interval
+                    )
+                    SELECT d AS date,
+                           COUNT(*)                                   AS keyword_count,
+                           COUNT(position)                            AS ranked_count,
+                           ROUND(AVG(position)::numeric, 1)           AS avg_position,
+                           COUNT(*) FILTER (WHERE position <= 3)      AS top3,
+                           COUNT(*) FILTER (WHERE position <= 10)     AS top10,
+                           COUNT(*) FILTER (WHERE position <= 30)     AS top30
+                    FROM daily WHERE rn = 1
+                    GROUP BY d ORDER BY d ASC
+                    """,
+                    (project_id, days),
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    out = []
+    for r in rows:
+        kc = int(r["keyword_count"] or 0)
+        out.append({
+            "date": str(r["date"]),
+            "keyword_count": kc,
+            "ranked_count": int(r["ranked_count"] or 0),
+            "avg_position": float(r["avg_position"]) if r["avg_position"] is not None else None,
+            "top3": int(r["top3"] or 0),
+            "top10": int(r["top10"] or 0),
+            "top30": int(r["top30"] or 0),
+            "visibility": round(int(r["top10"] or 0) / kc * 100) if kc else 0,
+        })
+    return {"history": out}
 
 
 @app.post("/api/tracking/{tracking_id}/check")

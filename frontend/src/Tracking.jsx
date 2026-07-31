@@ -74,6 +74,68 @@ function PositionChart({ history }) {
   );
 }
 
+const HISTORY_METRICS = {
+  avg_position: { label: 'Avg. position', color: '#E20071', reversed: true },
+  visibility:   { label: 'Visibility %', color: '#4ade80', reversed: false },
+  top10:        { label: 'In top 10',    color: '#60a5fa', reversed: false },
+  top3:         { label: 'In top 3',     color: '#f59e0b', reversed: false },
+};
+
+function ProjectHistoryChart({ projectId }) {
+  const [data, setData]     = useState(null);
+  const [metric, setMetric] = useState('avg_position');
+
+  useEffect(() => {
+    setData(null);
+    API(`/api/tracking/projects/${projectId}/history?days=90`)
+      .then(r => r.json()).then(d => setData(d.history || [])).catch(() => setData([]));
+  }, [projectId]);
+
+  if (data === null) return <div role="status" style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading history…</div>;
+  if (data.length < 2) return (
+    <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+      Trends appear after a couple of daily checks — history is building.
+    </div>
+  );
+
+  const m = HISTORY_METRICS[metric];
+  const chartData = data.map(d => ({
+    label: new Date(d.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    value: d[metric],
+  })).filter(d => d.value != null);
+  const vals = chartData.map(d => d.value);
+  const domain = metric === 'avg_position'
+    ? [Math.max(1, Math.floor(Math.min(...vals)) - 1), Math.ceil(Math.max(...vals)) + 1]
+    : metric === 'visibility' ? [0, 100] : [0, Math.max(...vals) + 1];
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        {Object.entries(HISTORY_METRICS).map(([k, mm]) => (
+          <button key={k} type="button" onClick={() => setMetric(k)} aria-pressed={metric === k}
+            style={metric === k
+              ? { background: 'rgba(226,0,113,0.15)', border: '1px solid rgba(226,0,113,0.4)', color: '#fff', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }
+              : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+            {mm.label}
+          </button>
+        ))}
+      </div>
+      <ResponsiveContainer width="100%" height={180}>
+        <LineChart data={chartData} margin={{ top: 8, right: 10, bottom: 0, left: -18 }}>
+          <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(chartData.length / 6)} />
+          <YAxis domain={domain} reversed={m.reversed} tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false}
+            tickFormatter={v => metric === 'avg_position' ? `#${v}` : (metric === 'visibility' ? `${v}%` : v)} allowDecimals={false} />
+          <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.78rem' }}
+            labelStyle={{ color: '#94a3b8' }}
+            formatter={v => [metric === 'avg_position' ? `#${v}` : (metric === 'visibility' ? `${v}%` : v), m.label]} />
+          <Line type="monotone" dataKey="value" stroke={m.color} strokeWidth={2}
+            dot={{ fill: m.color, r: 2.5, strokeWidth: 0 }} activeDot={{ r: 5, fill: m.color }} connectNulls />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function TrackedRow({ item, onDelete, onCheck }) {
   const [expanded, setExpanded] = useState(false);
   const [history, setHistory]   = useState(null);
@@ -493,6 +555,13 @@ export default function Tracking() {
             <Kpi label="Top 3" value={detailSummary.top3} color="#4ade80" />
             <Kpi label="Top 10" value={detailSummary.top10} />
             <Kpi label="Not ranking" value={detailSummary.notRanking} color="#f87171" />
+          </div>
+        )}
+
+        {activeProject && (
+          <div className="glass-panel">
+            <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: 4 }}>Project dynamics · 90 days</div>
+            <ProjectHistoryChart projectId={activeProject.id} />
           </div>
         )}
 
