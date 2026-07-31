@@ -711,7 +711,10 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
     if target_url and organic:
         target_host = ""
         try:
-            target_host = urlparse(target_url).netloc.replace("www.", "")
+            # A URL pasted without a scheme (e.g. "em.com.br/…") has an empty netloc,
+            # which silently broke position matching — normalize before parsing.
+            tu = target_url if target_url.startswith(("http://", "https://")) else "https://" + target_url
+            target_host = urlparse(tu).netloc.replace("www.", "")
         except Exception:
             pass
         for i, r in enumerate(organic):

@@ -9,7 +9,10 @@ const API = (path, opts = {}) => {
 
 function hostname(url) {
   if (!url) return '';
-  try { return new URL(url).hostname.replace('www.', ''); } catch { return url; }
+  try {
+    const u = /^https?:\/\//.test(url) ? url : 'https://' + url;
+    return new URL(u).hostname.replace('www.', '');
+  } catch { return url; }
 }
 
 function urlPath(url) {
