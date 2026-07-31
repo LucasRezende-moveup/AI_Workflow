@@ -720,7 +720,7 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
             except Exception:
                 link_host = ""
             if target_host and target_host in link_host:
-                position = i + 1
+                position = r.get("position") or (i + 1)   # prefer Google's true rank
                 ranking_url = r.get("link")
                 break
     fs = organic[0] if organic else {}
@@ -739,7 +739,7 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
         except Exception:
             dom = ""
         if dom:
-            top_domains.append({"position": i + 1, "domain": dom})
+            top_domains.append({"position": r.get("position") or (i + 1), "domain": dom})
 
     # Load previous snapshot before saving new one
     prev_snapshot = {}
