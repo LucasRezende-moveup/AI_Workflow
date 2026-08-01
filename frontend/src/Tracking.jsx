@@ -148,7 +148,7 @@ function ProjectHistoryChart({ projectId }) {
 
   useEffect(() => {
     setData(null);
-    API(`/api/tracking/projects/${projectId}/history?days=90`)
+    API(`/api/tracking/projects/${projectId}/history?days=365`)
       .then(r => r.json()).then(d => setData(d.history || [])).catch(() => setData([]));
   }, [projectId]);
 
@@ -205,7 +205,7 @@ function CompetitorChart({ projectId }) {
 
   const load = useCallback(() => {
     setData(null);
-    API(`/api/tracking/projects/${projectId}/competitors?days=90`)
+    API(`/api/tracking/projects/${projectId}/competitors?days=365`)
       .then(r => r.json()).then(setData).catch(() => setData({ domains: [], history: [] }));
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
@@ -731,11 +731,11 @@ export default function Tracking() {
         {activeProject && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
             <div className="glass-panel">
-              <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: 4 }}>Project dynamics · 90 days</div>
+              <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: 4 }}>Project dynamics · 1 year</div>
               <ProjectHistoryChart projectId={activeProject.id} />
             </div>
             <div className="glass-panel">
-              <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: 4 }}>Competitors · 90 days</div>
+              <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: 4 }}>Competitors · 1 year</div>
               <CompetitorChart projectId={activeProject.id} />
             </div>
           </div>
