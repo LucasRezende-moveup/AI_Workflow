@@ -179,6 +179,17 @@ def _ensure_schema():
                     ALTER TABLE keyword_tracking
                     ADD COLUMN IF NOT EXISTS project_id TEXT REFERENCES tracking_projects(id) ON DELETE CASCADE
                 """)
+                # Explicitly pinned competitor domains per project (always charted, even if
+                # their SERP coverage dips) — alongside the auto-detected rivals.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS project_competitors (
+                        id         TEXT PRIMARY KEY,
+                        project_id TEXT REFERENCES tracking_projects(id) ON DELETE CASCADE,
+                        domain     TEXT NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE (project_id, domain)
+                    )
+                """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS keyword_rankings (
                         id               TEXT PRIMARY KEY,
@@ -1194,15 +1205,73 @@ def tracking_project_competitors(project_id: str, days: int = 90, limit: int = 5
             "vis": round(top10 / day_kw * 100),
         }
 
-    competitors = [d for d in sorted(total_cov, key=lambda x: -total_cov[x]) if d != target]
-    selected = ([target] if target in total_cov else []) + competitors[: max(limit - 1, 1)]
-    if not selected:
-        selected = competitors[:limit]
+    # Pinned competitors are always shown (even if their coverage dips); auto-detected
+    # rivals fill the remaining slots up to `limit`.
+    pinned = _pinned_competitors(project_id)
+    selected = []
+    if target:
+        selected.append(target)
+    for d in pinned:
+        if d not in selected:
+            selected.append(d)
+    cap = max(limit, len(selected))
+    for d in sorted(total_cov, key=lambda x: -total_cov[x]):
+        if len(selected) >= cap:
+            break
+        if d not in selected:
+            selected.append(d)
 
     history = [{"date": date, "values": {d: by_date[date].get(d) for d in selected}}
                for date in sorted(by_date)]
-    domains = [{"domain": d, "is_target": d == target, "coverage": total_cov[d]} for d in selected]
+    domains = [{"domain": d, "is_target": d == target, "pinned": d in pinned,
+                "coverage": total_cov.get(d, 0)} for d in selected]
     return {"target_domain": target, "domains": domains, "history": history}
+
+
+def _pinned_competitors(project_id: str) -> list:
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT domain FROM project_competitors WHERE project_id = %s ORDER BY created_at", (project_id,))
+                return [r["domain"] for r in cur.fetchall()]
+    except Exception:
+        return []
+
+
+class CompetitorRequest(BaseModel):
+    domain: str
+
+
+@app.post("/api/tracking/projects/{project_id}/competitors")
+def tracking_competitor_add(project_id: str, req: CompetitorRequest, current_user=Depends(_decode_token)):
+    dom = _clean_domain(req.domain)
+    if not dom:
+        raise HTTPException(status_code=400, detail="Enter a valid competitor domain (e.g. rival.com).")
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO project_competitors (id, project_id, domain) VALUES (%s,%s,%s) "
+                    "ON CONFLICT (project_id, domain) DO NOTHING",
+                    (str(uuid.uuid4()), project_id, dom),
+                )
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"ok": True, "domain": dom, "pinned": _pinned_competitors(project_id)}
+
+
+@app.delete("/api/tracking/projects/{project_id}/competitors/{domain}")
+def tracking_competitor_delete(project_id: str, domain: str, current_user=Depends(_decode_token)):
+    dom = _clean_domain(domain)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM project_competitors WHERE project_id = %s AND domain = %s", (project_id, dom))
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"ok": True, "pinned": _pinned_competitors(project_id)}
 
 
 @app.post("/api/tracking/{tracking_id}/check")

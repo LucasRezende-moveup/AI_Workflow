@@ -200,22 +200,37 @@ function ProjectHistoryChart({ projectId }) {
 function CompetitorChart({ projectId }) {
   const [data, setData]     = useState(null);
   const [metric, setMetric] = useState('pos');   // 'pos' | 'vis'
+  const [addVal, setAddVal] = useState('');
+  const [busy, setBusy]     = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setData(null);
     API(`/api/tracking/projects/${projectId}/competitors?days=90`)
       .then(r => r.json()).then(setData).catch(() => setData({ domains: [], history: [] }));
   }, [projectId]);
+  useEffect(() => { load(); }, [load]);
+
+  async function addCompetitor(e) {
+    e.preventDefault();
+    if (!addVal.trim()) return;
+    setBusy(true);
+    await API(`/api/tracking/projects/${projectId}/competitors`, { method: 'POST', body: JSON.stringify({ domain: addVal.trim() }) }).catch(() => {});
+    setAddVal(''); setBusy(false); load();
+  }
+  async function pin(domain) {
+    setBusy(true);
+    await API(`/api/tracking/projects/${projectId}/competitors`, { method: 'POST', body: JSON.stringify({ domain }) }).catch(() => {});
+    setBusy(false); load();
+  }
+  async function unpin(domain) {
+    setBusy(true);
+    await API(`/api/tracking/projects/${projectId}/competitors/${encodeURIComponent(domain)}`, { method: 'DELETE' }).catch(() => {});
+    setBusy(false); load();
+  }
 
   if (data === null) return <div role="status" style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading competitors…</div>;
   const domains = data.domains || [];
   const history = data.history || [];
-  if (domains.length === 0 || history.length < 2) return (
-    <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-      Competitor trends appear once a few daily checks have accrued for this project's keywords.
-    </div>
-  );
-
   const colors = {};
   let ci = 0;
   domains.forEach(d => { colors[d.domain] = d.is_target ? '#E20071' : SERP_PALETTE[ci++ % SERP_PALETTE.length]; });
@@ -229,38 +244,64 @@ function CompetitorChart({ projectId }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-        {[['pos', 'Avg. position'], ['vis', 'Visibility %']].map(([k, lbl]) => (
-          <button key={k} type="button" onClick={() => setMetric(k)} aria-pressed={metric === k}
-            style={metric === k
-              ? { background: 'rgba(226,0,113,0.15)', border: '1px solid rgba(226,0,113,0.4)', color: '#fff', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }
-              : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
-            {lbl}
-          </button>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 10 }}>
-        {domains.map(d => (
-          <span key={d.domain} title={`${d.coverage} top-10 appearances`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: d.is_target ? '#fff' : 'var(--text-muted)', fontWeight: d.is_target ? 700 : 500 }}>
-            <span style={{ width: 11, height: 3, background: colors[d.domain], borderRadius: 2, display: 'inline-block' }} />{d.domain}{d.is_target ? ' (us)' : ''}
-          </span>
-        ))}
-      </div>
-      <ResponsiveContainer width="100%" height={210}>
-        <LineChart data={chartData} margin={{ top: 8, right: 10, bottom: 0, left: -18 }}>
-          <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(chartData.length / 6)} />
-          <YAxis domain={reversed ? [1, 10] : [0, 100]} reversed={reversed} ticks={reversed ? [1, 3, 5, 10] : undefined}
-            tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={fmt} allowDecimals={false} />
-          <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.76rem' }} labelStyle={{ color: '#94a3b8' }} formatter={(v, name) => [fmt(v), name]} />
+      {/* Add competitor */}
+      <form onSubmit={addCompetitor} style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+        <input className="glass-input" value={addVal} onChange={e => setAddVal(e.target.value)} disabled={busy}
+          placeholder="Pin a competitor — e.g. rival.com" aria-label="Add competitor domain"
+          style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px' }} />
+        <button type="submit" className="btn-secondary" disabled={busy || !addVal.trim()} style={{ fontSize: '0.78rem', padding: '6px 12px', whiteSpace: 'nowrap' }}>
+          <Plus size={13} aria-hidden="true" /> Pin
+        </button>
+      </form>
+
+      {/* Legend with pin / remove controls */}
+      {domains.length > 0 && (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
           {domains.map(d => (
-            <Line key={d.domain} type="monotone" dataKey={d.domain} stroke={colors[d.domain]} strokeWidth={d.is_target ? 2.5 : 1.5}
-              dot={{ fill: colors[d.domain], r: d.is_target ? 3 : 2, strokeWidth: 0 }} activeDot={{ r: 4 }} connectNulls={false} />
+            <span key={d.domain} title={`${d.coverage} top-10 appearances`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: d.is_target ? '#fff' : 'var(--text-muted)', fontWeight: d.is_target || d.pinned ? 700 : 500 }}>
+              <span style={{ width: 11, height: 3, background: colors[d.domain], borderRadius: 2, display: 'inline-block' }} />
+              {d.domain}{d.is_target ? ' (us)' : d.pinned ? ' 📌' : ''}
+              {!d.is_target && (d.pinned
+                ? <button type="button" onClick={() => unpin(d.domain)} disabled={busy} aria-label={`Unpin ${d.domain}`} title="Unpin" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 0, display: 'inline-flex' }}><X size={11} aria-hidden="true" /></button>
+                : <button type="button" onClick={() => pin(d.domain)} disabled={busy} aria-label={`Pin ${d.domain}`} title="Always track this competitor" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 0, fontSize: '0.62rem' }}>pin</button>)}
+            </span>
           ))}
-        </LineChart>
-      </ResponsiveContainer>
-      <div style={{ fontSize: '0.64rem', color: 'var(--text-dim)', marginTop: 6, textAlign: 'center' }}>
-        {metric === 'pos' ? 'Average position across this project’s keywords' : '% of the project’s keywords each domain ranks in the top 10'} — auto-detected top rivals.
-      </div>
+        </div>
+      )}
+
+      {history.length < 2 ? (
+        <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+          Trends appear once a few daily checks have accrued for this project's keywords.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+            {[['pos', 'Avg. position'], ['vis', 'Visibility %']].map(([k, lbl]) => (
+              <button key={k} type="button" onClick={() => setMetric(k)} aria-pressed={metric === k}
+                style={metric === k
+                  ? { background: 'rgba(226,0,113,0.15)', border: '1px solid rgba(226,0,113,0.4)', color: '#fff', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }
+                  : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+          <ResponsiveContainer width="100%" height={210}>
+            <LineChart data={chartData} margin={{ top: 8, right: 10, bottom: 0, left: -18 }}>
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(chartData.length / 6)} />
+              <YAxis domain={reversed ? [1, 10] : [0, 100]} reversed={reversed} ticks={reversed ? [1, 3, 5, 10] : undefined}
+                tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={fmt} allowDecimals={false} />
+              <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.76rem' }} labelStyle={{ color: '#94a3b8' }} formatter={(v, name) => [fmt(v), name]} />
+              {domains.map(d => (
+                <Line key={d.domain} type="monotone" dataKey={d.domain} stroke={colors[d.domain]} strokeWidth={d.is_target ? 2.5 : 1.5}
+                  dot={{ fill: colors[d.domain], r: d.is_target ? 3 : 2, strokeWidth: 0 }} activeDot={{ r: 4 }} connectNulls={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+          <div style={{ fontSize: '0.64rem', color: 'var(--text-dim)', marginTop: 6, textAlign: 'center' }}>
+            {metric === 'pos' ? 'Average position across this project’s keywords' : '% of the project’s keywords each domain ranks in the top 10'} — 📌 pinned + auto-detected rivals.
+          </div>
+        </>
+      )}
     </div>
   );
 }
