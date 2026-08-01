@@ -976,6 +976,75 @@ def tracking_add_bulk(req: TrackingBulkRequest, current_user=Depends(_decode_tok
     return {"added": len(out), "capped": len(req.items) > 50, "items": out}
 
 
+class ImportRow(BaseModel):
+    keyword: str
+    position: Optional[int] = None
+    checked_at: str
+
+
+class TrackingImportRequest(BaseModel):
+    domain: str
+    location: str = "Global (No Geolocation)"
+    target_url: Optional[str] = None
+    keywords: List[str] = []
+    history: List[ImportRow] = []
+
+
+@app.post("/api/tracking/import")
+def tracking_import(req: TrackingImportRequest, authorization: str = Header(None)):
+    """One-off bulk import of keywords + historical ranking snapshots into a project.
+    Gated by the IMPORT_TOKEN env var (endpoint is inert when it isn't set)."""
+    token = os.getenv("IMPORT_TOKEN", "")
+    if not token or authorization != f"Bearer {token}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    pid = _ensure_project(req.domain, location=req.location)
+    if not pid:
+        raise HTTPException(status_code=400, detail="Invalid domain.")
+    dom = _clean_domain(req.domain)
+    target = req.target_url or ("https://" + dom + "/")
+
+    kw_map = {}
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, keyword FROM keyword_tracking WHERE project_id = %s", (pid,))
+                for r in cur.fetchall():
+                    kw_map[(r["keyword"] or "").strip().lower()] = r["id"]
+                for kw in list(req.keywords) + [h.keyword for h in req.history]:
+                    k = (kw or "").strip()
+                    if not k or k.lower() in kw_map:
+                        continue
+                    tid = str(uuid.uuid4())
+                    cur.execute(
+                        "INSERT INTO keyword_tracking (id, keyword, target_url, location, project_id) VALUES (%s,%s,%s,%s,%s)",
+                        (tid, k, target, req.location, pid),
+                    )
+                    kw_map[k.lower()] = tid
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"keyword insert failed: {exc}")
+
+    inserted = 0
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                for h in req.history:
+                    tid = kw_map.get((h.keyword or "").strip().lower())
+                    if not tid:
+                        continue
+                    cur.execute(
+                        "INSERT INTO keyword_rankings (id, tracking_id, position, checked_at) VALUES (%s,%s,%s,%s)",
+                        (str(uuid.uuid4()), tid, h.position, h.checked_at),
+                    )
+                    inserted += 1
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"snapshot insert failed: {exc}")
+
+    return {"project_id": pid, "domain": dom, "keywords": len(kw_map), "snapshots_inserted": inserted}
+
+
 @app.get("/api/tracking")
 def tracking_list(current_user=Depends(_decode_token)):
     try:
