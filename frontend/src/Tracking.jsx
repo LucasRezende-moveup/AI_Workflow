@@ -35,6 +35,17 @@ const btnStyle = {
   display: 'flex', alignItems: 'center', transition: 'background 0.15s',
 };
 
+// Domain favicon via Google's service, with a Globe fallback if it fails to load.
+function Favicon({ domain, size = 16, style }) {
+  const [failed, setFailed] = useState(false);
+  if (!domain || failed) return <Globe size={size} color="var(--primary)" aria-hidden="true" style={{ flexShrink: 0, ...style }} />;
+  return (
+    <img src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
+      width={size} height={size} alt="" loading="lazy" onError={() => setFailed(true)}
+      style={{ borderRadius: 3, flexShrink: 0, ...style }} />
+  );
+}
+
 function PositionBadge({ position }) {
   if (position == null) return (
     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>not ranking</span>
@@ -545,8 +556,8 @@ function ProjectCard({ project, onOpen, onDelete }) {
       <div style={{ padding: '16px 18px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <Globe size={15} color="var(--primary)" aria-hidden="true" style={{ flexShrink: 0 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Favicon domain={project.domain} size={18} />
               <span style={{ fontWeight: 700, fontSize: '0.95rem', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.domain}</span>
             </div>
             {project.name && project.name !== project.domain && (
@@ -655,7 +666,7 @@ export default function Tracking() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <button onClick={() => { setActiveId(null); setShowForm(false); }} aria-label="Back to projects" style={btnStyle}><ArrowLeft size={15} aria-hidden="true" /></button>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Globe size={18} color="var(--primary)" aria-hidden="true" />
+              {activeProject ? <Favicon domain={activeProject.domain} size={20} /> : <Globe size={18} color="var(--primary)" aria-hidden="true" />}
               <span style={{ fontWeight: 700, fontSize: '1.05rem', color: '#fff' }}>{label}</span>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>· {detailItems.length} keyword{detailItems.length !== 1 ? 's' : ''}</span>
             </div>
