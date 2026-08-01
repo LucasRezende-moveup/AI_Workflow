@@ -1131,6 +1131,80 @@ def tracking_project_history(project_id: str, days: int = 90, current_user=Depen
     return {"history": out}
 
 
+@app.get("/api/tracking/projects/{project_id}/competitors")
+def tracking_project_competitors(project_id: str, days: int = 90, limit: int = 5, current_user=Depends(_decode_token)):
+    """Competitor view: for every domain seen in the project's keyword SERPs, its average
+    position + visibility across the project's keywords, per day. Auto-detects the top rivals
+    (by top-10 coverage) alongside our own domain, so their volatility is visible over time."""
+    days = min(max(days, 1), 365)
+    limit = min(max(limit, 2), 8)
+    target = _clean_domain(_project_domain(project_id) or "")
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    WITH latest AS (
+                        SELECT kr.tracking_id, (kr.checked_at AT TIME ZONE 'UTC')::date AS d, kr.top_domains,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY kr.tracking_id, (kr.checked_at AT TIME ZONE 'UTC')::date
+                                   ORDER BY kr.checked_at DESC) AS rn
+                        FROM keyword_rankings kr
+                        JOIN keyword_tracking kt ON kt.id = kr.tracking_id
+                        WHERE kt.project_id = %s
+                          AND kr.checked_at > NOW() - (%s || ' days')::interval
+                          AND kr.top_domains IS NOT NULL
+                    ),
+                    kwcount AS (
+                        SELECT d, COUNT(DISTINCT tracking_id) AS kc
+                        FROM latest WHERE rn = 1 GROUP BY d
+                    ),
+                    exploded AS (
+                        SELECT d, (e->>'domain') AS domain, (e->>'position')::int AS position
+                        FROM latest, jsonb_array_elements(latest.top_domains) e
+                        WHERE rn = 1
+                    )
+                    SELECT ex.d AS date, ex.domain,
+                           ROUND(AVG(ex.position)::numeric, 1)            AS avg_position,
+                           COUNT(*) FILTER (WHERE ex.position <= 10)      AS top10,
+                           kc.kc                                          AS day_kw
+                    FROM exploded ex JOIN kwcount kc ON kc.d = ex.d
+                    GROUP BY ex.d, ex.domain, kc.kc
+                    ORDER BY ex.d ASC
+                    """,
+                    (project_id, days),
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    from collections import defaultdict
+    total_cov = defaultdict(int)
+    by_date = defaultdict(dict)
+    for r in rows:
+        dom = r["domain"]
+        if not dom:
+            continue
+        date = str(r["date"])
+        top10 = int(r["top10"] or 0)
+        total_cov[dom] += top10
+        day_kw = int(r["day_kw"] or 1) or 1
+        by_date[date][dom] = {
+            "pos": float(r["avg_position"]) if r["avg_position"] is not None else None,
+            "vis": round(top10 / day_kw * 100),
+        }
+
+    competitors = [d for d in sorted(total_cov, key=lambda x: -total_cov[x]) if d != target]
+    selected = ([target] if target in total_cov else []) + competitors[: max(limit - 1, 1)]
+    if not selected:
+        selected = competitors[:limit]
+
+    history = [{"date": date, "values": {d: by_date[date].get(d) for d in selected}}
+               for date in sorted(by_date)]
+    domains = [{"domain": d, "is_target": d == target, "coverage": total_cov[d]} for d in selected]
+    return {"target_domain": target, "domains": domains, "history": history}
+
+
 @app.post("/api/tracking/{tracking_id}/check")
 def tracking_check(tracking_id: str, current_user=Depends(_decode_token)):
     try:

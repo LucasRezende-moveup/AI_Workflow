@@ -186,6 +186,74 @@ function ProjectHistoryChart({ projectId }) {
   );
 }
 
+function CompetitorChart({ projectId }) {
+  const [data, setData]     = useState(null);
+  const [metric, setMetric] = useState('pos');   // 'pos' | 'vis'
+
+  useEffect(() => {
+    setData(null);
+    API(`/api/tracking/projects/${projectId}/competitors?days=90`)
+      .then(r => r.json()).then(setData).catch(() => setData({ domains: [], history: [] }));
+  }, [projectId]);
+
+  if (data === null) return <div role="status" style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading competitors…</div>;
+  const domains = data.domains || [];
+  const history = data.history || [];
+  if (domains.length === 0 || history.length < 2) return (
+    <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+      Competitor trends appear once a few daily checks have accrued for this project's keywords.
+    </div>
+  );
+
+  const colors = {};
+  let ci = 0;
+  domains.forEach(d => { colors[d.domain] = d.is_target ? '#E20071' : SERP_PALETTE[ci++ % SERP_PALETTE.length]; });
+  const chartData = history.map(h => {
+    const row = { label: new Date(h.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
+    domains.forEach(d => { const v = h.values[d.domain]; row[d.domain] = v ? (metric === 'pos' ? v.pos : v.vis) : null; });
+    return row;
+  });
+  const reversed = metric === 'pos';
+  const fmt = v => metric === 'pos' ? `#${v}` : `${v}%`;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+        {[['pos', 'Avg. position'], ['vis', 'Visibility %']].map(([k, lbl]) => (
+          <button key={k} type="button" onClick={() => setMetric(k)} aria-pressed={metric === k}
+            style={metric === k
+              ? { background: 'rgba(226,0,113,0.15)', border: '1px solid rgba(226,0,113,0.4)', color: '#fff', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }
+              : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 10 }}>
+        {domains.map(d => (
+          <span key={d.domain} title={`${d.coverage} top-10 appearances`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: d.is_target ? '#fff' : 'var(--text-muted)', fontWeight: d.is_target ? 700 : 500 }}>
+            <span style={{ width: 11, height: 3, background: colors[d.domain], borderRadius: 2, display: 'inline-block' }} />{d.domain}{d.is_target ? ' (us)' : ''}
+          </span>
+        ))}
+      </div>
+      <ResponsiveContainer width="100%" height={210}>
+        <LineChart data={chartData} margin={{ top: 8, right: 10, bottom: 0, left: -18 }}>
+          <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(chartData.length / 6)} />
+          <YAxis domain={reversed ? [1, 10] : [0, 100]} reversed={reversed} ticks={reversed ? [1, 3, 5, 10] : undefined}
+            tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={fmt} allowDecimals={false} />
+          <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.76rem' }} labelStyle={{ color: '#94a3b8' }} formatter={(v, name) => [fmt(v), name]} />
+          {domains.map(d => (
+            <Line key={d.domain} type="monotone" dataKey={d.domain} stroke={colors[d.domain]} strokeWidth={d.is_target ? 2.5 : 1.5}
+              dot={{ fill: colors[d.domain], r: d.is_target ? 3 : 2, strokeWidth: 0 }} activeDot={{ r: 4 }} connectNulls={false} />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+      <div style={{ fontSize: '0.64rem', color: 'var(--text-dim)', marginTop: 6, textAlign: 'center' }}>
+        {metric === 'pos' ? 'Average position across this project’s keywords' : '% of the project’s keywords each domain ranks in the top 10'} — auto-detected top rivals.
+      </div>
+    </div>
+  );
+}
+
 function TrackedRow({ item, onDelete, onCheck }) {
   const [expanded, setExpanded] = useState(false);
   const [history, setHistory]   = useState(null);
@@ -609,9 +677,15 @@ export default function Tracking() {
         )}
 
         {activeProject && (
-          <div className="glass-panel">
-            <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: 4 }}>Project dynamics · 90 days</div>
-            <ProjectHistoryChart projectId={activeProject.id} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
+            <div className="glass-panel">
+              <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: 4 }}>Project dynamics · 90 days</div>
+              <ProjectHistoryChart projectId={activeProject.id} />
+            </div>
+            <div className="glass-panel">
+              <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)', marginBottom: 4 }}>Competitors · 90 days</div>
+              <CompetitorChart projectId={activeProject.id} />
+            </div>
           </div>
         )}
 
