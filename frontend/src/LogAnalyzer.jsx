@@ -284,7 +284,7 @@ export default function LogAnalyzer({ onData } = {}) {
                 background: progress >= 100 ? '#15803d' : 'linear-gradient(90deg, #E20071, #0891b2)',
                 borderRadius: 6,
                 transition: progress === 0 ? 'none' : 'width 0.15s ease',
-                boxShadow: progress >= 100 ? '0 0 12px rgba(74,222,128,0.5)' : '0 0 10px rgba(226,0,113,0.4)',
+                boxShadow: progress >= 100 ? '0 2px 8px rgba(21,128,61,0.35)' : '0 0 10px rgba(226,0,113,0.4)',
               }} />
             </div>
           </div>

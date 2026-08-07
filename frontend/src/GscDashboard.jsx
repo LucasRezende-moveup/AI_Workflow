@@ -1006,8 +1006,8 @@ export default function GscDashboard() {
                         <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8 }}
                           labelStyle={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}
                           formatter={v => [`#${v}`, 'Position']} labelFormatter={l => `Date: ${l}`} />
-                        <ReferenceLine y={10} stroke="rgba(245,158,11,0.4)" strokeDasharray="4 4" label={{ value: 'Top 10', fill: 'rgba(245,158,11,0.6)', fontSize: 10, position: 'right' }} />
-                        <ReferenceLine y={3}  stroke="rgba(74,222,128,0.4)" strokeDasharray="4 4" label={{ value: 'Top 3',  fill: 'rgba(74,222,128,0.6)',  fontSize: 10, position: 'right' }} />
+                        <ReferenceLine y={10} stroke="rgba(180,83,9,0.5)" strokeDasharray="4 4" label={{ value: 'Top 10', fill: '#b45309', fontSize: 10, position: 'right' }} />
+                        <ReferenceLine y={3}  stroke="rgba(21,128,61,0.5)" strokeDasharray="4 4" label={{ value: 'Top 3',  fill: '#15803d',  fontSize: 10, position: 'right' }} />
                         <Line type="monotone" dataKey="position" stroke="var(--primary)" strokeWidth={2}
                           dot={{ fill: 'var(--primary)', r: 4, strokeWidth: 0 }} activeDot={{ r: 6, fill: '#fff', stroke: '#E20071', strokeWidth: 2 }} />
                       </LineChart>

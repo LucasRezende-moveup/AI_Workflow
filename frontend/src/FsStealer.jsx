@@ -518,7 +518,7 @@ export default function FsStealer() {
                       </div>
                       {/* URL row */}
                       <a href={row.link} target="_blank" rel="noopener noreferrer"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.73rem', color: isFs ? 'var(--primary)' : 'rgba(74,222,128,0.8)', marginBottom: 5, textDecoration: 'none', opacity: 0.9 }}>
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.73rem', color: isFs ? 'var(--primary)' : 'var(--success)', marginBottom: 5, textDecoration: 'none', opacity: 0.9 }}>
                         <Favicon url={row.link} />
                         {host}
                         <ExternalLink size={9} />

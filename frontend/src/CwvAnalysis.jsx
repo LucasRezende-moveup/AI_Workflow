@@ -54,7 +54,7 @@ function ScoreSparkline({ history }) {
         <polyline points={line} fill="none" stroke={color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
         {pts.map((p, i) => (
           <circle key={i} cx={p.x.toFixed(1)} cy={p.y.toFixed(1)} r={i === n - 1 ? 3.5 : 2}
-            fill={i === n - 1 ? color : `${color}80`} stroke={i === n - 1 ? 'rgba(10,10,20,0.6)' : 'none'} strokeWidth="1.5" />
+            fill={i === n - 1 ? color : `${color}80`} stroke={i === n - 1 ? 'rgba(255,255,255,0.95)' : 'none'} strokeWidth="1.5" />
         ))}
         <text x={last.x.toFixed(1)} y={(last.y - 6).toFixed(1)} fontSize="9" fontWeight="700" fill={color}
           textAnchor={last.x > W * 0.75 ? 'end' : 'middle'}>{last.s}</text>
@@ -64,7 +64,7 @@ function ScoreSparkline({ history }) {
             textAnchor={p.x < W * 0.2 ? 'start' : p.x > W * 0.8 ? 'end' : 'middle'}>{dayLabel(p.ts)}</text>
         ) : null)}
       </svg>
-      <div style={{ fontSize: '0.6rem', color: 'rgb(var(--ink) / 0.25)', textAlign: 'center' }}>
+      <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', textAlign: 'center' }}>
         {n} snapshot{n !== 1 ? 's' : ''}
       </div>
     </div>

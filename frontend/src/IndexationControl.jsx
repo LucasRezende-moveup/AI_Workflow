@@ -4,6 +4,20 @@ import { Globe, CheckCircle, AlertCircle, ArrowUpDown, ExternalLink, Filter, Map
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+// Row hover has to travel through a custom property as well as the row's own
+// background. The frozen URL column is position:sticky with an opaque fill (it
+// must occlude the cells scrolling under it), so it paints over the <tr>'s
+// background and can only pick the hover up by inheriting --row-bg.
+function hoverRow(tr, on) {
+  if (on) {
+    tr.style.background = 'var(--row-hover)';
+    tr.style.setProperty('--row-bg', 'var(--row-hover)');
+  } else {
+    tr.style.background = '';
+    tr.style.removeProperty('--row-bg');
+  }
+}
+
 function fmtCtr(raw) {
   if (raw == null) return '—';
   const n = parseFloat(raw);
@@ -211,10 +225,10 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
         </div>
         <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
           {[
-            { bg: 'rgba(74,222,128,0.8)',    label: 'PASS' },
-            { bg: 'rgba(245,158,11,0.7)',    label: 'NEUTRAL' },
-            { bg: 'rgba(248,113,113,0.7)',   label: 'FAIL' },
-            { bg: 'rgba(74,222,128,0.3)',    label: 'In GSC only' },
+            { bg: 'rgba(22,163,74,0.85)',   label: 'PASS' },
+            { bg: 'rgba(217,119,6,0.7)',    label: 'NEUTRAL' },
+            { bg: 'rgba(220,38,38,0.7)',    label: 'FAIL' },
+            { bg: 'rgba(22,163,74,0.32)',   label: 'In GSC only' },
             { bg: 'rgb(var(--ink) / 0.07)', border: '1px solid rgb(var(--ink) / 0.05)', label: 'Not indexed' },
             { bg: 'rgba(226,0,113,0.55)',    label: 'Site-wide' },
           ].map(({ bg, border, label }) => (
@@ -239,7 +253,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                   textAlign: 'left',
                   fontSize: '0.6rem', fontWeight: 700,
                   textTransform: 'uppercase', letterSpacing: '0.07em',
-                  color: 'rgb(var(--ink) / 0.32)',
+                  color: 'var(--text-dim)',
                   borderLeft: '1px solid rgb(var(--ink) / 0.1)',
                   whiteSpace: 'nowrap',
                 }}>
@@ -253,7 +267,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
               <th style={{
                 position: 'sticky', left: 0, zIndex: 2, background: BG,
                 width: URL_W, minWidth: URL_W, padding: '0 12px 8px 0',
-                textAlign: 'left', fontSize: '0.62rem', color: 'rgb(var(--ink) / 0.25)',
+                textAlign: 'left', fontSize: '0.62rem', color: 'var(--text-dim)',
               }}>
                 {dates.length > 0 && `${dates.length} days`}
               </th>
@@ -281,7 +295,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                   </th>
                 );
               })}
-              <th style={{ paddingLeft: 14, paddingBottom: 7, textAlign: 'left', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'rgb(var(--ink) / 0.32)', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>
+              <th style={{ paddingLeft: 14, paddingBottom: 7, textAlign: 'left', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-dim)', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>
                 Coverage
               </th>
             </tr>
@@ -301,11 +315,12 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                   <tr
                     onClick={() => setSiteExpanded(v => !v)}
                     style={{ cursor: pages.length > 0 ? 'pointer' : 'default' }}
-                    onMouseEnter={e => { if (pages.length > 0) e.currentTarget.style.background = 'rgb(var(--ink) / 0.02)'; }}
-                    onMouseLeave={e => e.currentTarget.style.background = ''}
+                    onMouseEnter={e => { if (pages.length > 0) hoverRow(e.currentTarget, true); }}
+                    onMouseLeave={e => hoverRow(e.currentTarget, false)}
                   >
                     <td style={{
-                      position: 'sticky', left: 0, zIndex: 1, background: siteExpanded ? 'rgb(var(--ink) / 0.03)' : BG,
+                      position: 'sticky', left: 0, zIndex: 1,
+                      background: `var(--row-bg, ${siteExpanded ? 'var(--surface-alt)' : BG})`,
                       paddingRight: 12, paddingTop: 4, paddingBottom: 4, width: URL_W,
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -319,7 +334,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                         </span>
                         <span style={{ fontSize: '0.73rem', fontWeight: 700, color: 'rgba(226,0,113,0.95)', flex: 1 }}>All pages</span>
                         {pages.length > 0 && (
-                          <span style={{ flexShrink: 0, color: 'rgb(var(--ink) / 0.25)', transition: 'transform 0.15s', transform: siteExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                          <span style={{ flexShrink: 0, color: 'var(--text-dim)', transition: 'transform 0.15s', transform: siteExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
                             <ChevronDown size={12} />
                           </span>
                         )}
@@ -347,7 +362,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                               transition: 'box-shadow 0.1s, transform 0.1s',
                             }}
                             onMouseOver={e => {
-                              e.currentTarget.style.boxShadow = pg > 0 ? '0 0 0 2px rgba(226,0,113,0.5)' : '0 0 0 2px rgb(var(--ink) / 0.18)';
+                              e.currentTarget.style.boxShadow = pg > 0 ? '0 0 0 2px rgba(226,0,113,0.6)' : '0 0 0 2px rgb(var(--ink) / 0.34)';
                               e.currentTarget.style.transform = 'scale(1.18)';
                             }}
                             onMouseOut={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
@@ -358,7 +373,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                     <td style={{ paddingLeft: 14, whiteSpace: 'nowrap' }}>
                       <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
                         avg <span style={{ color: 'rgba(226,0,113,0.8)', fontWeight: 600 }}>{avg.toLocaleString()}</span> pages/day
-                        {pages.length > 0 && <span style={{ marginLeft: 8, color: 'rgb(var(--ink) / 0.25)' }}>· {pages.length.toLocaleString()} pages</span>}
+                        {pages.length > 0 && <span style={{ marginLeft: 8, color: 'var(--text-dim)' }}>· {pages.length.toLocaleString()} pages</span>}
                       </span>
                     </td>
                   </tr>
@@ -395,22 +410,22 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                               <thead style={{ position: 'sticky', top: 0, zIndex: 3 }}>
                                 <tr>
                                   <th style={{
-                                    position: 'sticky', left: 0, zIndex: 4, background: 'rgba(8,14,28,0.98)',
+                                    position: 'sticky', left: 0, zIndex: 4, background: 'var(--surface-well)',
                                     padding: '4px 12px 4px 0', textAlign: 'left', minWidth: 220, whiteSpace: 'nowrap',
-                                    fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgb(var(--ink) / 0.3)',
+                                    fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-dim)',
                                     borderBottom: '1px solid rgb(var(--ink) / 0.08)',
                                   }}>
                                     URL
                                   </th>
                                   {dates.map(date => (
                                     <th key={date} style={{
-                                      background: 'rgba(8,14,28,0.98)',
+                                      background: 'var(--surface-well)',
                                       padding: '0 2px 4px', verticalAlign: 'bottom', width: 22,
                                       borderBottom: '1px solid rgb(var(--ink) / 0.08)',
                                     }}>
                                       <div style={{
                                         writingMode: 'vertical-rl', transform: 'rotate(180deg)',
-                                        fontSize: '0.5rem', color: 'rgb(var(--ink) / 0.25)',
+                                        fontSize: '0.5rem', color: 'var(--text-dim)',
                                         fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
                                         lineHeight: 1, paddingBottom: 2,
                                       }}>
@@ -419,9 +434,9 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                                     </th>
                                   ))}
                                   <th style={{
-                                    background: 'rgba(8,14,28,0.98)',
+                                    background: 'var(--surface-well)',
                                     padding: '4px 0 4px 10px', whiteSpace: 'nowrap',
-                                    fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgb(var(--ink) / 0.3)',
+                                    fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-dim)',
                                     borderBottom: '1px solid rgb(var(--ink) / 0.08)',
                                   }}>
                                     Coverage
@@ -437,7 +452,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                                     return (
                                       <tr key={row.url} style={{ borderBottom: '1px solid rgb(var(--ink) / 0.03)' }}>
                                         <td style={{
-                                          position: 'sticky', left: 0, zIndex: 1, background: ri % 2 === 0 ? 'rgba(8,14,28,0.98)' : 'rgba(15,22,40,0.98)',
+                                          position: 'sticky', left: 0, zIndex: 1, background: ri % 2 === 0 ? 'var(--surface)' : 'var(--surface-alt)',
                                           padding: '3px 12px 3px 0', maxWidth: 240,
                                         }}>
                                           <a href={withSlash(row.url)} target="_blank" rel="noopener noreferrer"
@@ -506,12 +521,13 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                   <tr
                     onClick={() => toggleExpand(row.url)}
                     style={{ cursor: 'pointer' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgb(var(--ink) / 0.02)'}
-                    onMouseLeave={e => e.currentTarget.style.background = ''}
+                    onMouseEnter={e => hoverRow(e.currentTarget, true)}
+                    onMouseLeave={e => hoverRow(e.currentTarget, false)}
                   >
                     {/* Sticky URL label */}
                     <td style={{
-                      position: 'sticky', left: 0, zIndex: 1, background: expanded ? 'rgb(var(--ink) / 0.03)' : BG,
+                      position: 'sticky', left: 0, zIndex: 1,
+                      background: `var(--row-bg, ${expanded ? 'var(--surface-alt)' : BG})`,
                       paddingRight: 12, paddingTop: 4, paddingBottom: 4, width: URL_W,
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -522,7 +538,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'rgb(var(--ink) / 0.72)', fontSize: '0.75rem', flex: 1, minWidth: 0 }} title={withSlash(row.url)}>
                           {shortPath(row.url)}
                         </span>
-                        <span style={{ flexShrink: 0, color: 'rgb(var(--ink) / 0.25)', transition: 'transform 0.15s', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                        <span style={{ flexShrink: 0, color: 'var(--text-dim)', transition: 'transform 0.15s', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
                           <ChevronDown size={12} />
                         </span>
                       </div>
@@ -535,15 +551,15 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                       const trafficRatio = d ? Math.max(0.2, 0.2 + ((d.impressions || 0) / maxImpressions) * 0.8) : 0;
                       let cellBg, cellBorder, glowColor;
                       if (d?.verdict === 'PASS') {
-                        cellBg = `rgba(74,222,128,${trafficRatio.toFixed(2)})`; cellBorder = `rgba(74,222,128,${Math.min(0.5, trafficRatio * 0.6).toFixed(2)})`; glowColor = 'rgba(74,222,128,0.5)';
+                        cellBg = `rgba(22,163,74,${trafficRatio.toFixed(2)})`; cellBorder = `rgba(21,128,61,${Math.min(0.5, trafficRatio * 0.6).toFixed(2)})`; glowColor = 'rgba(21,128,61,0.7)';
                       } else if (d?.verdict === 'NEUTRAL') {
-                        cellBg = 'rgba(245,158,11,0.65)'; cellBorder = 'rgba(245,158,11,0.4)'; glowColor = 'rgba(245,158,11,0.5)';
+                        cellBg = 'rgba(217,119,6,0.7)'; cellBorder = 'rgba(180,83,9,0.45)'; glowColor = 'rgba(146,64,14,0.7)';
                       } else if (d?.verdict === 'FAIL') {
-                        cellBg = 'rgba(248,113,113,0.65)'; cellBorder = 'rgba(248,113,113,0.4)'; glowColor = 'rgba(248,113,113,0.5)';
+                        cellBg = 'rgba(220,38,38,0.7)'; cellBorder = 'rgba(185,28,28,0.45)'; glowColor = 'rgba(153,27,27,0.7)';
                       } else if (d?.indexed) {
-                        cellBg = `rgba(74,222,128,${(trafficRatio * 0.45).toFixed(2)})`; cellBorder = 'rgba(74,222,128,0.2)'; glowColor = 'rgba(74,222,128,0.35)';
+                        cellBg = `rgba(22,163,74,${(trafficRatio * 0.45).toFixed(2)})`; cellBorder = 'rgba(21,128,61,0.25)'; glowColor = 'rgba(21,128,61,0.55)';
                       } else {
-                        cellBg = 'rgb(var(--ink) / 0.05)'; cellBorder = 'rgb(var(--ink) / 0.04)'; glowColor = 'rgb(var(--ink) / 0.18)';
+                        cellBg = 'rgb(var(--ink) / 0.05)'; cellBorder = 'rgb(var(--ink) / 0.06)'; glowColor = 'rgb(var(--ink) / 0.34)';
                       }
 
                       return (
@@ -670,7 +686,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
       {tip && createPortal((
         <div style={{
           position: 'fixed', left: tip.x + 14, top: tip.y - 10, zIndex: 9999,
-          background: 'rgba(8,14,28,0.98)', border: '1px solid rgb(var(--ink) / 0.11)',
+          background: 'var(--surface)', border: '1px solid rgb(var(--ink) / 0.11)',
           borderRadius: 10, padding: '10px 13px', fontSize: '0.75rem',
           pointerEvents: 'none', minWidth: 158,
           boxShadow: 'var(--shadow-lg)',
@@ -689,7 +705,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                 ['Getting clicks', (tip.siteDay?.pages_clicking || 0).toLocaleString(), '#15803d'],
               ].map(([lbl, val, col]) => (
                 <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, fontSize: '0.7rem', marginBottom: 2 }}>
-                  <span style={{ color: 'rgb(var(--ink) / 0.4)' }}>{lbl}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{lbl}</span>
                   <span style={{ color: col, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{val}</span>
                 </div>
               ))}
@@ -708,7 +724,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                     : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.71rem', fontWeight: 600, color: '#dc2626' }}><AlertCircle size={11} /> Not indexed</span>}
                 </div>
                 {d?.coverage_state && (
-                  <div style={{ fontSize: '0.65rem', color: 'rgb(var(--ink) / 0.35)', marginBottom: 6, fontStyle: 'italic' }}>{d.coverage_state}</div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 6, fontStyle: 'italic' }}>{d.coverage_state}</div>
                 )}
                 {[
                   ['Impressions', (d?.impressions || 0).toLocaleString(), 'var(--text-strong)'],
@@ -716,7 +732,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                   ...(d?.position != null ? [['Avg. position', String(d.position), 'rgb(var(--ink) / 0.65)']] : []),
                 ].map(([lbl, val, col]) => (
                   <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, fontSize: '0.7rem', marginBottom: 2 }}>
-                    <span style={{ color: 'rgb(var(--ink) / 0.4)' }}>{lbl}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{lbl}</span>
                     <span style={{ color: col, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{val}</span>
                   </div>
                 ))}
@@ -725,7 +741,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
           })()}
 
           {tip.url !== 'site' && (
-            <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid rgb(var(--ink) / 0.07)', fontSize: '0.62rem', color: 'rgb(var(--ink) / 0.28)', wordBreak: 'break-all' }}>
+            <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid rgb(var(--ink) / 0.07)', fontSize: '0.62rem', color: 'var(--text-dim)', wordBreak: 'break-all' }}>
               {shortPath(tip.url)}
             </div>
           )}
@@ -1141,7 +1157,7 @@ function IndexOverviewPanel({ sites, selectedSite, onSelect }) {
                     <tr key={s.site_slug}
                       onClick={() => onSelect(s.site_slug)}
                       style={{ cursor: 'pointer', background: isSel ? 'rgba(226,0,113,0.08)' : undefined }}
-                      onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'rgb(var(--ink) / 0.03)'; }}
+                      onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'var(--row-hover)'; }}
                       onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = ''; }}>
                       <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {attn && <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#dc2626', marginRight: 7 }} />}
@@ -1859,7 +1875,7 @@ export default function IndexationControl() {
                                           <td style={{ textAlign: 'center', padding: '5px 12px' }}>
                                             {d.indexed
                                               ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#15803d' }}><CheckCircle size={10} /> Indexed</span>
-                                              : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 600, color: 'rgba(245,158,11,0.7)' }}><AlertCircle size={10} /> Not in GSC</span>}
+                                              : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 600, color: 'var(--warning)' }}><AlertCircle size={10} /> Not in GSC</span>}
                                           </td>
                                           <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: d.impressions > 0 ? '#334155' : 'var(--text-dim)' }}>{d.indexed ? d.impressions.toLocaleString() : '—'}</td>
                                           <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: d.clicks > 0 ? '#15803d' : 'var(--text-dim)', fontWeight: d.clicks > 0 ? 700 : 400 }}>{d.indexed ? d.clicks.toLocaleString() : '—'}</td>

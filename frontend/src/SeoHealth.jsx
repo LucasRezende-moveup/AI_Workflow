@@ -124,7 +124,7 @@ function ScoreSparkline({ history }) {
             <circle key={i} cx={p.x.toFixed(1)} cy={p.y.toFixed(1)}
               r={isLast ? 3.5 : 2}
               fill={isLast ? color : `${color}80`}
-              stroke={isLast ? 'rgba(10,10,20,0.6)' : 'none'}
+              stroke={isLast ? 'rgba(255,255,255,0.95)' : 'none'}
               strokeWidth="1.5"
             />
           );
@@ -168,7 +168,7 @@ function ScoreSparkline({ history }) {
         })}
       </svg>
 
-      <div style={{ fontSize: '0.6rem', color: 'rgb(var(--ink) / 0.2)', textAlign: 'center' }}>
+      <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', textAlign: 'center' }}>
         {n} {n === 1 ? 'snapshot' : 'snapshots'}
       </div>
     </div>

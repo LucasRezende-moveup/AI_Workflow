@@ -53,7 +53,7 @@ function MatrixCell({ cell, targetLabel }) {
   if (!cell || cell.status === 'self') {
     return (
       <td style={{ textAlign: 'center', padding: '5px 6px' }}>
-        <span style={{ fontSize: '0.7rem', color: 'rgb(var(--ink) / 0.15)' }}>—</span>
+        <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>—</span>
       </td>
     );
   }
@@ -370,7 +370,7 @@ export default function InternalLinking() {
             <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 16 }}>
               Row → source page &nbsp;·&nbsp; Column → target page &nbsp;·&nbsp;
               <span style={{ color: '#15803d' }}>✓</span> link exists (hover for anchors) &nbsp;·&nbsp;
-              <span style={{ color: 'rgba(239,68,68,0.5)' }}>×</span> missing
+              <span style={{ color: 'var(--danger)' }}>×</span> missing
             </p>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'separate', borderSpacing: '3px 3px' }}>

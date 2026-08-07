@@ -14,6 +14,11 @@
   --bg-gradient: radial-gradient(ellipse at 65% 0%, #eef1fb 0%, #f6f7fb 55%);
   --surface: #ffffff;          /* raised cards */
   --surface-sunken: rgb(var(--ink) / 0.035);  /* wells: code blocks, table heads */
+  /* Opaque counterparts. Sticky table headers and frozen columns must occlude the
+     rows scrolling beneath them, so they cannot use the translucent tints above. */
+  --surface-alt: #f8f9fc;      /* zebra stripe / expanded-row fill */
+  --surface-well: #f1f3f8;     /* sticky header band */
+  --row-hover: #eef0f6;        /* row hover — opaque for the same reason */
   --glass-bg: #ffffff;
   --glass-border: rgb(var(--ink) / 0.09);
   --glass-border-active: rgba(226, 0, 113, 0.45);
