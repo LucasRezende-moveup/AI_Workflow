@@ -184,14 +184,14 @@ export default function App() {
           {/* Background glow */}
           <div style={{
             position: 'absolute', top: '-60%', left: '-50%', width: '200%', height: '200%',
-            background: 'radial-gradient(circle at center, rgba(226,0,113,0.15) 0%, transparent 65%)',
+            background: 'radial-gradient(circle at center, rgba(226,0,113,0.07) 0%, transparent 65%)',
             pointerEvents: 'none', zIndex: 0,
           }} />
           <div style={{ position: 'relative', zIndex: 1 }}>
             <div style={{ textAlign: 'center', marginBottom: 28 }}>
               <img src={moveupLogo} alt="Moveup Media" width={72} height={72}
-                style={{ width: 72, height: 72, borderRadius: 14, marginBottom: 14, boxShadow: '0 0 24px rgba(226,0,113,0.4)' }} />
-              <h1 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff' }}>Moveup Media</h1>
+                style={{ width: 72, height: 72, borderRadius: 14, marginBottom: 14, boxShadow: '0 8px 24px rgba(226,0,113,0.28)' }} />
+              <h1 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-strong)' }}>Moveup Media</h1>
               <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: 3 }}>SEO Intelligence Platform</div>
             </div>
 
@@ -218,7 +218,7 @@ export default function App() {
               {loginError && (
                 <div role="alert" style={{
                   padding: '8px 12px', borderRadius: 6, fontSize: '0.82rem',
-                  background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171',
+                  background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', color: '#dc2626',
                 }}>
                   {loginError}
                 </div>
@@ -247,7 +247,7 @@ export default function App() {
       <div className="sidebar">
         <div className="sidebar-logo">
           <div style={{ width: 30, height: 30, background: 'var(--primary)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <Activity size={17} color="white" />
+            <Activity size={17} color="#fff" />
           </div>
           Moveup Media
         </div>
@@ -291,10 +291,10 @@ export default function App() {
                 aria-label={alerts.length ? `Notifications, ${alerts.length} unread` : 'Notifications'}
                 aria-haspopup="true" aria-expanded={bellOpen}
                 style={{
-                position: 'relative', background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
+                position: 'relative', background: 'rgb(var(--ink) / 0.05)',
+                border: '1px solid rgb(var(--ink) / 0.1)', borderRadius: 8,
                 width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: 'pointer', color: alerts.length ? '#fff' : 'var(--text-muted)',
+                cursor: 'pointer', color: alerts.length ? 'var(--text-strong)' : 'var(--text-muted)',
               }}>
                 <Bell size={15} aria-hidden="true" />
                 {alerts.length > 0 && (
@@ -302,7 +302,7 @@ export default function App() {
                     position: 'absolute', top: -4, right: -4,
                     width: 16, height: 16, borderRadius: '50%',
                     background: '#E20071', border: '2px solid var(--bg-dark)',
-                    fontSize: '0.6rem', fontWeight: 700, color: '#fff',
+                    fontSize: '0.6rem', fontWeight: 700, color: 'var(--on-primary)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
                     {alerts.length > 9 ? '9+' : alerts.length}
@@ -313,11 +313,11 @@ export default function App() {
               {bellOpen && (
                 <div style={{
                   position: 'absolute', top: 42, right: 0, width: 320, zIndex: 200,
-                  background: 'rgba(15,23,42,0.98)', border: '1px solid rgba(255,255,255,0.12)',
-                  borderRadius: 12, boxShadow: '0 16px 40px rgba(0,0,0,0.5)', overflow: 'hidden',
+                  background: 'var(--surface)', border: '1px solid rgb(var(--ink) / 0.12)',
+                  borderRadius: 12, boxShadow: 'var(--shadow-lg)', overflow: 'hidden',
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-                    <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#fff' }}>Alerts</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid rgb(var(--ink) / 0.07)' }}>
+                    <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-strong)' }}>Alerts</span>
                     {alerts.length > 0 && (
                       <button onClick={markAllSeen} style={{ fontSize: '0.72rem', color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer' }}>
                         Mark all seen
@@ -331,8 +331,8 @@ export default function App() {
                   ) : (
                     <div className="overscroll-contain" style={{ maxHeight: 340, overflowY: 'auto' }}>
                       {alerts.map(a => {
-                        const colors = { critical: '#f87171', warning: '#fb923c', info: '#38bdf8' };
-                        const dot = colors[a.severity] || '#94a3b8';
+                        const colors = { critical: '#dc2626', warning: '#c2410c', info: '#0284c7' };
+                        const dot = colors[a.severity] || '#64748b';
                         const SRC = {
                           tracking:   { label: 'Tracking',          page: 'Tracking' },
                           indexation: { label: 'Indexation',        page: 'Indexation Control' },
@@ -341,15 +341,15 @@ export default function App() {
                         const src = SRC[a.source] || { label: a.source || 'Alert', page: 'Tracking' };
                         return (
                           <button key={a.id} type="button" onClick={() => { setActivePage(src.page); setBellOpen(false); }}
-                            style={{ width: '100%', textAlign: 'left', font: 'inherit', color: 'inherit', background: 'transparent', padding: '10px 14px', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'flex-start' }}
-                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
+                            style={{ width: '100%', textAlign: 'left', font: 'inherit', color: 'inherit', background: 'transparent', padding: '10px 14px', border: 'none', borderBottom: '1px solid rgb(var(--ink) / 0.05)', cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'flex-start' }}
+                            onMouseEnter={e => e.currentTarget.style.background = 'rgb(var(--ink) / 0.04)'}
                             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                           >
                             <div aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0, marginTop: 5 }} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                                <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.07)', padding: '1px 6px', borderRadius: 4, flexShrink: 0 }}>{src.label}</span>
-                                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</span>
+                                <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', background: 'rgb(var(--ink) / 0.07)', padding: '1px 6px', borderRadius: 4, flexShrink: 0 }}>{src.label}</span>
+                                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</span>
                               </div>
                               <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>{a.message}</div>
                             </div>
@@ -363,16 +363,16 @@ export default function App() {
             </div>
 
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '0.82rem', fontWeight: 500, color: '#fff' }}>{user.name || user.email}</div>
+              <div style={{ fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-strong)' }}>{user.name || user.email}</div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>
                 {user.role === 'super-admin' ? 'Super Admin' : 'Editor'}
               </div>
             </div>
             <div style={{
               width: 34, height: 34, borderRadius: '50%',
-              background: 'rgba(226,0,113,0.25)', border: '1px solid rgba(226,0,113,0.4)',
+              background: 'rgba(226,0,113,0.12)', border: '1px solid rgba(226,0,113,0.3)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '0.78rem', fontWeight: 700, color: '#fff', flexShrink: 0,
+              fontSize: '0.78rem', fontWeight: 700, color: 'var(--primary)', flexShrink: 0,
             }}>
               {initials(user)}
             </div>

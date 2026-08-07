@@ -56,9 +56,9 @@ function isoOffset(days) {
 }
 
 const STATUS_STYLE = {
-  active:  { bg: 'rgba(34,197,94,.1)',    color: '#4ade80', label: 'Clicks'  },
-  visible: { bg: 'rgba(245,158,11,.1)',   color: '#f59e0b', label: 'Visible' },
-  indexed: { bg: 'rgba(255,255,255,.06)', color: '#94a3b8', label: 'Indexed' },
+  active:  { bg: 'rgba(34,197,94,.1)',    color: '#15803d', label: 'Clicks'  },
+  visible: { bg: 'rgba(245,158,11,.1)',   color: '#b45309', label: 'Visible' },
+  indexed: { bg: 'rgb(var(--ink) / 0.06)', color: '#64748b', label: 'Indexed' },
 };
 
 // ── sub-components ────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ function StatCard({ label, value, sub, valueColor }) {
   return (
     <div className="glass-panel" style={{ padding: '14px 18px' }}>
       <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: '2rem', fontWeight: 800, lineHeight: 1, color: valueColor || 'white' }}>{value}</div>
+      <div style={{ fontSize: '2rem', fontWeight: 800, lineHeight: 1, color: valueColor || 'var(--text-strong)' }}>{value}</div>
       {sub && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>{sub}</div>}
     </div>
   );
@@ -79,7 +79,7 @@ function SortHeader({ col, label, current, dir, onSort }) {
     <th onClick={() => onSort(col)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
         {label}
-        <ArrowUpDown size={11} color={active ? 'var(--primary)' : 'rgba(255,255,255,0.25)'} />
+        <ArrowUpDown size={11} color={active ? 'var(--primary)' : 'rgb(var(--ink) / 0.25)'} />
       </span>
     </th>
   );
@@ -92,8 +92,8 @@ function TabBtn({ id, label, active, onClick }) {
       style={{
         padding: '8px 16px', borderRadius: 8, fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
         ...(active
-          ? { background: 'var(--primary)', color: 'white', border: '1px solid var(--primary)' }
-          : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }),
+          ? { background: 'var(--primary)', color: 'var(--on-primary)', border: '1px solid var(--primary)' }
+          : { background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)' }),
       }}
     >
       {label}
@@ -102,10 +102,10 @@ function TabBtn({ id, label, active, onClick }) {
 }
 
 function CoverageBar({ pct, width = 80 }) {
-  const color = pct >= 80 ? '#4ade80' : pct >= 50 ? '#f59e0b' : '#f87171';
+  const color = pct >= 80 ? '#15803d' : pct >= 50 ? '#b45309' : '#dc2626';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-      <div style={{ width, height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', flexShrink: 0 }}>
+      <div style={{ width, height: 6, borderRadius: 3, background: 'rgb(var(--ink) / 0.08)', overflow: 'hidden', flexShrink: 0 }}>
         <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 3, transition: 'width 0.4s ease' }} />
       </div>
       <span style={{ fontSize: '0.75rem', fontWeight: 700, color, fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
@@ -170,7 +170,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
   const CELL  = 16;
   const GAP   = 2;
   const URL_W = 240;
-  const BG    = 'rgba(10,18,35,0.95)';
+  const BG    = 'var(--surface)';
 
   // Month-start date set for border rendering
   const monthStarts = useMemo(() => new Set(monthGroups.map(g => dates[g.start])), [monthGroups, dates]);
@@ -178,7 +178,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
   function CoverageBar({ pct, color }) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-        <div style={{ width: 52, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+        <div style={{ width: 52, height: 4, borderRadius: 2, background: 'rgb(var(--ink) / 0.08)', overflow: 'hidden' }}>
           <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 2 }} />
         </div>
         <span style={{ fontSize: '0.68rem', fontWeight: 700, color, fontVariantNumeric: 'tabular-nums', minWidth: 28 }}>{pct}%</span>
@@ -202,8 +202,8 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
               value={urlFilter}
               onChange={e => setUrlFilter(e.target.value)}
               style={{
-                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: 6, padding: '4px 10px', fontSize: '0.75rem', color: '#d8d8e6',
+                background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.12)',
+                borderRadius: 6, padding: '4px 10px', fontSize: '0.75rem', color: '#334155',
                 outline: 'none', width: 200,
               }}
             />
@@ -215,7 +215,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
             { bg: 'rgba(245,158,11,0.7)',    label: 'NEUTRAL' },
             { bg: 'rgba(248,113,113,0.7)',   label: 'FAIL' },
             { bg: 'rgba(74,222,128,0.3)',    label: 'In GSC only' },
-            { bg: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.05)', label: 'Not indexed' },
+            { bg: 'rgb(var(--ink) / 0.07)', border: '1px solid rgb(var(--ink) / 0.05)', label: 'Not indexed' },
             { bg: 'rgba(226,0,113,0.55)',    label: 'Site-wide' },
           ].map(({ bg, border, label }) => (
             <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.68rem', color: 'var(--text-muted)' }}>
@@ -239,8 +239,8 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                   textAlign: 'left',
                   fontSize: '0.6rem', fontWeight: 700,
                   textTransform: 'uppercase', letterSpacing: '0.07em',
-                  color: 'rgba(255,255,255,0.32)',
-                  borderLeft: '1px solid rgba(255,255,255,0.1)',
+                  color: 'rgb(var(--ink) / 0.32)',
+                  borderLeft: '1px solid rgb(var(--ink) / 0.1)',
                   whiteSpace: 'nowrap',
                 }}>
                   {g.label}
@@ -253,7 +253,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
               <th style={{
                 position: 'sticky', left: 0, zIndex: 2, background: BG,
                 width: URL_W, minWidth: URL_W, padding: '0 12px 8px 0',
-                textAlign: 'left', fontSize: '0.62rem', color: 'rgba(255,255,255,0.25)',
+                textAlign: 'left', fontSize: '0.62rem', color: 'rgb(var(--ink) / 0.25)',
               }}>
                 {dates.length > 0 && `${dates.length} days`}
               </th>
@@ -266,13 +266,13 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                     padding: `0 ${GAP / 2}px 7px`,
                     verticalAlign: 'bottom',
                     width: CELL + GAP,
-                    borderLeft: isFirst ? '1px solid rgba(255,255,255,0.1)' : undefined,
+                    borderLeft: isFirst ? '1px solid rgb(var(--ink) / 0.1)' : undefined,
                   }}>
                     <div style={{
                       writingMode: 'vertical-rl', transform: 'rotate(180deg)',
                       fontSize: '0.52rem', lineHeight: 1, paddingBottom: 2,
                       fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
-                      color: day === 1 ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.2)',
+                      color: day === 1 ? 'rgb(var(--ink) / 0.5)' : 'rgb(var(--ink) / 0.2)',
                       fontWeight: day === 1 ? 700 : 400,
                       opacity: showNum ? 1 : 0,
                     }}>
@@ -281,7 +281,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                   </th>
                 );
               })}
-              <th style={{ paddingLeft: 14, paddingBottom: 7, textAlign: 'left', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'rgba(255,255,255,0.32)', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>
+              <th style={{ paddingLeft: 14, paddingBottom: 7, textAlign: 'left', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'rgb(var(--ink) / 0.32)', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>
                 Coverage
               </th>
             </tr>
@@ -301,11 +301,11 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                   <tr
                     onClick={() => setSiteExpanded(v => !v)}
                     style={{ cursor: pages.length > 0 ? 'pointer' : 'default' }}
-                    onMouseEnter={e => { if (pages.length > 0) e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; }}
+                    onMouseEnter={e => { if (pages.length > 0) e.currentTarget.style.background = 'rgb(var(--ink) / 0.02)'; }}
                     onMouseLeave={e => e.currentTarget.style.background = ''}
                   >
                     <td style={{
-                      position: 'sticky', left: 0, zIndex: 1, background: siteExpanded ? 'rgba(255,255,255,0.03)' : BG,
+                      position: 'sticky', left: 0, zIndex: 1, background: siteExpanded ? 'rgb(var(--ink) / 0.03)' : BG,
                       paddingRight: 12, paddingTop: 4, paddingBottom: 4, width: URL_W,
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -319,7 +319,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                         </span>
                         <span style={{ fontSize: '0.73rem', fontWeight: 700, color: 'rgba(226,0,113,0.95)', flex: 1 }}>All pages</span>
                         {pages.length > 0 && (
-                          <span style={{ flexShrink: 0, color: 'rgba(255,255,255,0.25)', transition: 'transform 0.15s', transform: siteExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                          <span style={{ flexShrink: 0, color: 'rgb(var(--ink) / 0.25)', transition: 'transform 0.15s', transform: siteExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
                             <ChevronDown size={12} />
                           </span>
                         )}
@@ -333,7 +333,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                       return (
                         <td key={date} style={{
                           padding: `4px ${GAP / 2}px`,
-                          borderLeft: isFirst ? '1px solid rgba(255,255,255,0.06)' : undefined,
+                          borderLeft: isFirst ? '1px solid rgb(var(--ink) / 0.06)' : undefined,
                         }}>
                           <div
                             onMouseEnter={e => { e.stopPropagation(); handleEnter(e, { date, siteDay: d, url: 'site' }); }}
@@ -342,12 +342,12 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                             onClick={e => e.stopPropagation()}
                             style={{
                               width: CELL, height: CELL, borderRadius: 3, cursor: 'default', boxSizing: 'border-box',
-                              background: pg > 0 ? `rgba(226,0,113,${intensity.toFixed(2)})` : 'rgba(255,255,255,0.05)',
-                              border: `1px solid ${pg > 0 ? `rgba(226,0,113,${Math.min(0.45, intensity * 0.55).toFixed(2)})` : 'rgba(255,255,255,0.04)'}`,
+                              background: pg > 0 ? `rgba(226,0,113,${intensity.toFixed(2)})` : 'rgb(var(--ink) / 0.05)',
+                              border: `1px solid ${pg > 0 ? `rgba(226,0,113,${Math.min(0.45, intensity * 0.55).toFixed(2)})` : 'rgb(var(--ink) / 0.04)'}`,
                               transition: 'box-shadow 0.1s, transform 0.1s',
                             }}
                             onMouseOver={e => {
-                              e.currentTarget.style.boxShadow = pg > 0 ? '0 0 0 2px rgba(226,0,113,0.5)' : '0 0 0 2px rgba(255,255,255,0.18)';
+                              e.currentTarget.style.boxShadow = pg > 0 ? '0 0 0 2px rgba(226,0,113,0.5)' : '0 0 0 2px rgb(var(--ink) / 0.18)';
                               e.currentTarget.style.transform = 'scale(1.18)';
                             }}
                             onMouseOut={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
@@ -358,14 +358,14 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                     <td style={{ paddingLeft: 14, whiteSpace: 'nowrap' }}>
                       <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
                         avg <span style={{ color: 'rgba(226,0,113,0.8)', fontWeight: 600 }}>{avg.toLocaleString()}</span> pages/day
-                        {pages.length > 0 && <span style={{ marginLeft: 8, color: 'rgba(255,255,255,0.25)' }}>· {pages.length.toLocaleString()} pages</span>}
+                        {pages.length > 0 && <span style={{ marginLeft: 8, color: 'rgb(var(--ink) / 0.25)' }}>· {pages.length.toLocaleString()} pages</span>}
                       </span>
                     </td>
                   </tr>
 
                   {/* ── Expanded URL×day indexed matrix ── */}
                   {siteExpanded && urlResults?.length > 0 && (
-                    <tr style={{ background: 'rgba(0,0,0,0.18)' }}>
+                    <tr style={{ background: 'var(--surface-sunken)' }}>
                       <td colSpan={dates.length + 2} style={{ padding: '0 0 0 4px' }}>
                         <div style={{ padding: '12px 20px 16px 0' }}>
                           {/* Header row */}
@@ -397,8 +397,8 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                                   <th style={{
                                     position: 'sticky', left: 0, zIndex: 4, background: 'rgba(8,14,28,0.98)',
                                     padding: '4px 12px 4px 0', textAlign: 'left', minWidth: 220, whiteSpace: 'nowrap',
-                                    fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(255,255,255,0.3)',
-                                    borderBottom: '1px solid rgba(255,255,255,0.08)',
+                                    fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgb(var(--ink) / 0.3)',
+                                    borderBottom: '1px solid rgb(var(--ink) / 0.08)',
                                   }}>
                                     URL
                                   </th>
@@ -406,11 +406,11 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                                     <th key={date} style={{
                                       background: 'rgba(8,14,28,0.98)',
                                       padding: '0 2px 4px', verticalAlign: 'bottom', width: 22,
-                                      borderBottom: '1px solid rgba(255,255,255,0.08)',
+                                      borderBottom: '1px solid rgb(var(--ink) / 0.08)',
                                     }}>
                                       <div style={{
                                         writingMode: 'vertical-rl', transform: 'rotate(180deg)',
-                                        fontSize: '0.5rem', color: 'rgba(255,255,255,0.25)',
+                                        fontSize: '0.5rem', color: 'rgb(var(--ink) / 0.25)',
                                         fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
                                         lineHeight: 1, paddingBottom: 2,
                                       }}>
@@ -421,8 +421,8 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                                   <th style={{
                                     background: 'rgba(8,14,28,0.98)',
                                     padding: '4px 0 4px 10px', whiteSpace: 'nowrap',
-                                    fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(255,255,255,0.3)',
-                                    borderBottom: '1px solid rgba(255,255,255,0.08)',
+                                    fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgb(var(--ink) / 0.3)',
+                                    borderBottom: '1px solid rgb(var(--ink) / 0.08)',
                                   }}>
                                     Coverage
                                   </th>
@@ -433,9 +433,9 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                                   .filter(r => !siteFilter || r.url.toLowerCase().includes(siteFilter.toLowerCase()))
                                   .map((row, ri) => {
                                     const dayMap = Object.fromEntries(row.daily.map(d => [d.date, d]));
-                                    const coverageColor = row.coverage_pct >= 80 ? '#4ade80' : row.coverage_pct >= 50 ? '#f59e0b' : '#f87171';
+                                    const coverageColor = row.coverage_pct >= 80 ? '#15803d' : row.coverage_pct >= 50 ? '#b45309' : '#dc2626';
                                     return (
-                                      <tr key={row.url} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                      <tr key={row.url} style={{ borderBottom: '1px solid rgb(var(--ink) / 0.03)' }}>
                                         <td style={{
                                           position: 'sticky', left: 0, zIndex: 1, background: ri % 2 === 0 ? 'rgba(8,14,28,0.98)' : 'rgba(15,22,40,0.98)',
                                           padding: '3px 12px 3px 0', maxWidth: 240,
@@ -457,7 +457,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                                                 else if (d?.verdict === 'NEUTRAL') { bg = 'rgba(245,158,11,0.65)'; border = 'rgba(245,158,11,0.4)';  title = `${date} — NEUTRAL`; }
                                                 else if (d?.verdict === 'FAIL')    { bg = 'rgba(248,113,113,0.65)';border = 'rgba(248,113,113,0.4)';title = `${date} — FAIL`; }
                                                 else if (d?.indexed)               { bg = 'rgba(74,222,128,0.3)';  border = 'rgba(74,222,128,0.2)';  title = `${date} — in GSC`; }
-                                                else                               { bg = 'rgba(255,255,255,0.05)';border = 'rgba(255,255,255,0.04)';title = `${date} — not indexed`; }
+                                                else                               { bg = 'rgb(var(--ink) / 0.05)';border = 'rgb(var(--ink) / 0.04)';title = `${date} — not indexed`; }
                                                 return <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 3, background: bg, border: `1px solid ${border}` }} title={title} />;
                                               })()}
                                             </td>
@@ -488,7 +488,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
             {/* ── Thin separator between site row and URL rows ── */}
             {dailySummary?.length > 0 && urlResults?.length > 0 && (
               <tr>
-                <td colSpan={dates.length + 2} style={{ padding: 0, height: 1, background: 'rgba(255,255,255,0.07)' }} />
+                <td colSpan={dates.length + 2} style={{ padding: 0, height: 1, background: 'rgb(var(--ink) / 0.07)' }} />
               </tr>
             )}
 
@@ -498,7 +498,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
               const coveragePct = row.coverage_pct != null
                 ? row.coverage_pct
                 : (dates.length > 0 ? Math.round((row.indexed_days / dates.length) * 100) : 0);
-              const coverageColor = coveragePct >= 80 ? '#4ade80' : coveragePct >= 50 ? '#f59e0b' : '#f87171';
+              const coverageColor = coveragePct >= 80 ? '#15803d' : coveragePct >= 50 ? '#b45309' : '#dc2626';
               const expanded = expandedUrls.has(row.url);
 
               return (
@@ -506,23 +506,23 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                   <tr
                     onClick={() => toggleExpand(row.url)}
                     style={{ cursor: 'pointer' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgb(var(--ink) / 0.02)'}
                     onMouseLeave={e => e.currentTarget.style.background = ''}
                   >
                     {/* Sticky URL label */}
                     <td style={{
-                      position: 'sticky', left: 0, zIndex: 1, background: expanded ? 'rgba(255,255,255,0.03)' : BG,
+                      position: 'sticky', left: 0, zIndex: 1, background: expanded ? 'rgb(var(--ink) / 0.03)' : BG,
                       paddingRight: 12, paddingTop: 4, paddingBottom: 4, width: URL_W,
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                         <span style={{
                           width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                          background: coverageColor, boxShadow: `0 0 5px ${coverageColor}55`,
+                          background: coverageColor, boxShadow: `0 1px 3px ${coverageColor}55`,
                         }} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'rgba(255,255,255,0.72)', fontSize: '0.75rem', flex: 1, minWidth: 0 }} title={withSlash(row.url)}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'rgb(var(--ink) / 0.72)', fontSize: '0.75rem', flex: 1, minWidth: 0 }} title={withSlash(row.url)}>
                           {shortPath(row.url)}
                         </span>
-                        <span style={{ flexShrink: 0, color: 'rgba(255,255,255,0.25)', transition: 'transform 0.15s', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                        <span style={{ flexShrink: 0, color: 'rgb(var(--ink) / 0.25)', transition: 'transform 0.15s', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
                           <ChevronDown size={12} />
                         </span>
                       </div>
@@ -543,13 +543,13 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                       } else if (d?.indexed) {
                         cellBg = `rgba(74,222,128,${(trafficRatio * 0.45).toFixed(2)})`; cellBorder = 'rgba(74,222,128,0.2)'; glowColor = 'rgba(74,222,128,0.35)';
                       } else {
-                        cellBg = 'rgba(255,255,255,0.05)'; cellBorder = 'rgba(255,255,255,0.04)'; glowColor = 'rgba(255,255,255,0.18)';
+                        cellBg = 'rgb(var(--ink) / 0.05)'; cellBorder = 'rgb(var(--ink) / 0.04)'; glowColor = 'rgb(var(--ink) / 0.18)';
                       }
 
                       return (
                         <td key={date} style={{
                           padding: `4px ${GAP / 2}px`,
-                          borderLeft: isFirst ? '1px solid rgba(255,255,255,0.06)' : undefined,
+                          borderLeft: isFirst ? '1px solid rgb(var(--ink) / 0.06)' : undefined,
                         }}>
                           <div
                             onMouseEnter={e => { e.stopPropagation(); handleEnter(e, { date, d, url: row.url }); }}
@@ -578,7 +578,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                         <CoverageBar pct={coveragePct} color={coverageColor} />
                         <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
                           {row.indexed_days}/{dates.length} days
-                          {row.first_seen && <> · first <span style={{ color: '#d8d8e6' }}>{row.first_seen}</span></>}
+                          {row.first_seen && <> · first <span style={{ color: '#334155' }}>{row.first_seen}</span></>}
                         </span>
                       </div>
                     </td>
@@ -586,7 +586,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
 
                   {/* ── Expanded detail row ── */}
                   {expanded && (
-                    <tr style={{ background: 'rgba(0,0,0,0.18)' }}>
+                    <tr style={{ background: 'var(--surface-sunken)' }}>
                       <td colSpan={dates.length + 2} style={{ padding: '0 0 0 20px' }}>
                         <div style={{ padding: '14px 20px 14px 0' }}>
                           {/* URL header */}
@@ -602,14 +602,14 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
                             {[
                               { label: 'Indexed days', value: row.indexed_days, color: coverageColor },
-                              { label: 'Not in GSC', value: (dates.length - row.indexed_days), color: '#94a3b8' },
+                              { label: 'Not in GSC', value: (dates.length - row.indexed_days), color: '#64748b' },
                               { label: 'Coverage', value: `${coveragePct}%`, color: coverageColor },
-                              ...(row.first_seen ? [{ label: 'First seen', value: row.first_seen, color: '#d8d8e6' }] : []),
-                              ...(row.last_seen ? [{ label: 'Last seen', value: row.last_seen, color: '#d8d8e6' }] : []),
+                              ...(row.first_seen ? [{ label: 'First seen', value: row.first_seen, color: '#334155' }] : []),
+                              ...(row.last_seen ? [{ label: 'Last seen', value: row.last_seen, color: '#334155' }] : []),
                             ].map(chip => (
                               <div key={chip.label} style={{
                                 padding: '4px 10px', borderRadius: 6,
-                                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                                background: 'rgb(var(--ink) / 0.04)', border: '1px solid rgb(var(--ink) / 0.08)',
                                 fontSize: '0.72rem',
                               }}>
                                 <span style={{ color: 'var(--text-muted)', marginRight: 5 }}>{chip.label}</span>
@@ -622,7 +622,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                           <div style={{ overflowX: 'auto', maxHeight: 320, overflowY: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
                               <thead>
-                                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+                                <tr style={{ borderBottom: '1px solid rgb(var(--ink) / 0.07)' }}>
                                   {['Date', 'Verdict', 'Indexed', 'Impressions', 'Clicks', 'CTR', 'Avg. Pos'].map(h => (
                                     <th key={h} style={{ padding: '5px 12px 5px 0', textAlign: h === 'Date' ? 'left' : 'center', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>{h}</th>
                                   ))}
@@ -632,8 +632,8 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                                 {row.daily.map(d => {
                                   const vs = VERDICT_STYLE[d.verdict] || null;
                                   return (
-                                    <tr key={d.date} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                                      <td style={{ padding: '5px 12px 5px 0', color: '#d8d8e6', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{d.date}</td>
+                                    <tr key={d.date} style={{ borderBottom: '1px solid rgb(var(--ink) / 0.03)' }}>
+                                      <td style={{ padding: '5px 12px 5px 0', color: '#334155', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{d.date}</td>
                                       <td style={{ textAlign: 'center', padding: '5px 8px' }}>
                                         {d.verdict
                                           ? <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 6px', borderRadius: 3, color: vs?.color, background: vs?.bg, border: `1px solid ${vs?.border}`, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{d.verdict}</span>
@@ -641,11 +641,11 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                                       </td>
                                       <td style={{ textAlign: 'center', padding: '5px 8px' }}>
                                         {d.indexed
-                                          ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.7rem', fontWeight: 700, color: '#4ade80' }}><CheckCircle size={10} /> Yes</span>
-                                          : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.7rem', fontWeight: 600, color: '#f87171' }}><AlertCircle size={10} /> No</span>}
+                                          ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.7rem', fontWeight: 700, color: '#15803d' }}><CheckCircle size={10} /> Yes</span>
+                                          : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.7rem', fontWeight: 600, color: '#dc2626' }}><AlertCircle size={10} /> No</span>}
                                       </td>
-                                      <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: '#d8d8e6' }}>{(d.impressions || 0).toLocaleString()}</td>
-                                      <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: (d.clicks || 0) > 0 ? '#4ade80' : 'var(--text-dim)', fontWeight: (d.clicks || 0) > 0 ? 700 : 400 }}>{(d.clicks || 0).toLocaleString()}</td>
+                                      <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: '#334155' }}>{(d.impressions || 0).toLocaleString()}</td>
+                                      <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: (d.clicks || 0) > 0 ? '#15803d' : 'var(--text-dim)', fontWeight: (d.clicks || 0) > 0 ? 700 : 400 }}>{(d.clicks || 0).toLocaleString()}</td>
                                       <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{d.impressions > 0 ? `${((d.clicks || 0) / d.impressions * 100).toFixed(1)}%` : '—'}</td>
                                       <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{d.position != null ? d.position : '—'}</td>
                                     </tr>
@@ -670,12 +670,12 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
       {tip && createPortal((
         <div style={{
           position: 'fixed', left: tip.x + 14, top: tip.y - 10, zIndex: 9999,
-          background: 'rgba(8,14,28,0.98)', border: '1px solid rgba(255,255,255,0.11)',
+          background: 'rgba(8,14,28,0.98)', border: '1px solid rgb(var(--ink) / 0.11)',
           borderRadius: 10, padding: '10px 13px', fontSize: '0.75rem',
           pointerEvents: 'none', minWidth: 158,
-          boxShadow: '0 16px 48px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04)',
+          boxShadow: 'var(--shadow-lg)',
         }}>
-          <div style={{ fontWeight: 700, color: 'rgba(255,255,255,0.85)', marginBottom: 7, fontVariantNumeric: 'tabular-nums', fontSize: '0.72rem' }}>
+          <div style={{ fontWeight: 700, color: 'rgb(var(--ink) / 0.85)', marginBottom: 7, fontVariantNumeric: 'tabular-nums', fontSize: '0.72rem' }}>
             {tip.date}
           </div>
 
@@ -685,11 +685,11 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                 <Globe size={11} /> Site-wide
               </div>
               {[
-                ['In GSC', (tip.siteDay?.total_pages || 0).toLocaleString(), '#fff'],
-                ['Getting clicks', (tip.siteDay?.pages_clicking || 0).toLocaleString(), '#4ade80'],
+                ['In GSC', (tip.siteDay?.total_pages || 0).toLocaleString(), 'var(--text-strong)'],
+                ['Getting clicks', (tip.siteDay?.pages_clicking || 0).toLocaleString(), '#15803d'],
               ].map(([lbl, val, col]) => (
                 <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, fontSize: '0.7rem', marginBottom: 2 }}>
-                  <span style={{ color: 'rgba(255,255,255,0.4)' }}>{lbl}</span>
+                  <span style={{ color: 'rgb(var(--ink) / 0.4)' }}>{lbl}</span>
                   <span style={{ color: col, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{val}</span>
                 </div>
               ))}
@@ -704,19 +704,19 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
                     ? <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 7px', borderRadius: 3, color: vs?.color, background: vs?.bg, border: `1px solid ${vs?.border}`, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{d.verdict}</span>
                     : null}
                   {d?.indexed
-                    ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.71rem', fontWeight: 600, color: '#4ade80' }}><CheckCircle size={11} /> Indexed</span>
-                    : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.71rem', fontWeight: 600, color: '#f87171' }}><AlertCircle size={11} /> Not indexed</span>}
+                    ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.71rem', fontWeight: 600, color: '#15803d' }}><CheckCircle size={11} /> Indexed</span>
+                    : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.71rem', fontWeight: 600, color: '#dc2626' }}><AlertCircle size={11} /> Not indexed</span>}
                 </div>
                 {d?.coverage_state && (
-                  <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.35)', marginBottom: 6, fontStyle: 'italic' }}>{d.coverage_state}</div>
+                  <div style={{ fontSize: '0.65rem', color: 'rgb(var(--ink) / 0.35)', marginBottom: 6, fontStyle: 'italic' }}>{d.coverage_state}</div>
                 )}
                 {[
-                  ['Impressions', (d?.impressions || 0).toLocaleString(), '#fff'],
-                  ['Clicks', (d?.clicks || 0).toLocaleString(), (d?.clicks || 0) > 0 ? '#4ade80' : '#fff'],
-                  ...(d?.position != null ? [['Avg. position', String(d.position), 'rgba(255,255,255,0.65)']] : []),
+                  ['Impressions', (d?.impressions || 0).toLocaleString(), 'var(--text-strong)'],
+                  ['Clicks', (d?.clicks || 0).toLocaleString(), (d?.clicks || 0) > 0 ? 'var(--success)' : 'var(--text-strong)'],
+                  ...(d?.position != null ? [['Avg. position', String(d.position), 'rgb(var(--ink) / 0.65)']] : []),
                 ].map(([lbl, val, col]) => (
                   <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, fontSize: '0.7rem', marginBottom: 2 }}>
-                    <span style={{ color: 'rgba(255,255,255,0.4)' }}>{lbl}</span>
+                    <span style={{ color: 'rgb(var(--ink) / 0.4)' }}>{lbl}</span>
                     <span style={{ color: col, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{val}</span>
                   </div>
                 ))}
@@ -725,7 +725,7 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
           })()}
 
           {tip.url !== 'site' && (
-            <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid rgba(255,255,255,0.07)', fontSize: '0.62rem', color: 'rgba(255,255,255,0.28)', wordBreak: 'break-all' }}>
+            <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid rgb(var(--ink) / 0.07)', fontSize: '0.62rem', color: 'rgb(var(--ink) / 0.28)', wordBreak: 'break-all' }}>
               {shortPath(tip.url)}
             </div>
           )}
@@ -739,9 +739,9 @@ function TimelineTab({ urlResults, dates, dailySummary, pages }) {
 // ── Index Verdict helpers ─────────────────────────────────────────────────────
 
 const VERDICT_STYLE = {
-  PASS:    { color: '#4ade80', bg: 'rgba(74,222,128,0.12)',  border: 'rgba(74,222,128,0.3)'  },
-  NEUTRAL: { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)'  },
-  FAIL:    { color: '#f87171', bg: 'rgba(248,113,113,0.12)', border: 'rgba(248,113,113,0.3)' },
+  PASS:    { color: '#15803d', bg: 'rgba(74,222,128,0.12)',  border: 'rgba(74,222,128,0.3)'  },
+  NEUTRAL: { color: '#b45309', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)'  },
+  FAIL:    { color: '#dc2626', bg: 'rgba(248,113,113,0.12)', border: 'rgba(248,113,113,0.3)' },
 };
 
 function VerdictBadge({ verdict }) {
@@ -841,11 +841,11 @@ function IndexVerdict({ selectedSite }) {
     };
   }, [rows]);
 
-  const filterBtn = (active, label, onClick, color = 'rgba(255,255,255,0.1)', activeColor = '#E20071') => (
+  const filterBtn = (active, label, onClick, color = 'rgb(var(--ink) / 0.1)', activeColor = '#E20071') => (
     <button onClick={onClick} style={{
       fontSize: '0.72rem', padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
-      background: active ? `${activeColor}22` : 'rgba(255,255,255,0.04)',
-      border: `1px solid ${active ? activeColor : 'rgba(255,255,255,0.1)'}`,
+      background: active ? `${activeColor}22` : 'rgb(var(--ink) / 0.04)',
+      border: `1px solid ${active ? activeColor : 'rgb(var(--ink) / 0.1)'}`,
       color: active ? activeColor : 'var(--text-muted)', fontWeight: active ? 700 : 400,
     }}>{label}</button>
   );
@@ -878,7 +878,7 @@ function IndexVerdict({ selectedSite }) {
         </p>
         <button onClick={() => refresh(selectedSite)} disabled={!selectedSite || loadingRows} style={{
           display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', padding: '5px 10px',
-          background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+          background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)',
           borderRadius: 6, cursor: 'pointer', color: 'var(--text-muted)',
         }}>
           <RefreshCw size={12} /> {loadingRows ? 'Loading…' : 'Refresh'}
@@ -889,23 +889,23 @@ function IndexVerdict({ selectedSite }) {
       {datesInfo && (datesInfo.page_count > 0) && (
         <div style={{
           display: 'flex', gap: 16, flexWrap: 'wrap', padding: '10px 14px', borderRadius: 8, marginBottom: 14,
-          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
+          background: 'rgb(var(--ink) / 0.03)', border: '1px solid rgb(var(--ink) / 0.07)',
         }}>
           <div>
             <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Pages</div>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{datesInfo.page_count?.toLocaleString()}</div>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-strong)', fontVariantNumeric: 'tabular-nums' }}>{datesInfo.page_count?.toLocaleString()}</div>
           </div>
           <div>
             <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Indexed</div>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#4ade80', fontVariantNumeric: 'tabular-nums' }}>{datesInfo.indexed_count?.toLocaleString()}</div>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#15803d', fontVariantNumeric: 'tabular-nums' }}>{datesInfo.indexed_count?.toLocaleString()}</div>
           </div>
           <div>
             <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Not indexed</div>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f59e0b', fontVariantNumeric: 'tabular-nums' }}>{datesInfo.not_indexed_count?.toLocaleString()}</div>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#b45309', fontVariantNumeric: 'tabular-nums' }}>{datesInfo.not_indexed_count?.toLocaleString()}</div>
           </div>
           <div>
             <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Index rate</div>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem', fontVariantNumeric: 'tabular-nums', color: (() => { const p = datesInfo.indexed_count / datesInfo.page_count * 100; return p >= 80 ? '#4ade80' : p >= 50 ? '#f59e0b' : '#f87171'; })() }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', fontVariantNumeric: 'tabular-nums', color: (() => { const p = datesInfo.indexed_count / datesInfo.page_count * 100; return p >= 80 ? '#15803d' : p >= 50 ? '#b45309' : '#dc2626'; })() }}>
               {datesInfo.page_count ? Math.round(datesInfo.indexed_count / datesInfo.page_count * 100) : 0}%
             </div>
           </div>
@@ -930,18 +930,18 @@ function IndexVerdict({ selectedSite }) {
           {/* Summary chips */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
             {filterBtn(!verdictFilter && !indexedFilter && !canonicalOnly, `All (${counts.total})`, () => { setVerdictFilter(''); setIndexedFilter(''); setCanonicalOnly(false); })}
-            {filterBtn(verdictFilter === 'PASS',    `PASS ${counts.pass}`,    () => setVerdictFilter(v => v === 'PASS'    ? '' : 'PASS'),    '#4ade80', '#4ade80')}
-            {filterBtn(verdictFilter === 'NEUTRAL', `NEUTRAL ${counts.neutral}`, () => setVerdictFilter(v => v === 'NEUTRAL' ? '' : 'NEUTRAL'), '#f59e0b', '#f59e0b')}
-            {filterBtn(verdictFilter === 'FAIL',    `FAIL ${counts.fail}`,    () => setVerdictFilter(v => v === 'FAIL'    ? '' : 'FAIL'),    '#f87171', '#f87171')}
-            <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)', margin: '0 2px' }} />
+            {filterBtn(verdictFilter === 'PASS',    `PASS ${counts.pass}`,    () => setVerdictFilter(v => v === 'PASS'    ? '' : 'PASS'),    '#15803d', '#15803d')}
+            {filterBtn(verdictFilter === 'NEUTRAL', `NEUTRAL ${counts.neutral}`, () => setVerdictFilter(v => v === 'NEUTRAL' ? '' : 'NEUTRAL'), '#b45309', '#b45309')}
+            {filterBtn(verdictFilter === 'FAIL',    `FAIL ${counts.fail}`,    () => setVerdictFilter(v => v === 'FAIL'    ? '' : 'FAIL'),    '#dc2626', '#dc2626')}
+            <div style={{ width: 1, height: 16, background: 'rgb(var(--ink) / 0.1)', margin: '0 2px' }} />
             {filterBtn(indexedFilter === 'indexed', `Indexed ${counts.indexed}`,         () => setIndexedFilter(v => v === 'indexed' ? '' : 'indexed'))}
             {filterBtn(indexedFilter === 'missing', `Not indexed ${counts.total - counts.indexed}`, () => setIndexedFilter(v => v === 'missing' ? '' : 'missing'))}
-            {counts.mismatch > 0 && filterBtn(canonicalOnly, `Canonical mismatch ${counts.mismatch}`, () => setCanonicalOnly(v => !v), '#fb923c', '#fb923c')}
+            {counts.mismatch > 0 && filterBtn(canonicalOnly, `Canonical mismatch ${counts.mismatch}`, () => setCanonicalOnly(v => !v), '#c2410c', '#c2410c')}
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
               <button onClick={exportCsv} title="Export the filtered rows as CSV" style={{
                 display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', padding: '5px 11px',
                 borderRadius: 7, cursor: 'pointer', color: 'var(--text-muted)',
-                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.12)',
               }}>
                 <Download size={13} /> Export CSV ({filtered.length})
               </button>
@@ -964,18 +964,18 @@ function IndexVerdict({ selectedSite }) {
                   <th>Page URL</th>
                   <th onClick={() => handleSort('verdict')} style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      Verdict <ArrowUpDown size={11} color={sortCol === 'verdict' ? 'var(--primary)' : 'rgba(255,255,255,0.25)'} />
+                      Verdict <ArrowUpDown size={11} color={sortCol === 'verdict' ? 'var(--primary)' : 'rgb(var(--ink) / 0.25)'} />
                     </span>
                   </th>
                   <th onClick={() => handleSort('is_indexed')} style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      Indexed <ArrowUpDown size={11} color={sortCol === 'is_indexed' ? 'var(--primary)' : 'rgba(255,255,255,0.25)'} />
+                      Indexed <ArrowUpDown size={11} color={sortCol === 'is_indexed' ? 'var(--primary)' : 'rgb(var(--ink) / 0.25)'} />
                     </span>
                   </th>
                   <th>Coverage reason</th>
                   <th onClick={() => handleSort('last_crawl')} style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      Last crawl <ArrowUpDown size={11} color={sortCol === 'last_crawl' ? 'var(--primary)' : 'rgba(255,255,255,0.25)'} />
+                      Last crawl <ArrowUpDown size={11} color={sortCol === 'last_crawl' ? 'var(--primary)' : 'rgb(var(--ink) / 0.25)'} />
                     </span>
                   </th>
                   <th style={{ textAlign: 'center' }}>Canonical</th>
@@ -996,8 +996,8 @@ function IndexVerdict({ selectedSite }) {
                     <td><VerdictBadge verdict={row.verdict} /></td>
                     <td style={{ textAlign: 'center' }}>
                       {row.is_indexed
-                        ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.75rem', color: '#4ade80', fontWeight: 700 }}><CheckCircle size={12} /> Yes</span>
-                        : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.75rem', color: '#f59e0b', fontWeight: 600 }}><AlertCircle size={12} /> No</span>}
+                        ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.75rem', color: '#15803d', fontWeight: 700 }}><CheckCircle size={12} /> Yes</span>
+                        : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.75rem', color: '#b45309', fontWeight: 600 }}><AlertCircle size={12} /> No</span>}
                     </td>
                     <td style={{ maxWidth: 260, fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={row.coverage_state}>
@@ -1011,7 +1011,7 @@ function IndexVerdict({ selectedSite }) {
                       {row.canonical_mismatch
                         ? (
                           <span title={`Google: ${row.google_canonical}\nDeclared: ${row.user_canonical}`}
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.72rem', color: '#fb923c', fontWeight: 700, cursor: 'help' }}>
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.72rem', color: '#c2410c', fontWeight: 700, cursor: 'help' }}>
                             <Link2 size={11} /> Mismatch
                           </span>
                         )
@@ -1044,7 +1044,7 @@ function IndexVerdict({ selectedSite }) {
 // ── Index Health panel — daily snapshot trend + alerts ─────────────────────────
 
 function rateColor(r) {
-  return r >= 80 ? '#4ade80' : r >= 50 ? '#f59e0b' : '#f87171';
+  return r >= 80 ? '#15803d' : r >= 50 ? '#b45309' : '#dc2626';
 }
 
 function IndexRateSparkline({ history }) {
@@ -1101,7 +1101,7 @@ function IndexOverviewPanel({ sites, selectedSite, onSelect }) {
           <Globe size={16} color="var(--primary)" />
           <span style={{ fontSize: '0.92rem', fontWeight: 700 }}>Portfolio Overview</span>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            {data.length} sites{attention > 0 && <> · <span style={{ color: '#f87171', fontWeight: 700 }}>{attention} need attention</span></>}
+            {data.length} sites{attention > 0 && <> · <span style={{ color: '#dc2626', fontWeight: 700 }}>{attention} need attention</span></>}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1141,14 +1141,14 @@ function IndexOverviewPanel({ sites, selectedSite, onSelect }) {
                     <tr key={s.site_slug}
                       onClick={() => onSelect(s.site_slug)}
                       style={{ cursor: 'pointer', background: isSel ? 'rgba(226,0,113,0.08)' : undefined }}
-                      onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                      onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'rgb(var(--ink) / 0.03)'; }}
                       onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = ''; }}>
                       <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {attn && <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#f87171', marginRight: 7 }} />}
+                        {attn && <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#dc2626', marginRight: 7 }} />}
                         {nameOf[s.site_slug] || s.site_slug}
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: 700, color: rateColor(s.index_rate), fontVariantNumeric: 'tabular-nums' }}>{s.index_rate}%</td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.rate_delta == null ? 'var(--text-dim)' : s.rate_delta < 0 ? '#f87171' : s.rate_delta > 0 ? '#4ade80' : 'var(--text-muted)' }}>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.rate_delta == null ? 'var(--text-dim)' : s.rate_delta < 0 ? '#dc2626' : s.rate_delta > 0 ? '#15803d' : 'var(--text-muted)' }}>
                         {s.rate_delta == null ? '—' : `${s.rate_delta > 0 ? '+' : ''}${s.rate_delta}`}
                       </td>
                       <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
@@ -1157,11 +1157,11 @@ function IndexOverviewPanel({ sites, selectedSite, onSelect }) {
                       <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
                         {s.estimated_coverage != null ? s.estimated_coverage + '%' : '—'}
                       </td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.fail_count > 0 ? '#f59e0b' : 'var(--text-dim)' }}>{s.fail_count || 0}</td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.important_down > 0 ? '#f87171' : 'var(--text-dim)', fontWeight: s.important_down > 0 ? 700 : 400 }}>{s.important_down || 0}</td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.fail_count > 0 ? '#b45309' : 'var(--text-dim)' }}>{s.fail_count || 0}</td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: s.important_down > 0 ? '#dc2626' : 'var(--text-dim)', fontWeight: s.important_down > 0 ? 700 : 400 }}>{s.important_down || 0}</td>
                       <td style={{ textAlign: 'right' }}>
                         {s.active_alerts > 0
-                          ? <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: 'rgba(248,113,113,0.15)', color: '#f87171' }}>{s.active_alerts}</span>
+                          ? <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: 'rgba(248,113,113,0.15)', color: '#dc2626' }}>{s.active_alerts}</span>
                           : <span style={{ color: 'var(--text-dim)' }}>—</span>}
                       </td>
                     </tr>
@@ -1236,7 +1236,7 @@ function IndexHealthPanel({ site }) {
   const first   = history.length ? history[0] : null;
   const delta   = latest && first && history.length > 1 ? Math.round((latest.index_rate - first.index_rate) * 10) / 10 : null;
   const unseen  = alerts.filter(a => !a.seen);
-  const sevColor = { critical: '#f87171', warning: '#f59e0b', info: '#60a5fa' };
+  const sevColor = { critical: '#dc2626', warning: '#b45309', info: '#2563eb' };
 
   if (!site) return null;
 
@@ -1252,7 +1252,7 @@ function IndexHealthPanel({ site }) {
                   <span style={{ fontSize: '1.9rem', fontWeight: 800, lineHeight: 1, color: rateColor(latest.index_rate) }}>{latest.index_rate}%</span>
                   <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Sample index rate</span>
                   {delta != null && (
-                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : 'var(--text-muted)' }}>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: delta > 0 ? '#15803d' : delta < 0 ? '#dc2626' : 'var(--text-muted)' }}>
                       {delta > 0 ? '+' : ''}{delta} pts
                     </span>
                   )}
@@ -1265,13 +1265,13 @@ function IndexHealthPanel({ site }) {
                     {latest.submitted != null && (
                       <div>
                         <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 2 }}>Submitted (sitemap)</div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#d8d8e6', fontVariantNumeric: 'tabular-nums' }}>{latest.submitted.toLocaleString()}</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', fontVariantNumeric: 'tabular-nums' }}>{latest.submitted.toLocaleString()}</div>
                       </div>
                     )}
                     {latest.estimated_coverage != null && (
                       <div>
                         <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 2 }}>Est. coverage</div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#d8d8e6', fontVariantNumeric: 'tabular-nums' }}>{latest.estimated_coverage}%</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', fontVariantNumeric: 'tabular-nums' }}>{latest.estimated_coverage}%</div>
                         {latest.pages_with_traffic != null && latest.submitted != null && (
                           <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: 2 }}>
                             {latest.pages_with_traffic.toLocaleString()} of {latest.submitted.toLocaleString()} pages get search traffic
@@ -1296,13 +1296,13 @@ function IndexHealthPanel({ site }) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button onClick={testSlack} style={{
             fontSize: '0.72rem', padding: '7px 11px', background: 'none',
-            border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7, cursor: 'pointer', color: 'var(--text-muted)',
+            border: '1px solid rgb(var(--ink) / 0.12)', borderRadius: 7, cursor: 'pointer', color: 'var(--text-muted)',
           }}>
             Test Slack
           </button>
           <button onClick={capture} disabled={busy} style={{
             display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', padding: '7px 13px',
-            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
+            background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.12)',
             borderRadius: 7, cursor: busy ? 'wait' : 'pointer', color: 'var(--text-muted)',
           }}>
             <RefreshCw size={13} /> {busy ? 'Capturing…' : 'Capture snapshot'}
@@ -1310,12 +1310,12 @@ function IndexHealthPanel({ site }) {
         </div>
       </div>
 
-      {msg && <div style={{ marginTop: 10, fontSize: '0.78rem', color: '#f59e0b' }}>{msg}</div>}
+      {msg && <div style={{ marginTop: 10, fontSize: '0.78rem', color: '#b45309' }}>{msg}</div>}
 
       {unseen.length > 0 && (
         <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#f87171', display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 5 }}>
               <ShieldAlert size={13} /> {unseen.length} index alert{unseen.length !== 1 ? 's' : ''}
             </span>
             <button onClick={dismiss} style={{ fontSize: '0.7rem', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', textDecoration: 'underline' }}>Dismiss</button>
@@ -1323,10 +1323,10 @@ function IndexHealthPanel({ site }) {
           {unseen.map((a, i) => (
             <div key={i} style={{
               display: 'flex', alignItems: 'center', gap: 8, padding: '7px 11px', borderRadius: 7, fontSize: '0.8rem',
-              background: 'rgba(255,255,255,0.03)', borderLeft: `3px solid ${sevColor[a.severity] || '#60a5fa'}`,
+              background: 'rgb(var(--ink) / 0.03)', borderLeft: `3px solid ${sevColor[a.severity] || '#2563eb'}`,
             }}>
-              <span style={{ color: sevColor[a.severity] || '#60a5fa', fontWeight: 700, textTransform: 'uppercase', fontSize: '0.62rem', letterSpacing: '0.05em', flexShrink: 0 }}>{a.severity}</span>
-              <span style={{ color: '#d8d8e6' }}>{a.message}</span>
+              <span style={{ color: sevColor[a.severity] || '#2563eb', fontWeight: 700, textTransform: 'uppercase', fontSize: '0.62rem', letterSpacing: '0.05em', flexShrink: 0 }}>{a.severity}</span>
+              <span style={{ color: '#334155' }}>{a.message}</span>
             </div>
           ))}
         </div>
@@ -1334,12 +1334,12 @@ function IndexHealthPanel({ site }) {
 
       {important.length > 0 && (
         <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#b45309', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
             <ShieldAlert size={13} /> {important.length} high-traffic page{important.length !== 1 ? 's' : ''} not indexed
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {important.slice(0, 8).map((p, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.76rem', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.76rem', padding: '4px 0', borderBottom: '1px solid rgb(var(--ink) / 0.04)' }}>
                 <a href={withSlash(p.url)} target="_blank" rel="noopener noreferrer" title={withSlash(p.url)}
                   style={{ color: 'var(--primary)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {shortPath(p.url)}
@@ -1593,16 +1593,16 @@ export default function IndexationControl() {
         </div>
 
         {/* Specific URLs toggle */}
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 16, marginBottom: 16 }}>
+        <div style={{ borderTop: '1px solid rgb(var(--ink) / 0.08)', paddingTop: 16, marginBottom: 16 }}>
           <div
             style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none', marginBottom: urlsEnabled ? 12 : 0 }}
             onClick={() => { setUrlsEnabled(v => !v); if (urlsEnabled) setUrlsText(''); }}
           >
             {urlsEnabled
               ? <ToggleRight size={22} color="var(--primary)" />
-              : <ToggleLeft  size={22} color="rgba(255,255,255,0.3)" />}
+              : <ToggleLeft  size={22} color="#64748b" />}
             <div>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: urlsEnabled ? 'white' : 'var(--text-muted)' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: urlsEnabled ? 'var(--text-strong)' : 'var(--text-muted)' }}>
                 Check specific URLs
               </span>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginLeft: 8 }}>
@@ -1623,16 +1623,16 @@ export default function IndexationControl() {
         </div>
 
         {/* Sitemap toggle section */}
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 16, marginBottom: 20 }}>
+        <div style={{ borderTop: '1px solid rgb(var(--ink) / 0.08)', paddingTop: 16, marginBottom: 20 }}>
           <div
             style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' }}
             onClick={() => setSitemapEnabled(v => !v)}
           >
             {sitemapEnabled
               ? <ToggleRight size={22} color="var(--primary)" />
-              : <ToggleLeft  size={22} color="rgba(255,255,255,0.3)" />}
+              : <ToggleLeft  size={22} color="#64748b" />}
             <div>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: sitemapEnabled ? 'white' : 'var(--text-muted)' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: sitemapEnabled ? 'var(--text-strong)' : 'var(--text-muted)' }}>
                 Check sitemap coverage
               </span>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginLeft: 8 }}>
@@ -1689,13 +1689,13 @@ export default function IndexationControl() {
           {/* Stat cards */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Date range:</span>
-            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#d8d8e6' }}>{result.start_date} → {result.end_date}</span>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#334155' }}>{result.start_date} → {result.end_date}</span>
             <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', marginLeft: 4 }}>({result.dates?.length} days)</span>
           </div>
           <div className="grid grid-cols-4 gap-4">
             <StatCard label="Pages in GSC" value={stats.total_pages.toLocaleString()} sub={`on ${result.end_date}`} valueColor="var(--primary)" />
-            <StatCard label="Getting clicks" value={stats.with_clicks.toLocaleString()} sub={`${stats.total_pages > 0 ? Math.round((stats.with_clicks / stats.total_pages) * 100) : 0}% of indexed pages`} valueColor="#4ade80" />
-            <StatCard label="0-click pages"  value={stats.no_clicks.toLocaleString()} sub="impressions only" valueColor={stats.no_clicks > stats.with_clicks ? '#f59e0b' : '#d8d8e6'} />
+            <StatCard label="Getting clicks" value={stats.with_clicks.toLocaleString()} sub={`${stats.total_pages > 0 ? Math.round((stats.with_clicks / stats.total_pages) * 100) : 0}% of indexed pages`} valueColor="#15803d" />
+            <StatCard label="0-click pages"  value={stats.no_clicks.toLocaleString()} sub="impressions only" valueColor={stats.no_clicks > stats.with_clicks ? '#b45309' : '#334155'} />
             <StatCard label="Sitemaps" value={stats.sitemap_count} sub="submitted to GSC" />
           </div>
 
@@ -1705,27 +1705,27 @@ export default function IndexationControl() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
                 <div>
                   <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Sitemap Coverage</div>
-                  <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.55)', wordBreak: 'break-all' }}>{smResult.sitemap_url}</div>
+                  <div style={{ fontSize: '0.78rem', color: 'rgb(var(--ink) / 0.55)', wordBreak: 'break-all' }}>{smResult.sitemap_url}</div>
                 </div>
                 <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                   <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '1.6rem', fontWeight: 800, lineHeight: 1, color: '#4ade80' }}>{smResult.indexed_count.toLocaleString()}</div>
+                    <div style={{ fontSize: '1.6rem', fontWeight: 800, lineHeight: 1, color: '#15803d' }}>{smResult.indexed_count.toLocaleString()}</div>
                     <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>indexed</div>
                   </div>
                   <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '1.6rem', fontWeight: 800, lineHeight: 1, color: smResult.not_indexed_count > 0 ? '#f59e0b' : '#4ade80' }}>{smResult.not_indexed_count.toLocaleString()}</div>
+                    <div style={{ fontSize: '1.6rem', fontWeight: 800, lineHeight: 1, color: smResult.not_indexed_count > 0 ? '#b45309' : '#15803d' }}>{smResult.not_indexed_count.toLocaleString()}</div>
                     <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>not in GSC</div>
                   </div>
                   <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '1.6rem', fontWeight: 800, lineHeight: 1, color: 'white' }}>{smResult.total_urls.toLocaleString()}</div>
+                    <div style={{ fontSize: '1.6rem', fontWeight: 800, lineHeight: 1, color: 'var(--text-strong)' }}>{smResult.total_urls.toLocaleString()}</div>
                     <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>total in sitemap</div>
                   </div>
                 </div>
               </div>
-              <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 6, height: 10, overflow: 'hidden' }}>
+              <div style={{ background: 'rgb(var(--ink) / 0.06)', borderRadius: 6, height: 10, overflow: 'hidden' }}>
                 <div style={{
                   height: '100%', width: `${smResult.coverage_pct}%`, borderRadius: 6, transition: 'width 0.6s ease',
-                  background: smResult.coverage_pct >= 80 ? '#4ade80' : smResult.coverage_pct >= 50 ? '#f59e0b' : '#f87171',
+                  background: smResult.coverage_pct >= 80 ? '#15803d' : smResult.coverage_pct >= 50 ? '#b45309' : '#dc2626',
                 }} />
               </div>
               <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4 }}>
@@ -1733,7 +1733,7 @@ export default function IndexationControl() {
                   {smResult.child_sitemaps?.length > 0 && `Sitemap index → ${smResult.child_sitemaps.length} child sitemaps · `}
                   Matched against {(smResult.gsc_pages_total || 0).toLocaleString()} GSC pages · as of {result.end_date}
                 </span>
-                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: smResult.coverage_pct >= 80 ? '#4ade80' : smResult.coverage_pct >= 50 ? '#f59e0b' : '#f87171' }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: smResult.coverage_pct >= 80 ? '#15803d' : smResult.coverage_pct >= 50 ? '#b45309' : '#dc2626' }}>
                   {smResult.coverage_pct}% indexed
                 </span>
               </div>
@@ -1749,7 +1749,7 @@ export default function IndexationControl() {
             </div>
 
             {/* Tabs nav */}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20, borderBottom: '1px solid rgba(255,255,255,0.07)', paddingBottom: 16 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20, borderBottom: '1px solid rgb(var(--ink) / 0.07)', paddingBottom: 16 }}>
               <TabBtn id="timeline" label="Timeline"                                          active={activeTab === 'timeline'} onClick={setActiveTab} />
               {result.url_results?.length > 0 && (
                 <TabBtn id="range"   label={`Date Range (${result.url_results.length} URLs)`} active={activeTab === 'range'}   onClick={setActiveTab} />
@@ -1798,7 +1798,7 @@ export default function IndexationControl() {
                   <tbody>
                     {result.url_results.map((row) => {
                       const expanded = expandedUrls.has(row.url);
-                      const coverageColor = row.coverage_pct >= 80 ? '#4ade80' : row.coverage_pct >= 50 ? '#f59e0b' : '#f87171';
+                      const coverageColor = row.coverage_pct >= 80 ? '#15803d' : row.coverage_pct >= 50 ? '#b45309' : '#dc2626';
                       return (
                         <React.Fragment key={row.url}>
                           <tr
@@ -1817,19 +1817,19 @@ export default function IndexationControl() {
                               <CoverageBar pct={row.coverage_pct} />
                             </td>
                             <td style={{ textAlign: 'center' }}>
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.82rem', fontWeight: 700, color: '#4ade80' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.82rem', fontWeight: 700, color: '#15803d' }}>
                                 <CheckCircle size={12} /> {row.indexed_days}
                               </span>
                             </td>
                             <td style={{ textAlign: 'center' }}>
                               {row.not_indexed_days > 0
-                                ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.82rem', fontWeight: 700, color: '#f59e0b' }}>
+                                ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.82rem', fontWeight: 700, color: '#b45309' }}>
                                     <AlertCircle size={12} /> {row.not_indexed_days}
                                   </span>
                                 : <span style={{ fontSize: '0.82rem', color: 'var(--text-dim)' }}>0</span>}
                             </td>
-                            <td style={{ textAlign: 'center', fontSize: '0.8rem', color: row.first_seen ? '#d8d8e6' : 'var(--text-dim)', fontVariantNumeric: 'tabular-nums' }}>{row.first_seen || '—'}</td>
-                            <td style={{ textAlign: 'center', fontSize: '0.8rem', color: row.last_seen ? '#d8d8e6' : 'var(--text-dim)', fontVariantNumeric: 'tabular-nums' }}>{row.last_seen || '—'}</td>
+                            <td style={{ textAlign: 'center', fontSize: '0.8rem', color: row.first_seen ? '#334155' : 'var(--text-dim)', fontVariantNumeric: 'tabular-nums' }}>{row.first_seen || '—'}</td>
+                            <td style={{ textAlign: 'center', fontSize: '0.8rem', color: row.last_seen ? '#334155' : 'var(--text-dim)', fontVariantNumeric: 'tabular-nums' }}>{row.last_seen || '—'}</td>
                             <td style={{ textAlign: 'center' }}>
                               {expanded
                                 ? <ChevronDown size={14} color="var(--text-muted)" />
@@ -1839,12 +1839,12 @@ export default function IndexationControl() {
 
                           {/* Expanded daily breakdown */}
                           {expanded && (
-                            <tr style={{ background: 'rgba(0,0,0,0.15)' }}>
+                            <tr style={{ background: 'var(--surface-sunken)' }}>
                               <td colSpan={7} style={{ padding: '0 0 0 24px' }}>
                                 <div style={{ overflowX: 'auto', maxHeight: 340, overflowY: 'auto', padding: '10px 16px 10px 0' }}>
                                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                                     <thead>
-                                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                                      <tr style={{ borderBottom: '1px solid rgb(var(--ink) / 0.06)' }}>
                                         <th style={{ textAlign: 'left', padding: '5px 12px 5px 0', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em', fontSize: '0.68rem', textTransform: 'uppercase' }}>Date</th>
                                         <th style={{ textAlign: 'center', padding: '5px 12px', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em', fontSize: '0.68rem', textTransform: 'uppercase' }}>Status</th>
                                         <th style={{ textAlign: 'center', padding: '5px 12px', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em', fontSize: '0.68rem', textTransform: 'uppercase' }}>Impressions</th>
@@ -1854,15 +1854,15 @@ export default function IndexationControl() {
                                     </thead>
                                     <tbody>
                                       {row.daily.map(d => (
-                                        <tr key={d.date} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                                          <td style={{ padding: '5px 12px 5px 0', color: '#d8d8e6', fontVariantNumeric: 'tabular-nums' }}>{d.date}</td>
+                                        <tr key={d.date} style={{ borderBottom: '1px solid rgb(var(--ink) / 0.03)' }}>
+                                          <td style={{ padding: '5px 12px 5px 0', color: '#334155', fontVariantNumeric: 'tabular-nums' }}>{d.date}</td>
                                           <td style={{ textAlign: 'center', padding: '5px 12px' }}>
                                             {d.indexed
-                                              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#4ade80' }}><CheckCircle size={10} /> Indexed</span>
+                                              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#15803d' }}><CheckCircle size={10} /> Indexed</span>
                                               : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 600, color: 'rgba(245,158,11,0.7)' }}><AlertCircle size={10} /> Not in GSC</span>}
                                           </td>
-                                          <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: d.impressions > 0 ? '#d8d8e6' : 'var(--text-dim)' }}>{d.indexed ? d.impressions.toLocaleString() : '—'}</td>
-                                          <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: d.clicks > 0 ? '#4ade80' : 'var(--text-dim)', fontWeight: d.clicks > 0 ? 700 : 400 }}>{d.indexed ? d.clicks.toLocaleString() : '—'}</td>
+                                          <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: d.impressions > 0 ? '#334155' : 'var(--text-dim)' }}>{d.indexed ? d.impressions.toLocaleString() : '—'}</td>
+                                          <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: d.clicks > 0 ? '#15803d' : 'var(--text-dim)', fontWeight: d.clicks > 0 ? 700 : 400 }}>{d.indexed ? d.clicks.toLocaleString() : '—'}</td>
                                           <td style={{ textAlign: 'center', padding: '5px 12px', fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{d.indexed && d.position != null ? d.position : '—'}</td>
                                         </tr>
                                       ))}
@@ -1900,12 +1900,12 @@ export default function IndexationControl() {
                         const maxPages = Math.max(...result.daily_summary.map(d => d.total_pages), 1);
                         return result.daily_summary.map(d => (
                           <tr key={d.date}>
-                            <td style={{ fontVariantNumeric: 'tabular-nums', color: '#d8d8e6' }}>{d.date}</td>
+                            <td style={{ fontVariantNumeric: 'tabular-nums', color: '#334155' }}>{d.date}</td>
                             <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: 'var(--primary)' }}>{d.total_pages.toLocaleString()}</td>
-                            <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: '#4ade80' }}>{d.pages_clicking.toLocaleString()}</td>
+                            <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: '#15803d' }}>{d.pages_clicking.toLocaleString()}</td>
                             <td>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                                <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'rgb(var(--ink) / 0.06)', overflow: 'hidden' }}>
                                   <div style={{ height: '100%', width: `${Math.round((d.total_pages / maxPages) * 100)}%`, background: 'var(--primary)', borderRadius: 3 }} />
                                 </div>
                                 <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', width: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -2022,9 +2022,9 @@ export default function IndexationControl() {
                               </a>
                             </td>
                             <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{sm.submitted ?? '—'}</td>
-                            <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: sm.indexed != null ? '#4ade80' : 'var(--text-muted)' }}>{sm.indexed ?? '—'}</td>
-                            <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: hasErr ? '#f87171' : 'var(--text-muted)' }}>{sm.errors ?? '—'}</td>
-                            <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: (sm.warnings || 0) > 0 ? '#f59e0b' : 'var(--text-muted)' }}>{sm.warnings ?? '—'}</td>
+                            <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: sm.indexed != null ? '#15803d' : 'var(--text-muted)' }}>{sm.indexed ?? '—'}</td>
+                            <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: hasErr ? '#dc2626' : 'var(--text-muted)' }}>{sm.errors ?? '—'}</td>
+                            <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: (sm.warnings || 0) > 0 ? '#b45309' : 'var(--text-muted)' }}>{sm.warnings ?? '—'}</td>
                             <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{sm.last_downloaded ? new Date(sm.last_downloaded).toLocaleDateString() : '—'}</td>
                             <td>
                               <button
@@ -2060,9 +2060,9 @@ export default function IndexationControl() {
                         onClick={() => setSitemapStatus(s)}
                         style={{
                           fontSize: '0.72rem', padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
-                          background: sitemapStatus === s ? (s === 'missing' ? 'rgba(245,158,11,0.2)' : 'rgba(34,197,94,0.15)') : 'rgba(255,255,255,0.05)',
-                          border: sitemapStatus === s ? (s === 'missing' ? '1px solid #f59e0b' : '1px solid #4ade80') : '1px solid rgba(255,255,255,0.1)',
-                          color: sitemapStatus === s ? (s === 'missing' ? '#f59e0b' : '#4ade80') : 'var(--text-muted)',
+                          background: sitemapStatus === s ? (s === 'missing' ? 'rgba(245,158,11,0.2)' : 'rgba(34,197,94,0.15)') : 'rgb(var(--ink) / 0.05)',
+                          border: sitemapStatus === s ? (s === 'missing' ? '1px solid #b45309' : '1px solid #15803d') : '1px solid rgb(var(--ink) / 0.1)',
+                          color: sitemapStatus === s ? (s === 'missing' ? '#b45309' : '#15803d') : 'var(--text-muted)',
                           fontWeight: sitemapStatus === s ? 700 : 400,
                         }}
                       >
@@ -2103,10 +2103,10 @@ export default function IndexationControl() {
                           </td>
                           <td style={{ textAlign: 'center' }}>
                             {row.in_gsc
-                              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 700, color: '#4ade80' }}><CheckCircle size={12} /> Indexed</span>
-                              : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 700, color: '#f59e0b' }}><AlertCircle size={12} /> Not in GSC</span>}
+                              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 700, color: '#15803d' }}><CheckCircle size={12} /> Indexed</span>
+                              : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 700, color: '#b45309' }}><AlertCircle size={12} /> Not in GSC</span>}
                           </td>
-                          <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: row.clicks > 0 ? '#4ade80' : 'var(--text-muted)', fontWeight: row.clicks > 0 ? 700 : 400 }}>{row.clicks != null ? row.clicks.toLocaleString() : '—'}</td>
+                          <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: row.clicks > 0 ? '#15803d' : 'var(--text-muted)', fontWeight: row.clicks > 0 ? 700 : 400 }}>{row.clicks != null ? row.clicks.toLocaleString() : '—'}</td>
                           <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{row.impressions != null ? row.impressions.toLocaleString() : '—'}</td>
                           <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{fmtCtr(row.ctr)}</td>
                           <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{fmtPos(row.position)}</td>

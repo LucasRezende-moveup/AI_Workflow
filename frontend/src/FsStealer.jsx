@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
-import { ExternalLink, Target, Search, Sparkles, Globe, Tag, HelpCircle, ChevronDown, Copy, Download, Check, MapPin, BookmarkPlus, BookmarkCheck } from 'lucide-react';
+import { ExternalLink, Target, Search, Sparkles, Globe, Tag, HelpCircle, ChevronDown, Copy, Download, Check, Award, BookmarkPlus, BookmarkCheck } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+// GFM tables/task-lists are NOT in react-markdown's CommonMark core. Without this plugin every
+// pipe table in the AI plan collapses into one run-on paragraph and the table/th/td renderers
+// below never fire.
+import remarkGfm from 'remark-gfm';
 
 /* ── helpers ── */
 function hostname(url) {
@@ -8,20 +12,20 @@ function hostname(url) {
 }
 
 const INTENT_COLORS = {
-  Transactional: { bg: 'rgba(251,146,60,0.15)', border: 'rgba(251,146,60,0.35)', text: '#fb923c' },
-  Commercial:    { bg: 'rgba(167,139,250,0.15)', border: 'rgba(167,139,250,0.35)', text: '#a78bfa' },
-  Informational: { bg: 'rgba(56,189,248,0.15)',  border: 'rgba(56,189,248,0.35)',  text: '#38bdf8' },
-  Navigational:  { bg: 'rgba(74,222,128,0.15)',  border: 'rgba(74,222,128,0.35)',  text: '#4ade80' },
+  Transactional: { bg: 'rgba(251,146,60,0.15)', border: 'rgba(251,146,60,0.35)', text: '#c2410c' },
+  Commercial:    { bg: 'rgba(167,139,250,0.15)', border: 'rgba(167,139,250,0.35)', text: '#7c3aed' },
+  Informational: { bg: 'rgba(56,189,248,0.15)',  border: 'rgba(56,189,248,0.35)',  text: '#0284c7' },
+  Navigational:  { bg: 'rgba(74,222,128,0.15)',  border: 'rgba(74,222,128,0.35)',  text: '#15803d' },
 };
 
 /* ── sub-components ── */
 function PaaItem({ question, answer }) {
   const [open, setOpen] = useState(false);
   return (
-    <div style={{ borderRadius: 8, border: '1px solid rgba(255,255,255,0.07)', overflow: 'hidden' }}>
+    <div style={{ borderRadius: 8, border: '1px solid rgb(var(--ink) / 0.07)', overflow: 'hidden' }}>
       <button onClick={() => setOpen(!open)} aria-expanded={open} style={{
         width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        padding: '10px 13px', background: open ? 'rgba(255,255,255,0.04)' : 'transparent',
+        padding: '10px 13px', background: open ? 'rgb(var(--ink) / 0.04)' : 'transparent',
         border: 'none', color: 'var(--text-main)', cursor: 'pointer', textAlign: 'left', gap: 10,
         fontSize: '0.85rem', fontWeight: 500, transition: 'background 0.15s',
       }}>
@@ -29,7 +33,7 @@ function PaaItem({ question, answer }) {
         <ChevronDown size={13} style={{ flexShrink: 0, color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
       </button>
       {open && (
-        <div style={{ padding: '9px 13px 12px', borderTop: '1px solid rgba(255,255,255,0.05)', fontSize: '0.81rem', color: 'var(--text-muted)', lineHeight: 1.65 }}>
+        <div style={{ padding: '9px 13px 12px', borderTop: '1px solid rgb(var(--ink) / 0.05)', fontSize: '0.81rem', color: 'var(--text-muted)', lineHeight: 1.65 }}>
           {answer}
         </div>
       )}
@@ -42,8 +46,8 @@ function StatCard({ label, value, sub, accent }) {
     <div style={{
       flex: 1, minWidth: 130,
       padding: '14px 16px', borderRadius: 10,
-      background: accent ? `rgba(226,0,113,0.07)` : 'rgba(255,255,255,0.03)',
-      border: accent ? '1px solid rgba(226,0,113,0.3)' : '1px solid rgba(255,255,255,0.07)',
+      background: accent ? `rgba(226,0,113,0.07)` : 'rgb(var(--ink) / 0.03)',
+      border: accent ? '1px solid rgba(226,0,113,0.3)' : '1px solid rgb(var(--ink) / 0.07)',
     }}>
       <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 5 }}>{label}</div>
       <div style={{ fontWeight: 700, fontSize: '0.95rem', color: accent ? 'var(--primary)' : 'var(--text-main)', lineHeight: 1.2, wordBreak: 'break-all' }}>{value}</div>
@@ -68,9 +72,9 @@ function ExportButton({ onClick, icon: Icon, label, active }) {
     <button onClick={onClick} style={{
       display: 'inline-flex', alignItems: 'center', gap: 5,
       padding: '6px 12px', borderRadius: 7, fontSize: '0.78rem', fontWeight: 600,
-      background: active ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)',
-      border: active ? '1px solid rgba(74,222,128,0.4)' : '1px solid rgba(255,255,255,0.12)',
-      color: active ? '#4ade80' : 'var(--text-muted)',
+      background: active ? 'rgba(74,222,128,0.15)' : 'rgb(var(--ink) / 0.05)',
+      border: active ? '1px solid rgba(74,222,128,0.4)' : '1px solid rgb(var(--ink) / 0.12)',
+      color: active ? '#15803d' : 'var(--text-muted)',
       cursor: 'pointer', transition: 'background 0.15s, border-color 0.15s, color 0.15s', whiteSpace: 'nowrap',
     }}>
       <Icon size={13} />
@@ -81,32 +85,48 @@ function ExportButton({ onClick, icon: Icon, label, active }) {
 
 const MD_COMPONENTS = {
   table: ({ children }) => (
-    <div style={{ overflowX: 'auto', margin: '16px 0' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>{children}</table>
+    <div style={{ overflowX: 'auto', margin: '18px 0', borderRadius: 10, border: '1px solid rgb(var(--ink) / 0.09)' }}>
+      <table style={{ width: '100%', minWidth: 520, borderCollapse: 'collapse', fontSize: '0.85rem' }}>{children}</table>
     </div>
   ),
+  thead: ({ children }) => <thead style={{ background: 'rgba(226,0,113,0.09)' }}>{children}</thead>,
   th: ({ children }) => (
-    <th style={{ padding: '8px 12px', borderBottom: '1px solid rgba(226,0,113,0.3)', color: 'var(--text-muted)', fontWeight: 600, textAlign: 'left', fontSize: '0.79rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{children}</th>
+    <th style={{ padding: '10px 13px', borderBottom: '1px solid rgba(226,0,113,0.3)', color: 'var(--text-main)', fontWeight: 700, textAlign: 'left', fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>{children}</th>
+  ),
+  tr: ({ children, ...props }) => (
+    <tr {...props} style={{ borderBottom: '1px solid rgb(var(--ink) / 0.05)' }}>{children}</tr>
   ),
   td: ({ children }) => (
-    <td style={{ padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-main)', fontSize: '0.85rem' }}>{children}</td>
+    // Cells hold prose and long URLs; wrap them instead of forcing the table wider than the panel.
+    <td style={{ padding: '9px 13px', color: 'var(--text-main)', fontSize: '0.84rem', lineHeight: 1.5, verticalAlign: 'top', overflowWrap: 'anywhere' }}>{children}</td>
   ),
+  // GFM task lists — the Validation Checklist renders as real (disabled) checkboxes.
+  input: ({ checked, type }) => type === 'checkbox'
+    ? <input type="checkbox" checked={!!checked} readOnly
+        style={{ marginRight: 8, accentColor: 'var(--primary)', verticalAlign: 'middle', cursor: 'default' }} />
+    : null,
   h2: ({ children }) => (
-    <h2 style={{ fontSize: '1.02rem', fontWeight: 700, marginTop: 28, marginBottom: 10, paddingBottom: 6, borderBottom: '1px solid rgba(226,0,113,0.2)', color: '#fff' }}>{children}</h2>
+    <h2 style={{ fontSize: '1.02rem', fontWeight: 700, marginTop: 28, marginBottom: 10, paddingBottom: 6, borderBottom: '1px solid rgba(226,0,113,0.2)', color: 'var(--text-strong)' }}>{children}</h2>
   ),
   h3: ({ children }) => (
     <h3 style={{ fontSize: '0.93rem', fontWeight: 700, marginTop: 18, marginBottom: 7, color: 'var(--primary)' }}>{children}</h3>
   ),
-  li: ({ children }) => <li style={{ marginBottom: 5, paddingLeft: 4, lineHeight: 1.6, fontSize: '0.875rem' }}>{children}</li>,
+  li: ({ children, className }) => (
+    <li className={className} style={{
+      marginBottom: 5, paddingLeft: 4, lineHeight: 1.6, fontSize: '0.875rem',
+      // Task-list items carry their own checkbox — drop the redundant bullet.
+      listStyle: className?.includes('task-list-item') ? 'none' : undefined,
+    }}>{children}</li>
+  ),
   pre: ({ children }) => (
-    <pre style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '13px 15px', overflowX: 'auto', fontSize: '0.81rem', lineHeight: 1.55, margin: '12px 0' }}>{children}</pre>
+    <pre style={{ background: 'var(--surface-sunken)', border: '1px solid rgb(var(--ink) / 0.08)', borderRadius: 8, padding: '13px 15px', overflowX: 'auto', fontSize: '0.81rem', lineHeight: 1.55, margin: '12px 0' }}>{children}</pre>
   ),
   code: ({ children, className }) => (
     className
-      ? <code style={{ fontFamily: 'monospace', color: '#e2e8f0' }}>{children}</code>
+      ? <code style={{ fontFamily: 'monospace', color: '#334155' }}>{children}</code>
       : <code style={{ background: 'rgba(226,0,113,0.1)', border: '1px solid rgba(226,0,113,0.2)', borderRadius: 4, padding: '1px 6px', fontSize: '0.84em', color: 'var(--primary)', fontFamily: 'monospace' }}>{children}</code>
   ),
-  strong: ({ children }) => <strong style={{ color: '#fff', fontWeight: 700 }}>{children}</strong>,
+  strong: ({ children }) => <strong style={{ color: 'var(--text-strong)', fontWeight: 700 }}>{children}</strong>,
   blockquote: ({ children }) => (
     <blockquote style={{ borderLeft: '3px solid var(--primary)', paddingLeft: 16, margin: '12px 0', color: 'var(--text-muted)', fontStyle: 'italic' }}>{children}</blockquote>
   ),
@@ -180,22 +200,30 @@ export default function FsStealer() {
 
   const buildMarkdown = () => {
     if (!result) return '';
-    const fsHolder = result.organic[0];
-    const targetPos = result.organic.findIndex(r =>
-      r.link && result.target_url &&
-      (() => { try { return r.link.includes(new URL(result.target_url).hostname); } catch { return false; } })()
-    );
+    const fs = result.featured_snippet;
+    const title = result.target_is_holder ? 'Defense'
+      : result.fs_status === 'none' ? 'Opportunity' : 'Steal';
     const lines = [
-      `# Featured Snippet Steal — "${result.keyword}"`,
+      `# Featured Snippet ${title} — "${result.keyword}"`,
       ``,
       `| Field | Value |`,
       `|-------|-------|`,
       `| **Keyword** | ${result.keyword} |`,
       `| **Location** | ${location} |`,
       `| **Intent** | ${result.intent} |`,
-      `| **FS Holder** | ${fsHolder?.link || 'N/A'} |`,
-      `| **Your position** | ${targetPos === -1 ? 'Not in top 10' : `#${targetPos + 1}`} |`,
+      `| **Snippet status** | ${result.fs_status === 'held' ? 'Held by a competitor' : result.fs_status === 'none' ? 'Unclaimed — no snippet on this SERP' : 'Unknown (fallback SERP source)'} |`,
+      `| **FS type** | ${result.fs_type || 'Not detected'} |`,
+      `| **Opportunity score** | ${result.opportunity_score ? `${result.opportunity_score}/10` : '—'} |`,
+      `| **FS Holder** | ${fs?.link || (result.fs_status === 'none' ? 'Nobody' : result.fs_holder?.link || 'N/A')} |`,
+      `| **Your position** | ${positionLabel} |`,
       ``,
+    ];
+    if (fs) {
+      lines.push(`## Current Featured Snippet (${fs.type})`, ``,
+        ...fs.content.split('\n').map(l => `> ${l}`), ``,
+        `Source: ${fs.link || 'not attributed'}`, ``);
+    }
+    lines.push(
       `---`,
       ``,
       `## SERP Snapshot`,
@@ -205,7 +233,7 @@ export default function FsStealer() {
       ...result.organic.map((r, i) =>
         `| ${i + 1} | ${r.title.replace(/\|/g, '\\|')} | ${r.link} | ${(r.snippet || '').replace(/\|/g, '\\|').slice(0, 90)}… |`
       ),
-    ];
+    );
     if (result.related_keywords?.length) {
       lines.push(``, `## Related Searches`, ``, result.related_keywords.join(' · '));
     }
@@ -237,13 +265,14 @@ export default function FsStealer() {
     URL.revokeObjectURL(url);
   };
 
-  /* derived values for results */
-  const targetPos = result
-    ? result.organic.findIndex(r =>
-        r.link && result.target_url &&
-        (() => { try { return r.link.includes(new URL(result.target_url).hostname); } catch { return false; } })()
-      )
-    : -1;
+  /* derived values for results — position comes from the API, which compares normalized
+     hosts; the old client-side substring match flagged any URL merely containing the host. */
+  const targetPos = result?.target_position ?? -1;
+  const positionLabel = targetPos === -1
+    ? `Not in top ${result?.organic?.length || 5}`
+    : `#${targetPos}`;
+  // 'held' = Google returned a real snippet box · 'none' = confirmed absent · 'unknown' = fallback engine
+  const fsStatus = result?.fs_status || 'unknown';
   const intentColor = result && INTENT_COLORS[result.intent];
   const hasRelated = result?.related_keywords?.length > 0;
   const hasPaa     = result?.paa?.length > 0;
@@ -332,12 +361,32 @@ export default function FsStealer() {
           {/* ── 1. Summary strip ── */}
           <div className="glass-panel" style={{ padding: '16px 20px' }}>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <StatCard label="FS Holder" value={hostname(result.organic[0]?.link || '')} accent />
+              <StatCard
+                label={fsStatus === 'held' ? (result.target_is_holder ? 'You hold the FS' : 'FS Holder')
+                  : fsStatus === 'none' ? 'Featured Snippet' : 'FS Holder (assumed)'}
+                value={fsStatus === 'none' ? 'Unclaimed' : hostname(result.fs_holder?.link || result.organic[0]?.link || '')}
+                sub={fsStatus === 'none' ? 'No snippet on this SERP'
+                  : result.target_is_holder ? 'Defend and widen it'
+                  : fsStatus === 'held' ? (result.fs_holder_position ? `Organic #${result.fs_holder_position}` : 'Not in top 5')
+                  : 'Snippet box not readable'}
+                accent
+              />
               <StatCard
                 label="Your Position"
-                value={targetPos === -1 ? 'Not in top 10' : `#${targetPos + 1}`}
+                value={positionLabel}
                 sub={targetPos === -1 ? 'Not found in SERP' : `of ${result.organic.length} results`}
               />
+              {result.fs_type && (
+                <StatCard label="FS Type" value={result.fs_type}
+                  sub={fsStatus === 'none' ? 'Format to target' : 'What Google extracts'} />
+              )}
+              {result.opportunity_score != null && (
+                <StatCard
+                  label="Opportunity"
+                  value={`${result.opportunity_score}/10`}
+                  sub={result.opportunity_score >= 7 ? 'Strong chance' : result.opportunity_score >= 4 ? 'Worth trying' : 'Hard to take'}
+                />
+              )}
               {intentColor && (
                 <div style={{
                   flex: 1, minWidth: 130, padding: '14px 16px', borderRadius: 10,
@@ -349,7 +398,7 @@ export default function FsStealer() {
               )}
               <StatCard label="Location" value={location.split(' (')[0]} sub={result.organic.length + ' results analyzed'} />
             </div>
-            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgb(var(--ink) / 0.06)', display: 'flex', justifyContent: 'flex-end' }}>
               <button
                 onClick={handleTrack}
                 disabled={tracking || tracked}
@@ -358,7 +407,7 @@ export default function FsStealer() {
                   borderRadius: 7, fontSize: '0.78rem', fontWeight: 600, cursor: tracked ? 'default' : 'pointer',
                   border: tracked ? '1px solid rgba(74,222,128,0.35)' : '1px solid rgba(226,0,113,0.35)',
                   background: tracked ? 'rgba(74,222,128,0.08)' : 'rgba(226,0,113,0.08)',
-                  color: tracked ? '#4ade80' : 'var(--primary)',
+                  color: tracked ? '#15803d' : 'var(--primary)',
                   transition: 'background 0.2s, border-color 0.2s, color 0.2s',
                 }}
               >
@@ -368,7 +417,56 @@ export default function FsStealer() {
             </div>
           </div>
 
-          {/* ── 2. SERP Snapshot ── */}
+          {/* ── 2. The featured snippet itself ── */}
+          {fsStatus !== 'unknown' && (
+            <div className="glass-panel" style={{
+              borderColor: fsStatus === 'held' ? 'rgba(226,0,113,0.3)' : 'rgba(74,222,128,0.28)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+                <h3 className="flex items-center gap-2" style={{ margin: 0, fontSize: '0.97rem' }}>
+                  <Award size={16} color={fsStatus === 'held' ? 'var(--primary)' : '#15803d'} />
+                  Featured Snippet
+                </h3>
+                <span style={{
+                  fontSize: '0.67rem', padding: '2px 8px', borderRadius: 4, fontWeight: 700,
+                  textTransform: 'uppercase', letterSpacing: '0.5px',
+                  background: fsStatus === 'held' ? 'rgba(226,0,113,0.18)' : 'rgba(74,222,128,0.18)',
+                  color: fsStatus === 'held' ? 'var(--primary)' : '#15803d',
+                }}>
+                  {fsStatus === 'held' ? `Position 0 · ${result.featured_snippet.type}` : 'Unclaimed'}
+                </span>
+              </div>
+              {fsStatus === 'held' ? (
+                <>
+                  <p style={{ fontSize: '0.73rem', color: 'var(--text-muted)', margin: '0 0 8px' }}>
+                    Exactly what Google renders above the organic results today:
+                  </p>
+                  <blockquote style={{
+                    margin: 0, padding: '12px 15px', borderRadius: 8,
+                    background: 'var(--surface-sunken)', borderLeft: '3px solid var(--primary)',
+                    fontSize: '0.85rem', lineHeight: 1.65, color: 'var(--text-main)',
+                    whiteSpace: 'pre-wrap',
+                  }}>{result.featured_snippet.content}</blockquote>
+                  {result.featured_snippet.link && (
+                    <a href={result.featured_snippet.link} target="_blank" rel="noopener noreferrer"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 10, fontSize: '0.75rem', color: 'var(--primary)', textDecoration: 'none' }}>
+                      <Favicon url={result.featured_snippet.link} />
+                      Source: {hostname(result.featured_snippet.link)}
+                      <ExternalLink size={9} />
+                    </a>
+                  )}
+                </>
+              ) : (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.65, margin: 0 }}>
+                  Google shows <strong style={{ color: '#15803d' }}>no featured snippet</strong> for this keyword —
+                  nobody holds position 0, so there is nothing to steal. The plan below targets
+                  <em> triggering</em> one instead. Note that some queries never generate a snippet.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ── 3. SERP Snapshot ── */}
           <div className="glass-panel">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
               <h3 className="flex items-center gap-2" style={{ margin: 0, fontSize: '0.97rem' }}>
@@ -378,15 +476,15 @@ export default function FsStealer() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {result.organic.map((row, i) => {
-                const isFs = i === 0;
-                const isTarget = row.link && result.target_url &&
-                  (() => { try { return row.link.includes(new URL(result.target_url).hostname); } catch { return false; } })();
+                // Badge the row Google actually lifts the snippet from — not blindly #1.
+                const isFs = fsStatus === 'held' && i + 1 === result.fs_holder_position;
+                const isTarget = i + 1 === targetPos;
                 const host = hostname(row.link);
                 return (
                   <div key={i} style={{
                     display: 'flex', gap: 12, padding: isFs ? '14px 16px' : '10px 14px', borderRadius: 10,
-                    background: isFs ? 'rgba(226,0,113,0.09)' : isTarget ? 'rgba(74,222,128,0.06)' : 'rgba(255,255,255,0.025)',
-                    border: isFs ? '1px solid rgba(226,0,113,0.38)' : isTarget ? '1px solid rgba(74,222,128,0.28)' : '1px solid rgba(255,255,255,0.055)',
+                    background: isFs ? 'rgba(226,0,113,0.09)' : isTarget ? 'rgba(74,222,128,0.06)' : 'rgb(var(--ink) / 0.025)',
+                    border: isFs ? '1px solid rgba(226,0,113,0.38)' : isTarget ? '1px solid rgba(74,222,128,0.28)' : '1px solid rgb(var(--ink) / 0.055)',
                     boxShadow: isFs ? '0 0 0 1px rgba(226,0,113,0.1) inset' : 'none',
                     transition: 'background 0.15s',
                   }}>
@@ -395,7 +493,7 @@ export default function FsStealer() {
                       flexShrink: 0, width: 30, height: 30, borderRadius: 8,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontWeight: 800, fontSize: '0.85rem',
-                      background: isFs ? 'rgba(226,0,113,0.22)' : 'rgba(255,255,255,0.06)',
+                      background: isFs ? 'rgba(226,0,113,0.22)' : 'rgb(var(--ink) / 0.06)',
                       color: isFs ? 'var(--primary)' : 'var(--text-muted)',
                       alignSelf: 'flex-start', marginTop: 1,
                     }}>{i + 1}</div>
@@ -408,12 +506,12 @@ export default function FsStealer() {
                           {row.title}
                         </span>
                         {isFs && (
-                          <span style={{ flexShrink: 0, fontSize: '0.67rem', padding: '2px 8px', borderRadius: 4, background: 'var(--primary)', color: '#fff', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          <span style={{ flexShrink: 0, fontSize: '0.67rem', padding: '2px 8px', borderRadius: 4, background: 'var(--primary)', color: 'var(--on-primary)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                             FS HOLDER
                           </span>
                         )}
                         {isTarget && (
-                          <span style={{ flexShrink: 0, fontSize: '0.67rem', padding: '2px 8px', borderRadius: 4, background: 'rgba(74,222,128,0.18)', color: '#4ade80', fontWeight: 700, border: '1px solid rgba(74,222,128,0.3)' }}>
+                          <span style={{ flexShrink: 0, fontSize: '0.67rem', padding: '2px 8px', borderRadius: 4, background: 'rgba(74,222,128,0.18)', color: '#15803d', fontWeight: 700, border: '1px solid rgba(74,222,128,0.3)' }}>
                             YOUR PAGE
                           </span>
                         )}
@@ -434,7 +532,7 @@ export default function FsStealer() {
             </div>
           </div>
 
-          {/* ── 3. Related + PAA (side by side when both present) ── */}
+          {/* ── 4. Related + PAA (side by side when both present) ── */}
           {(hasRelated || hasPaa) && (
             <div style={{ display: 'grid', gridTemplateColumns: hasRelated && hasPaa ? '1fr 1fr' : '1fr', gap: 16 }}>
               {hasRelated && (
@@ -449,7 +547,7 @@ export default function FsStealer() {
                         borderRadius: 20, padding: '4px 11px', fontSize: '0.78rem', color: 'var(--text-muted)',
                         cursor: 'pointer', transition: 'background 0.15s, color 0.15s',
                       }}
-                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(226,0,113,0.17)'; e.currentTarget.style.color = '#fff'; }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(226,0,113,0.17)'; e.currentTarget.style.color = 'var(--primary)'; }}
                         onMouseLeave={e => { e.currentTarget.style.background = 'rgba(226,0,113,0.07)'; e.currentTarget.style.color = 'var(--text-muted)'; }}>
                         {kw}
                       </button>
@@ -471,7 +569,7 @@ export default function FsStealer() {
             </div>
           )}
 
-          {/* ── 4. AI Action Plan ── */}
+          {/* ── 5. AI Action Plan ── */}
           <div className="glass-panel">
             {/* Header row with export buttons */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
@@ -485,11 +583,11 @@ export default function FsStealer() {
             </div>
 
             <div className="markdown-content" style={{ lineHeight: 1.75 }}>
-              <ReactMarkdown components={MD_COMPONENTS}>{result.analysis}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{result.analysis}</ReactMarkdown>
             </div>
 
             {/* Bottom export strip */}
-            <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'flex-end', gap: 7 }}>
+            <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid rgb(var(--ink) / 0.06)', display: 'flex', justifyContent: 'flex-end', gap: 7 }}>
               <ExportButton onClick={handleCopy} icon={copied ? Check : Copy} label={copied ? 'Copied!' : 'Copy markdown'} active={copied} />
               <ExportButton onClick={handleDownload} icon={Download} label="Download .md" />
             </div>

@@ -29,10 +29,10 @@ function anchorType(text) {
 }
 
 const TYPE_STYLE = {
-  descriptive: { bg: 'rgba(34,197,94,.08)', color: '#4ade80', label: 'descriptive' },
-  generic:     { bg: 'rgba(245,158,11,.1)', color: '#f59e0b', label: 'generic' },
-  url:         { bg: 'rgba(239,68,68,.08)', color: '#f87171', label: 'url' },
-  empty:       { bg: 'rgba(255,255,255,.05)', color: 'var(--text-muted)', label: 'empty' },
+  descriptive: { bg: 'rgba(34,197,94,.08)', color: '#15803d', label: 'descriptive' },
+  generic:     { bg: 'rgba(245,158,11,.1)', color: '#b45309', label: 'generic' },
+  url:         { bg: 'rgba(239,68,68,.08)', color: '#dc2626', label: 'url' },
+  empty:       { bg: 'rgb(var(--ink) / 0.05)', color: 'var(--text-muted)', label: 'empty' },
 };
 
 // ─── sub-components ────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ function StatCard({ label, value, sub, valueColor }) {
   return (
     <div className="glass-panel" style={{ padding: '14px 18px' }}>
       <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: '2rem', fontWeight: 800, lineHeight: 1, color: valueColor || 'white' }}>{value}</div>
+      <div style={{ fontSize: '2rem', fontWeight: 800, lineHeight: 1, color: valueColor || 'var(--text-strong)' }}>{value}</div>
       {sub && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>{sub}</div>}
     </div>
   );
@@ -53,7 +53,7 @@ function MatrixCell({ cell, targetLabel }) {
   if (!cell || cell.status === 'self') {
     return (
       <td style={{ textAlign: 'center', padding: '5px 6px' }}>
-        <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.15)' }}>—</span>
+        <span style={{ fontSize: '0.7rem', color: 'rgb(var(--ink) / 0.15)' }}>—</span>
       </td>
     );
   }
@@ -75,16 +75,16 @@ function MatrixCell({ cell, targetLabel }) {
           userSelect: 'none',
         }}
       >
-        <span style={{ fontSize: 13, fontWeight: 700, color: isLink ? '#4ade80' : 'rgba(239,68,68,0.35)' }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: isLink ? '#15803d' : 'rgba(239,68,68,0.35)' }}>
           {isLink ? '✓' : '×'}
         </span>
       </div>
       {isLink && hovered && anchors.length > 0 && (
         <div style={{
           position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
-          zIndex: 30, background: '#1c1c26', border: '1px solid rgba(255,255,255,0.12)',
+          zIndex: 30, background: 'var(--surface)', border: '1px solid rgb(var(--ink) / 0.12)',
           borderRadius: 8, padding: '10px 12px', minWidth: 190, maxWidth: 260,
-          boxShadow: '0 8px 28px rgba(0,0,0,0.6)', pointerEvents: 'none',
+          boxShadow: 'var(--shadow-lg)', pointerEvents: 'none',
         }}>
           <div style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 7 }}>
             → {targetLabel}
@@ -93,8 +93,8 @@ function MatrixCell({ cell, targetLabel }) {
             const t = anchorType(a);
             const s = TYPE_STYLE[t];
             return (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '3px 0', borderBottom: i < anchors.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
-                <span style={{ fontSize: '0.78rem', color: '#d8d8e6', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{a}"</span>
+              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '3px 0', borderBottom: i < anchors.length - 1 ? '1px solid rgb(var(--ink) / 0.05)' : 'none' }}>
+                <span style={{ fontSize: '0.78rem', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{a}"</span>
                 <span style={{ fontSize: '0.62rem', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: s.bg, color: s.color, flexShrink: 0 }}>{s.label}</span>
               </div>
             );
@@ -192,7 +192,7 @@ export default function InternalLinking() {
     <div className="flex-col gap-6">
 
       {/* ── Mode toggle ── */}
-      <div style={{ display: 'flex', gap: 6, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: 5, width: 'fit-content' }}>
+      <div style={{ display: 'flex', gap: 6, background: 'rgb(var(--ink) / 0.04)', border: '1px solid rgb(var(--ink) / 0.08)', borderRadius: 10, padding: 5, width: 'fit-content' }}>
         {TABS.map(t => (
           <button
             key={t.key}
@@ -201,7 +201,7 @@ export default function InternalLinking() {
               display: 'flex', alignItems: 'center', gap: 7, padding: '8px 16px', borderRadius: 7,
               border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
               background: mode === t.key ? 'var(--primary)' : 'transparent',
-              color: mode === t.key ? 'white' : 'var(--text-muted)',
+              color: mode === t.key ? 'var(--on-primary)' : 'var(--text-muted)',
               transition: 'background .15s, color .15s',
             }}
           >
@@ -277,13 +277,13 @@ export default function InternalLinking() {
               label="Orphan pages"
               value={derived.orphans.length}
               sub="0 inbound from set"
-              valueColor={derived.orphans.length > 0 ? '#f87171' : '#4ade80'}
+              valueColor={derived.orphans.length > 0 ? '#dc2626' : '#15803d'}
             />
             <StatCard
               label="Link density"
               value={`${derived.density}%`}
               sub="of possible links exist"
-              valueColor={derived.density < 25 ? '#f87171' : derived.density < 55 ? '#f59e0b' : '#4ade80'}
+              valueColor={derived.density < 25 ? '#dc2626' : derived.density < 55 ? '#b45309' : '#15803d'}
             />
           </div>
 
@@ -310,7 +310,7 @@ export default function InternalLinking() {
                     const maxPer    = Math.max(n - 1, 1);
                     const health    = row.status !== 'OK' ? null
                       : Math.min(Math.round(((row.inter_links + inboundVal) / (2 * maxPer)) * 100), 100);
-                    const hColor    = health === null ? null : health < 30 ? '#ef4444' : health < 65 ? '#f59e0b' : '#22c55e';
+                    const hColor    = health === null ? null : health < 30 ? '#dc2626' : health < 65 ? '#b45309' : '#15803d';
 
                     return (
                       <tr key={i}>
@@ -338,7 +338,7 @@ export default function InternalLinking() {
                           {isOrphan ? (
                             <span style={{
                               fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 20,
-                              background: 'rgba(239,68,68,0.1)', color: '#f87171',
+                              background: 'rgba(239,68,68,0.1)', color: '#dc2626',
                             }}>Orphan</span>
                           ) : (
                             <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{inboundVal}</span>
@@ -347,7 +347,7 @@ export default function InternalLinking() {
                         <td>
                           {health !== null && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <div style={{ flex: 1, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.07)' }}>
+                              <div style={{ flex: 1, height: 4, borderRadius: 2, background: 'rgb(var(--ink) / 0.07)' }}>
                                 <div style={{ width: `${health}%`, height: '100%', background: hColor, borderRadius: 2, transition: 'width 0.4s ease' }} />
                               </div>
                               <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -369,7 +369,7 @@ export default function InternalLinking() {
             <h3 style={{ fontSize: '1rem', marginBottom: 6 }}>Inter-linking Matrix</h3>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 16 }}>
               Row → source page &nbsp;·&nbsp; Column → target page &nbsp;·&nbsp;
-              <span style={{ color: '#4ade80' }}>✓</span> link exists (hover for anchors) &nbsp;·&nbsp;
+              <span style={{ color: '#15803d' }}>✓</span> link exists (hover for anchors) &nbsp;·&nbsp;
               <span style={{ color: 'rgba(239,68,68,0.5)' }}>×</span> missing
             </p>
             <div style={{ overflowX: 'auto' }}>
@@ -431,14 +431,14 @@ export default function InternalLinking() {
                   const isOpen = !!openAnchors[page.url];
                   const genericCount = page.outbound_anchors.filter(a => anchorType(a.anchor) === 'generic').length;
                   return (
-                    <div key={i} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, overflow: 'hidden' }}>
+                    <div key={i} style={{ background: 'rgb(var(--ink) / 0.02)', border: '1px solid rgb(var(--ink) / 0.07)', borderRadius: 8, overflow: 'hidden' }}>
                       <button
                         onClick={() => setOpenAnchors(prev => ({ ...prev, [page.url]: !prev[page.url] }))}
                         aria-expanded={isOpen}
                         style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', textAlign: 'left' }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#d8d8e6' }}>{shortLabel(page.url)}</span>
+                          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#334155' }}>{shortLabel(page.url)}</span>
                           <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                             {page.outbound_anchors.length} link{page.outbound_anchors.length !== 1 ? 's' : ''}
                           </span>
@@ -458,14 +458,14 @@ export default function InternalLinking() {
                             return (
                               <div
                                 key={j}
-                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.04)' }}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '6px 0', borderTop: '1px solid rgb(var(--ink) / 0.04)' }}
                               >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                                   <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', flexShrink: 0 }}>→</span>
                                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={a.to}>
                                     {shortLabel(a.to)}
                                   </span>
-                                  <span style={{ fontSize: '0.82rem', color: t === 'generic' ? '#f59e0b' : '#d8d8e6' }}>"{a.anchor}"</span>
+                                  <span style={{ fontSize: '0.82rem', color: t === 'generic' ? '#b45309' : '#334155' }}>"{a.anchor}"</span>
                                 </div>
                                 <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 7px', borderRadius: 3, background: s.bg, color: s.color, flexShrink: 0 }}>
                                   {s.label}
@@ -499,11 +499,11 @@ export default function InternalLinking() {
                       borderRadius: 8, padding: '9px 14px',
                     }}
                   >
-                    <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: 'rgba(239,68,68,0.08)', color: '#f87171', flexShrink: 0 }}>
+                    <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: 'rgba(239,68,68,0.08)', color: '#dc2626', flexShrink: 0 }}>
                       Add link
                     </span>
                     <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
-                      <span style={{ fontSize: '0.82rem', fontWeight: 500, color: '#d8d8e6', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={opp.from}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 500, color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={opp.from}>
                         {shortLabel(opp.from)}
                       </span>
                       <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>→</span>

@@ -44,9 +44,9 @@ export default function ImageAltAnalysis() {
   };
 
   const statusIcon = (status) => {
-    if (status === '✅ Best') return <CheckCircle size={16} color="#4ade80" />;
-    if (status === '⚠️ Needs Change') return <AlertTriangle size={16} color="#f59e0b" />;
-    return <XCircle size={16} color="#ef4444" />;
+    if (status === '✅ Best') return <CheckCircle size={16} color="#15803d" />;
+    if (status === '⚠️ Needs Change') return <AlertTriangle size={16} color="#b45309" />;
+    return <XCircle size={16} color="#dc2626" />;
   };
 
   return (
@@ -123,7 +123,7 @@ export default function ImageAltAnalysis() {
                       <span className="font-semibold">{res.status}</span>
                     </div>
                     <p className="mb-2" style={{color: 'var(--text-muted)', fontSize: '0.85rem'}}>
-                      <strong>Current Alt:</strong> <code style={{background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4}}>{res.alt || '[Empty]'}</code>
+                      <strong>Current Alt:</strong> <code style={{background: 'rgb(var(--ink) / 0.05)', padding: '2px 6px', borderRadius: 4}}>{res.alt || '[Empty]'}</code>
                     </p>
                     {res.error ? (
                       <p className="text-red-400 text-sm">{res.error}</p>
@@ -131,7 +131,7 @@ export default function ImageAltAnalysis() {
                       <>
                         <p className="mb-2 text-sm" style={{color: 'var(--text-muted)'}}><strong>Reasoning:</strong> {res.reasoning}</p>
                         {res.status !== '✅ Best' && (
-                          <p className="text-sm" style={{color: '#4ade80'}}>
+                          <p className="text-sm" style={{color: '#15803d'}}>
                             <strong>AI Proposes:</strong> {res.proposed_alt}
                           </p>
                         )}

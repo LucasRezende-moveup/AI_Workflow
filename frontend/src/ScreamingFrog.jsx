@@ -104,7 +104,7 @@ export default function ScreamingFrog({ onData } = {}) {
         <>
           <div 
             className={`glass-panel flex flex-col items-center justify-center p-12 ${isDragging ? 'border-primary' : ''}`}
-            style={{borderStyle: 'dashed', borderWidth: '2px', borderColor: isDragging ? 'var(--primary)' : 'rgba(255,255,255,0.2)', transition: 'border-color 0.15s'}}
+            style={{borderStyle: 'dashed', borderWidth: '2px', borderColor: isDragging ? 'var(--primary)' : 'rgb(var(--ink) / 0.2)', transition: 'border-color 0.15s'}}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -176,22 +176,22 @@ export default function ScreamingFrog({ onData } = {}) {
           </div>
           <div className="grid grid-cols-4 gap-4">
             <div className="glass-panel interactive">
-              <Link className="mb-2" size={24} color="#00f2fe" />
+              <Link className="mb-2" size={24} color="#0891b2" />
               <div className="metric-label">Total URLs</div>
               <div className="metric-value">{result.metrics.total_urls.toLocaleString()}</div>
             </div>
             <div className="glass-panel interactive">
-              <CheckCircle className="mb-2" size={24} color="#4ade80" />
+              <CheckCircle className="mb-2" size={24} color="#15803d" />
               <div className="metric-label">200 OK</div>
               <div className="metric-value">{result.metrics.status_200.toLocaleString()}</div>
             </div>
             <div className="glass-panel interactive">
-              <AlertTriangle className="mb-2" size={24} color="#f59e0b" />
+              <AlertTriangle className="mb-2" size={24} color="#b45309" />
               <div className="metric-label">Missing Titles</div>
               <div className="metric-value">{result.metrics.missing_titles.toLocaleString()}</div>
             </div>
             <div className="glass-panel interactive">
-              <FileMinus className="mb-2" size={24} color="#ef4444" />
+              <FileMinus className="mb-2" size={24} color="#dc2626" />
               <div className="metric-label">Missing Meta Desc</div>
               <div className="metric-value">{result.metrics.missing_desc.toLocaleString()}</div>
             </div>

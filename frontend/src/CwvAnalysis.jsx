@@ -4,7 +4,7 @@ import { Zap, Layout, Clock, Move, TrendingUp, Gauge, AlertTriangle } from 'luci
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 function perfColorScore(s) {
-  return s >= 90 ? '#4ade80' : s >= 50 ? '#f59e0b' : '#ef4444';
+  return s >= 90 ? '#15803d' : s >= 50 ? '#b45309' : '#dc2626';
 }
 
 function dayLabel(ts) {
@@ -34,7 +34,7 @@ function ScoreSparkline({ history }) {
   const line = pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
   const area = `M ${first.x.toFixed(1)},${(padT + plotH).toFixed(1)} ${pts.map(p => `L ${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')} L ${last.x.toFixed(1)},${(padT + plotH).toFixed(1)} Z`;
   const delta = last.s - first.s;
-  const deltaClr = delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : '#94a3b8';
+  const deltaClr = delta > 0 ? '#15803d' : delta < 0 ? '#dc2626' : '#64748b';
   const labeled = new Set([0, n - 1]);
   if (n >= 4) labeled.add(Math.floor(n / 2));
 
@@ -48,7 +48,7 @@ function ScoreSparkline({ history }) {
       </div>
       <svg width={W} height={H} style={{ overflow: 'visible' }}>
         {[90, 50].filter(t => t > minS && t < maxS).map(t => (
-          <line key={t} x1={padL} y1={yOf(t).toFixed(1)} x2={W - padR} y2={yOf(t).toFixed(1)} stroke="rgba(255,255,255,0.06)" strokeDasharray="3,3" />
+          <line key={t} x1={padL} y1={yOf(t).toFixed(1)} x2={W - padR} y2={yOf(t).toFixed(1)} stroke="#e4e7ee" strokeDasharray="3,3" />
         ))}
         <path d={area} fill={color} opacity={0.1} />
         <polyline points={line} fill="none" stroke={color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
@@ -60,11 +60,11 @@ function ScoreSparkline({ history }) {
           textAnchor={last.x > W * 0.75 ? 'end' : 'middle'}>{last.s}</text>
         {pts.map((p, i) => labeled.has(i) ? (
           <text key={i} x={p.x.toFixed(1)} y={H} fontSize="8"
-            fill={i === n - 1 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'}
+            fill={i === n - 1 ? 'rgb(var(--ink) / 0.45)' : 'rgb(var(--ink) / 0.22)'}
             textAnchor={p.x < W * 0.2 ? 'start' : p.x > W * 0.8 ? 'end' : 'middle'}>{dayLabel(p.ts)}</text>
         ) : null)}
       </svg>
-      <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.25)', textAlign: 'center' }}>
+      <div style={{ fontSize: '0.6rem', color: 'rgb(var(--ink) / 0.25)', textAlign: 'center' }}>
         {n} snapshot{n !== 1 ? 's' : ''}
       </div>
     </div>
@@ -81,16 +81,16 @@ const METRICS_CONFIG = [
 ];
 
 function scoreColor(score) {
-  if (score === null || score === undefined) return '#94a3b8';
-  if (score >= 0.9) return '#4ade80';
-  if (score >= 0.5) return '#f59e0b';
-  return '#ef4444';
+  if (score === null || score === undefined) return '#64748b';
+  if (score >= 0.9) return '#15803d';
+  if (score >= 0.5) return '#b45309';
+  return '#dc2626';
 }
 
 function perfColor(score) {
-  if (score >= 90) return '#4ade80';
-  if (score >= 50) return '#f59e0b';
-  return '#ef4444';
+  if (score >= 90) return '#15803d';
+  if (score >= 50) return '#b45309';
+  return '#dc2626';
 }
 
 export default function CwvAnalysis() {
@@ -163,7 +163,7 @@ export default function CwvAnalysis() {
                   onClick={() => setStrategy(s)}
                   className={strategy === s ? 'btn-primary' : ''}
                   style={strategy !== s ? {
-                    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                    background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)',
                     color: 'var(--text-muted)', padding: '12px 24px', borderRadius: 8, cursor: 'pointer',
                     fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', fontSize: '0.85rem'
                   } : {}}
@@ -208,7 +208,7 @@ export default function CwvAnalysis() {
                 width: 120, height: 120, borderRadius: '50%',
                 border: `6px solid ${color}`,
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                boxShadow: `0 0 30px ${color}40`
+                boxShadow: `0 6px 20px ${color}33`
               }}>
                 <span style={{ fontSize: '2.2rem', fontWeight: 700, color }}>{result.performance_score}</span>
                 <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>Score</span>
@@ -230,7 +230,7 @@ export default function CwvAnalysis() {
             {history.length >= 2 && (
               <div style={{
                 flexShrink: 0, padding: '10px 14px', borderRadius: 10,
-                background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)',
+                background: 'rgb(var(--ink) / 0.025)', border: '1px solid rgb(var(--ink) / 0.06)',
               }}>
                 <ScoreSparkline history={history} />
               </div>
@@ -257,14 +257,14 @@ export default function CwvAnalysis() {
           {result.opportunities?.length > 0 && (
             <div className="glass-panel">
               <h3 className="mb-4 flex items-center gap-2">
-                <AlertTriangle size={20} color="#f59e0b" /> Top Optimization Opportunities
+                <AlertTriangle size={20} color="#b45309" /> Top Optimization Opportunities
               </h3>
               <div className="flex-col gap-3">
                 {result.opportunities.map((opp, i) => (
                   <div key={i} className="p-4 rounded-lg" style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.2)' }}>
                     <div className="flex justify-between items-start mb-1">
                       <span className="font-semibold" style={{ fontSize: '0.9rem' }}>{opp.title}</span>
-                      <span style={{ color: '#f59e0b', fontSize: '0.8rem', flexShrink: 0, marginLeft: 12 }}>
+                      <span style={{ color: '#b45309', fontSize: '0.8rem', flexShrink: 0, marginLeft: 12 }}>
                         ~{Math.round(opp.savings_ms)}ms saved
                       </span>
                     </div>

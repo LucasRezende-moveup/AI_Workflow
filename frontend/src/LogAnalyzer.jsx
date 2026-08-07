@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, LineChart, Line, CartesianGrid } from 'recharts';
 import { Database, Filter, Download, Activity, Globe, AlertTriangle, Bot, TrendingUp, Eye } from 'lucide-react';
 
-const COLORS = ['#E20071', '#00f2fe', '#4ade80', '#f59e0b', '#8b5cf6', '#ec4899', '#38bdf8', '#a3e635'];
+const COLORS = ['#E20071', '#0891b2', '#15803d', '#b45309', '#7c3aed', '#db2777', '#0284c7', '#4d7c0f'];
 
 const BOT_OPTIONS = [
   { label: 'All Traffic',    value: 'All' },
@@ -227,7 +227,7 @@ export default function LogAnalyzer({ onData } = {}) {
                   onClick={() => setFileRange(d)}
                   className={fileRange === d ? 'btn-primary' : ''}
                   style={fileRange !== d ? {
-                    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                    background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)',
                     color: 'var(--text-muted)', padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
                     fontWeight: 600, fontSize: '0.8rem'
                   } : { padding: '10px 14px', fontSize: '0.8rem' }}
@@ -253,14 +253,14 @@ export default function LogAnalyzer({ onData } = {}) {
 
         {availableFiles.length > 0 && !loading && progress === 0 && (
           <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-            Will load the <strong style={{ color: 'white' }}>{Math.min(fileRange, availableFiles.length)}</strong> most recent files
+            Will load the <strong style={{ color: 'var(--text-strong)' }}>{Math.min(fileRange, availableFiles.length)}</strong> most recent files
             (newest: <code style={{ color: 'var(--primary)' }}>{availableFiles[0]}</code>)
           </p>
         )}
 
         {/* File-list fetch: indeterminate shimmer */}
         {loadingFiles && (
-          <div style={{ marginTop: 12, height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{ marginTop: 12, height: 4, background: 'rgb(var(--ink) / 0.08)', borderRadius: 4, overflow: 'hidden' }}>
             <style>{`@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(500%)}}`}</style>
             <div style={{ height: '100%', width: '20%', background: 'linear-gradient(90deg, transparent, var(--primary), transparent)', borderRadius: 4, animation: 'shimmer 1.2s ease infinite' }} />
           </div>
@@ -273,15 +273,15 @@ export default function LogAnalyzer({ onData } = {}) {
               <span style={{ color: 'var(--text-muted)' }}>
                 {loading ? `Downloading & parsing ${Math.min(fileRange, availableFiles.length)} files…` : '✓ Complete'}
               </span>
-              <span style={{ fontWeight: 700, color: progress >= 100 ? '#4ade80' : 'white' }}>
+              <span style={{ fontWeight: 700, color: progress >= 100 ? '#15803d' : 'var(--text-strong)' }}>
                 {Math.round(progress)}%
               </span>
             </div>
-            <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 6, overflow: 'hidden' }}>
+            <div style={{ height: 8, background: 'rgb(var(--ink) / 0.08)', borderRadius: 6, overflow: 'hidden' }}>
               <div style={{
                 height: '100%',
                 width: `${progress}%`,
-                background: progress >= 100 ? '#4ade80' : 'linear-gradient(90deg, #E20071, #00f2fe)',
+                background: progress >= 100 ? '#15803d' : 'linear-gradient(90deg, #E20071, #0891b2)',
                 borderRadius: 6,
                 transition: progress === 0 ? 'none' : 'width 0.15s ease',
                 boxShadow: progress >= 100 ? '0 0 12px rgba(74,222,128,0.5)' : '0 0 10px rgba(226,0,113,0.4)',
@@ -298,7 +298,7 @@ export default function LogAnalyzer({ onData } = {}) {
             const rate = analytics.total_hits > 0 ? (analytics.errors_404 / analytics.total_hits) * 100 : 0;
             if (rate < 10) return null;
             const critical = rate >= 25;
-            const color = critical ? '#f87171' : '#fbbf24';
+            const color = critical ? '#dc2626' : '#b45309';
             const bg = critical ? 'rgba(248,113,113,0.08)' : 'rgba(251,191,36,0.08)';
             return (
               <div style={{
@@ -319,18 +319,18 @@ export default function LogAnalyzer({ onData } = {}) {
           {/* Summary Metrics */}
           <div className="grid grid-cols-3 gap-4">
             <MetricCard icon={Activity}      label="Total Hits"     value={analytics.total_hits.toLocaleString()}     color="var(--primary)" sub={`${Math.min(fileRange, availableFiles.length)} files`} />
-            <MetricCard icon={AlertTriangle} label="404 Errors"     value={analytics.errors_404.toLocaleString()}     color="#f87171" />
-            <MetricCard icon={AlertTriangle} label="5xx Errors"     value={analytics.errors_5xx.toLocaleString()}     color="#fb923c" />
-            <MetricCard icon={Globe}         label="Unique IPs"     value={analytics.unique_ips.toLocaleString()}     color="#00f2fe" />
-            <MetricCard icon={Eye}           label="Googlebot Hits" value={analytics.googlebot_hits.toLocaleString()} color="#4ade80" sub={`${analytics.googlebot_rate}% of total`} />
-            <MetricCard icon={TrendingUp}    label="Bot Crawlers"   value={analytics.bot_count}                       color="#8b5cf6" sub="distinct bots detected" />
+            <MetricCard icon={AlertTriangle} label="404 Errors"     value={analytics.errors_404.toLocaleString()}     color="#dc2626" />
+            <MetricCard icon={AlertTriangle} label="5xx Errors"     value={analytics.errors_5xx.toLocaleString()}     color="#c2410c" />
+            <MetricCard icon={Globe}         label="Unique IPs"     value={analytics.unique_ips.toLocaleString()}     color="#0891b2" />
+            <MetricCard icon={Eye}           label="Googlebot Hits" value={analytics.googlebot_hits.toLocaleString()} color="#15803d" sub={`${analytics.googlebot_rate}% of total`} />
+            <MetricCard icon={TrendingUp}    label="Bot Crawlers"   value={analytics.bot_count}                       color="#7c3aed" sub="distinct bots detected" />
           </div>
 
           {(analytics.cache_hits > 0 || analytics.files_parsed > 0) && (
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: -8 }}>
-              <span aria-hidden="true">⚡</span> {analytics.cache_hits > 0 && <><strong style={{ color: '#4ade80' }}>{analytics.cache_hits}</strong> day{analytics.cache_hits !== 1 ? 's' : ''} from cache</>}
+              <span aria-hidden="true">⚡</span> {analytics.cache_hits > 0 && <><strong style={{ color: '#15803d' }}>{analytics.cache_hits}</strong> day{analytics.cache_hits !== 1 ? 's' : ''} from cache</>}
               {analytics.cache_hits > 0 && analytics.files_parsed > 0 && ' · '}
-              {analytics.files_parsed > 0 && <><strong style={{ color: 'white' }}>{analytics.files_parsed}</strong> freshly parsed</>}
+              {analytics.files_parsed > 0 && <><strong style={{ color: 'var(--text-strong)' }}>{analytics.files_parsed}</strong> freshly parsed</>}
               {' '}— cached days load instantly without re-downloading.
             </div>
           )}
@@ -367,18 +367,18 @@ export default function LogAnalyzer({ onData } = {}) {
               </div>
             </div>
             <div className="mt-3" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Table shows <strong style={{ color: 'white' }}>{filteredRows.length.toLocaleString()}</strong> from the <strong style={{ color: 'white' }}>{sampleRows.length.toLocaleString()}</strong>-row sample
+              Table shows <strong style={{ color: 'var(--text-strong)' }}>{filteredRows.length.toLocaleString()}</strong> from the <strong style={{ color: 'var(--text-strong)' }}>{sampleRows.length.toLocaleString()}</strong>-row sample
               {realStatusCount !== null && (
-                <> — full {statusFilter} count across all data: <strong style={{ color: '#f87171' }}>{realStatusCount.toLocaleString()}</strong></>
+                <> — full {statusFilter} count across all data: <strong style={{ color: '#dc2626' }}>{realStatusCount.toLocaleString()}</strong></>
               )}
-              {' '}— <strong style={{ color: 'white' }}>Export CSV</strong> streams all matching entries from the source
+              {' '}— <strong style={{ color: 'var(--text-strong)' }}>Export CSV</strong> streams all matching entries from the source
             </div>
           </div>
 
           {/* Charts row 1 */}
           {isBotFiltered && (
             <div style={{ padding: '8px 14px', borderRadius: 8, background: 'rgba(226,0,113,0.1)', border: '1px solid rgba(226,0,113,0.3)', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-              Charts show full-dataset aggregations for <strong style={{ color: 'white' }}>{botFilter}</strong> only ({(analytics?.bot_aggregations?.[botFilter]?.status_data || []).reduce((s, d) => s + d.value, 0).toLocaleString()} hits).
+              Charts show full-dataset aggregations for <strong style={{ color: 'var(--text-strong)' }}>{botFilter}</strong> only ({(analytics?.bot_aggregations?.[botFilter]?.status_data || []).reduce((s, d) => s + d.value, 0).toLocaleString()} hits).
               Clear the bot filter to restore all-traffic view.
             </div>
           )}
@@ -388,7 +388,7 @@ export default function LogAnalyzer({ onData } = {}) {
               <ResponsiveContainer width="100%" height="85%">
                 <PieChart>
                   <Pie data={statusData} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={4} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false} />
-                  <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 8 }} />
+                  <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8 }} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -398,8 +398,8 @@ export default function LogAnalyzer({ onData } = {}) {
               <ResponsiveContainer width="100%" height="85%">
                 <BarChart data={topPathsData} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
                   <XAxis type="number" hide />
-                  <YAxis dataKey="path" type="category" width={160} tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                  <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 8 }} />
+                  <YAxis dataKey="path" type="category" width={160} tick={{ fill: '#64748b', fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8 }} />
                   <Bar dataKey="hits" fill="var(--primary)" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -411,11 +411,11 @@ export default function LogAnalyzer({ onData } = {}) {
             <h4 className="mb-4">Traffic Over Time</h4>
             <ResponsiveContainer width="100%" height="85%">
               <LineChart data={timeData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} interval="preserveStartEnd" />
-                <YAxis tick={{ fill: '#94a3b8' }} />
-                <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 8 }} />
-                <Line type="monotone" dataKey="hits" stroke="#00f2fe" strokeWidth={2.5} dot={{ r: 3, fill: '#0f172a', strokeWidth: 2 }} activeDot={{ r: 7 }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e4e7ee" />
+                <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} interval="preserveStartEnd" />
+                <YAxis tick={{ fill: '#64748b' }} />
+                <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8 }} />
+                <Line type="monotone" dataKey="hits" stroke="#0891b2" strokeWidth={2.5} dot={{ r: 3, fill: '#fff', strokeWidth: 2 }} activeDot={{ r: 7 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -423,15 +423,15 @@ export default function LogAnalyzer({ onData } = {}) {
           {/* Bot Breakdown */}
           {botBreakdown.length > 0 && (
             <div className="glass-panel" style={{ height: 280 }}>
-              <h4 className="mb-1 flex items-center gap-2"><Bot size={18} color="#8b5cf6" /> Bot / Crawler Breakdown</h4>
+              <h4 className="mb-1 flex items-center gap-2"><Bot size={18} color="#7c3aed" /> Bot / Crawler Breakdown</h4>
               <p className="mb-4" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 Across all {analytics.total_hits.toLocaleString()} loaded entries
               </p>
               <ResponsiveContainer width="100%" height="75%">
                 <BarChart data={botBreakdown} margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
-                  <XAxis dataKey="bot" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                  <YAxis tick={{ fill: '#94a3b8' }} />
-                  <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 8 }} />
+                  <XAxis dataKey="bot" tick={{ fill: '#64748b', fontSize: 11 }} />
+                  <YAxis tick={{ fill: '#64748b' }} />
+                  <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8 }} />
                   <Bar dataKey="hits" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>

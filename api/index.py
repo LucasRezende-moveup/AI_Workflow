@@ -6,6 +6,7 @@ from typing import List, Optional
 import os
 import io
 import json
+import re
 import uuid
 import time
 import bcrypt
@@ -210,6 +211,35 @@ def _ensure_schema():
                 cur.execute("""
                     ALTER TABLE keyword_rankings
                     ADD COLUMN IF NOT EXISTS top_domains JSONB
+                """)
+                # Whether Google showed a featured snippet at all. NULL marks rows written
+                # before real snippet detection, whose fs_holder_* columns hold organic #1
+                # rather than a measured snippet owner.
+                cur.execute("""
+                    ALTER TABLE keyword_rankings
+                    ADD COLUMN IF NOT EXISTS fs_present BOOLEAN
+                """)
+                # Per-invocation log for the tracking cron. 500+ keywords cannot be checked
+                # inside one function timeout, so coverage is spread over several runs — this
+                # is how a day that finished cleanly is told apart from one that ran out of
+                # budget or burned through its SerpAPI quota.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS tracking_cron_runs (
+                        id           TEXT PRIMARY KEY,
+                        run_date     DATE NOT NULL,
+                        started_at   TIMESTAMPTZ DEFAULT NOW(),
+                        duration_s   NUMERIC,
+                        due_at_start INTEGER NOT NULL DEFAULT 0,
+                        checked      INTEGER NOT NULL DEFAULT 0,
+                        skipped      INTEGER NOT NULL DEFAULT 0,
+                        failed       INTEGER NOT NULL DEFAULT 0,
+                        remaining    INTEGER NOT NULL DEFAULT 0,
+                        notes        TEXT
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS tracking_cron_runs_date_idx
+                    ON tracking_cron_runs (run_date DESC, started_at DESC)
                 """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS alerts (
@@ -419,6 +449,15 @@ def _require_super_admin(current_user=Depends(_decode_token)):
     if current_user.get("role") != "super-admin":
         raise HTTPException(status_code=403, detail="Super-admin access required")
     return current_user
+
+
+def _require_cron_auth(authorization: Optional[str]):
+    """Gate for the /api/cron/* jobs. Fails closed: with CRON_SECRET unset the endpoints
+    are inert rather than open, so nobody can trigger paid SERP/PSI sweeps from outside.
+    Vercel sends `Authorization: Bearer $CRON_SECRET` automatically once the var is set."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if not cron_secret or authorization != f"Bearer {cron_secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────
@@ -657,6 +696,20 @@ class ProjectRequest(BaseModel):
     location: str = "Global (No Geolocation)"
 
 
+def _norm_host(netloc: str) -> str:
+    """Lowercase host from a netloc — no credentials, no port, no leading www."""
+    host = (netloc or "").split("@")[-1].split(":")[0].strip().lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _host_matches(link_host: str, target_host: str) -> bool:
+    """True when link_host IS the target domain or a subdomain of it. A substring test
+    would wrongly match netvasco.com.br when tracking vasco.com.br."""
+    if not link_host or not target_host:
+        return False
+    return link_host == target_host or link_host.endswith("." + target_host)
+
+
 def _clean_domain(s: str) -> str:
     """Normalize any URL or bare domain to a lowercase host (no scheme, no www, no path)."""
     from urllib.parse import urlparse
@@ -666,8 +719,7 @@ def _clean_domain(s: str) -> str:
     if "//" not in s:
         s = "https://" + s
     try:
-        host = urlparse(s).netloc.replace("www.", "")
-        return host or ""
+        return _norm_host(urlparse(s).netloc)
     except Exception:
         return ""
 
@@ -726,8 +778,14 @@ def _fire_alerts(tracking_id: str, keyword: str, prev: dict, curr: dict):
     prev_fs   = prev.get("fs_holder_domain", "")
     curr_fs   = curr.get("fs_holder_domain", "")
 
+    # Snapshots taken before real snippet detection stored organic #1 as the "FS holder", which
+    # is a different measurement. Comparing across that boundary would fire a false
+    # "FS holder changed" for nearly every keyword on the first run, so skip it: prev rows from
+    # the old code have fs_present NULL.
+    comparable_fs = prev.get("fs_present") is not None
+
     # FS holder changed
-    if prev_fs and curr_fs and prev_fs != curr_fs:
+    if comparable_fs and prev_fs and curr_fs and prev_fs != curr_fs:
         alerts_to_insert.append((
             "fs_changed", "warning",
             f"FS holder changed: {prev_fs} → {curr_fs}",
@@ -794,10 +852,18 @@ def _fire_alerts(tracking_id: str, keyword: str, prev: dict, curr: dict):
 
 
 def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str], location: str) -> dict:
-    """Fetch live SERP, save a ranking snapshot, fire alerts on changes."""
+    """
+    Fetch live SERP, save a ranking snapshot, fire alerts on changes.
+
+    Pinned to SerpAPI: a rank series is only meaningful if every point comes from the same
+    search engine. When SerpAPI is unavailable this returns {"skipped": True} and writes
+    nothing, leaving a visible gap rather than a fabricated position.
+    """
     from urllib.parse import urlparse
-    serp = _serp_cached(keyword, location_name=location)
+    serp = _serp_cached(keyword, location_name=location, provider="serpapi")
     organic = serp.get("organic", [])
+    if not organic:
+        return {"skipped": True, "reason": serp.get("error", "no organic results from SerpAPI")}
     position = None
     ranking_url = None
     if target_url and organic:
@@ -806,23 +872,27 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
             # A URL pasted without a scheme (e.g. "em.com.br/…") has an empty netloc,
             # which silently broke position matching — normalize before parsing.
             tu = target_url if target_url.startswith(("http://", "https://")) else "https://" + target_url
-            target_host = urlparse(tu).netloc.replace("www.", "")
+            target_host = _norm_host(urlparse(tu).netloc)
         except Exception:
             pass
         for i, r in enumerate(organic):
             try:
-                link_host = urlparse(r.get("link", "")).netloc.replace("www.", "")
+                link_host = _norm_host(urlparse(r.get("link", "")).netloc)
             except Exception:
                 link_host = ""
-            if target_host and target_host in link_host:
+            if _host_matches(link_host, target_host):
                 position = r.get("position") or (i + 1)   # prefer Google's true rank
                 ranking_url = r.get("link")
                 break
-    fs = organic[0] if organic else {}
-    fs_url = fs.get("link", "")
+    # The real featured snippet when Google reports one. fs_present distinguishes "no snippet
+    # on this SERP" from "snapshot taken before we could read the snippet box" (NULL on old
+    # rows) — without it, alerting cannot tell a genuine FS loss from a schema change.
+    featured = serp.get("featured_snippet")
+    fs_present = bool(featured)
+    fs_url = (featured or {}).get("link", "") if featured else ""
     fs_domain = ""
     try:
-        fs_domain = urlparse(fs_url).netloc.replace("www.", "")
+        fs_domain = _norm_host(urlparse(fs_url).netloc)
     except Exception:
         pass
 
@@ -831,7 +901,7 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
     top_domains = []
     for i, r in enumerate(organic[:10]):
         try:
-            dom = urlparse(r.get("link", "")).netloc.replace("www.", "")
+            dom = _norm_host(urlparse(r.get("link", "")).netloc)
         except Exception:
             dom = ""
         if dom:
@@ -843,7 +913,7 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
         with _db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT position, fs_holder_domain FROM keyword_rankings
+                    """SELECT position, fs_holder_domain, fs_present FROM keyword_rankings
                        WHERE tracking_id = %s ORDER BY checked_at DESC LIMIT 1""",
                     (tracking_id,)
                 )
@@ -853,21 +923,22 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
     except Exception:
         pass
 
+    # A failed write must not be silent: the cron counts it as a failure so a broken run is
+    # visible instead of looking like a day when nothing moved.
     row_id = str(uuid.uuid4())
-    try:
-        with _db_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO keyword_rankings
-                       (id, tracking_id, position, ranking_url, fs_holder_url, fs_holder_domain, total_results, top_domains)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (row_id, tracking_id, position, ranking_url, fs_url, fs_domain, len(organic), json.dumps(top_domains))
-                )
-            conn.commit()
-    except Exception:
-        pass
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO keyword_rankings
+                   (id, tracking_id, position, ranking_url, fs_holder_url, fs_holder_domain,
+                    fs_present, total_results, top_domains)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (row_id, tracking_id, position, ranking_url, fs_url, fs_domain,
+                 fs_present, len(organic), json.dumps(top_domains))
+            )
+        conn.commit()
 
-    curr_snapshot = {"position": position, "fs_holder_domain": fs_domain}
+    curr_snapshot = {"position": position, "fs_holder_domain": fs_domain, "fs_present": fs_present}
     if prev_snapshot:
         _fire_alerts(tracking_id, keyword, prev_snapshot, curr_snapshot)
 
@@ -876,6 +947,7 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
         "ranking_url": ranking_url,
         "fs_holder_url": fs_url,
         "fs_holder_domain": fs_domain,
+        "fs_present": fs_present,
         "total_results": len(organic),
         "top_domains": top_domains,
     }
@@ -1144,9 +1216,14 @@ def tracking_history(tracking_id: str, current_user=Depends(_decode_token)):
         with _db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT position, ranking_url, fs_holder_domain, top_domains, checked_at
-                       FROM keyword_rankings WHERE tracking_id = %s
-                       ORDER BY checked_at ASC LIMIT 180""",
+                    # Newest 180 snapshots, re-sorted oldest-first for the chart. Taking
+                    # ASC LIMIT 180 froze the chart in the past once a keyword accrued
+                    # more than 180 checks.
+                    """SELECT * FROM (
+                           SELECT position, ranking_url, fs_holder_domain, top_domains, checked_at
+                           FROM keyword_rankings WHERE tracking_id = %s
+                           ORDER BY checked_at DESC LIMIT 180
+                       ) recent ORDER BY checked_at ASC""",
                     (tracking_id,)
                 )
                 rows = [dict(r) for r in cur.fetchall()]
@@ -1356,6 +1433,12 @@ def tracking_check(tracking_id: str, current_user=Depends(_decode_token)):
         raise HTTPException(status_code=404, detail="Tracked keyword not found")
     row = dict(row)
     ranking = _run_tracking_check(tracking_id, row["keyword"], row.get("target_url"), row["location"])
+    if ranking.get("skipped"):
+        # Surface it rather than returning an empty-looking success the UI would render as
+        # "not ranking" — nothing was measured and nothing was stored.
+        raise HTTPException(
+            status_code=503,
+            detail=f"SerpAPI unavailable, no snapshot recorded: {ranking.get('reason', '')}")
     return ranking
 
 
@@ -1463,28 +1546,192 @@ def mark_all_alerts_seen(current_user=Depends(_decode_token)):
 
 # ── Cron: daily auto-check all tracked keywords ───────────────────────────────
 
-@app.post("/api/cron/check-all")
-def cron_check_all(authorization: str = Header(None)):
-    cron_secret = os.getenv("CRON_SECRET", "")
-    if cron_secret and authorization != f"Bearer {cron_secret}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+# Vercel's 300s function ceiling cannot cover 500+ keywords in one pass, so this is a drainable
+# queue rather than a single sweep: each invocation claims the keywords that still have no
+# snapshot for today, oldest-checked first, and works until its time budget runs out. Schedule
+# it hourly — the early runs of the day do the work, the rest are one-query no-ops. Ordering by
+# staleness is what stops the same tail of the list being starved every day.
+TRACK_RUN_BUDGET_S = float(os.getenv("TRACK_RUN_BUDGET_S", "240"))
+TRACK_WORKERS      = int(os.getenv("TRACK_WORKERS", "6"))
+TRACK_MAX_PER_RUN  = int(os.getenv("TRACK_MAX_PER_RUN", "400"))
+
+
+def _finish_tracking_run(run_id, duration, due, checked, skipped, failed, remaining=0, notes=""):
+    """Close out a run row. Setting duration_s is what releases the overlap guard."""
     try:
         with _db_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id, keyword, target_url, location FROM keyword_tracking ORDER BY created_at")
-                tracked = [dict(r) for r in cur.fetchall()]
+                cur.execute(
+                    """UPDATE tracking_cron_runs
+                       SET duration_s = %s, due_at_start = %s, checked = %s,
+                           skipped = %s, failed = %s, remaining = %s, notes = %s
+                       WHERE id = %s""",
+                    (duration, due, checked, skipped, failed, remaining, notes, run_id),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _keywords_due_today(limit: int) -> list:
+    """Tracked keywords with no ranking snapshot yet today (UTC), least-recently-checked first."""
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT kt.id, kt.keyword, kt.target_url, kt.location,
+                       MAX(kr.checked_at) AS last_checked
+                FROM keyword_tracking kt
+                LEFT JOIN keyword_rankings kr ON kr.tracking_id = kt.id
+                GROUP BY kt.id, kt.keyword, kt.target_url, kt.location
+                HAVING MAX(kr.checked_at) IS NULL
+                    OR (MAX(kr.checked_at) AT TIME ZONE 'UTC')::date
+                       < (NOW() AT TIME ZONE 'UTC')::date
+                ORDER BY MAX(kr.checked_at) ASC NULLS FIRST
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+# Vercel triggers cron jobs with GET; POST-only handlers are never reached by the scheduler.
+@app.api_route("/api/cron/check-all", methods=["GET", "POST"])
+def cron_check_all(authorization: str = Header(None)):
+    _require_cron_auth(authorization)
+    started = time.monotonic()
+    deadline = started + TRACK_RUN_BUDGET_S
+    run_id = str(uuid.uuid4())
+
+    # Claim the run up front. Two overlapping invocations would each select the same "due"
+    # batch and buy every SERP twice, so a run still inside its budget window blocks the next.
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT id FROM tracking_cron_runs
+                       WHERE duration_s IS NULL
+                         AND started_at > NOW() - (%s * INTERVAL '1 second')""",
+                    (TRACK_RUN_BUDGET_S + 60,),
+                )
+                if cur.fetchone():
+                    return {"status": "skipped", "reason": "another tracking run is still in flight"}
+                cur.execute(
+                    """INSERT INTO tracking_cron_runs (id, run_date, due_at_start)
+                       VALUES (%s, (NOW() AT TIME ZONE 'UTC')::date, 0)""",
+                    (run_id,),
+                )
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"could not start tracking run: {exc}")
+
+    try:
+        due = _keywords_due_today(TRACK_MAX_PER_RUN + 1)
+    except Exception as exc:
+        _finish_tracking_run(run_id, round(time.monotonic() - started, 1), 0, 0, 0, 0,
+                             notes=f"aborted: {exc}"[:300])
+        raise HTTPException(status_code=500, detail=str(exc))
+    more_than_batch = len(due) > TRACK_MAX_PER_RUN
+    due = due[:TRACK_MAX_PER_RUN]
+
+    checked = failed = 0
+    skipped: list = []
+    errors: list = []
+
+    def _check(item):
+        try:
+            res = _run_tracking_check(
+                item["id"], item["keyword"], item.get("target_url"), item["location"])
+            return item, res, None
+        except Exception as e:
+            return item, None, str(e)
+
+    remaining = list(due)
+    from concurrent.futures import ThreadPoolExecutor
+    try:
+        with ThreadPoolExecutor(max_workers=TRACK_WORKERS) as ex:
+            # Feed the pool a slice at a time and re-check the clock between slices, so the run
+            # always returns a truthful report instead of being killed mid-write by the platform.
+            while remaining and time.monotonic() < deadline:
+                slice_, remaining = remaining[:TRACK_WORKERS], remaining[TRACK_WORKERS:]
+                for item, res, err in ex.map(_check, slice_):
+                    if err:
+                        failed += 1
+                        errors.append({"keyword": item["keyword"], "error": err[:200]})
+                    elif res.get("skipped"):
+                        skipped.append({"keyword": item["keyword"], "reason": res.get("reason", "")[:200]})
+                    else:
+                        checked += 1
+    finally:
+        # Always close the row — a run left open would block the next hour's invocation.
+        left = len(remaining)
+        duration = round(time.monotonic() - started, 1)
+        note = "; ".join(filter(None, [
+            f"{len(skipped)} skipped (SerpAPI unavailable)" if skipped else "",
+            f"{failed} failed" if failed else "",
+            "time budget reached" if left else "",
+            "batch cap hit — more still due" if more_than_batch else "",
+        ])) or "clean run"
+        _finish_tracking_run(run_id, duration, len(due), checked, len(skipped), failed,
+                             remaining=left, notes=note)
+
+    # A run that leaves work behind is normal for a big account (the next hourly run picks it
+    # up); skips and failures are not, so only those page anyone.
+    if skipped or failed:
+        _notify_slack(
+            f"⚠️ *Rank tracking* — {checked} checked, {len(skipped)} skipped, {failed} failed"
+            f"{f', {left} still due today' if left else ''}."
+            + (f"\nFirst skip: {skipped[0]['keyword']} — {skipped[0]['reason']}" if skipped else "")
+        )
+
+    return {
+        "checked": checked,
+        "skipped": len(skipped),
+        "failed": failed,
+        "unprocessed_this_run": left,
+        "more_due_beyond_batch": more_than_batch,
+        "duration_s": duration,
+        "notes": note,
+        "skipped_detail": skipped[:20],
+        "errors": errors[:20],
+    }
+
+
+@app.get("/api/tracking/cron-status")
+def tracking_cron_status(current_user=Depends(_decode_token)):
+    """Today's tracking coverage: how many keywords are checked, still due, and each run's outcome."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS n FROM keyword_tracking")
+                total = int(cur.fetchone()["n"] or 0)
+                cur.execute(
+                    """SELECT COUNT(DISTINCT kr.tracking_id) AS n
+                       FROM keyword_rankings kr
+                       WHERE (kr.checked_at AT TIME ZONE 'UTC')::date
+                             = (NOW() AT TIME ZONE 'UTC')::date"""
+                )
+                done = int(cur.fetchone()["n"] or 0)
+                cur.execute(
+                    """SELECT started_at, duration_s, due_at_start, checked, skipped,
+                              failed, remaining, notes
+                       FROM tracking_cron_runs
+                       WHERE run_date = (NOW() AT TIME ZONE 'UTC')::date
+                       ORDER BY started_at DESC LIMIT 25"""
+                )
+                runs = [dict(r) for r in cur.fetchall()]
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-
-    results = []
-    for item in tracked:
-        try:
-            ranking = _run_tracking_check(item["id"], item["keyword"], item.get("target_url"), item["location"])
-            results.append({"id": item["id"], "keyword": item["keyword"], **ranking})
-        except Exception as e:
-            results.append({"id": item["id"], "keyword": item["keyword"], "error": str(e)})
-
-    return {"checked": len(results), "results": results}
+    for r in runs:
+        r["started_at"] = str(r["started_at"])
+        r["duration_s"] = float(r["duration_s"]) if r["duration_s"] is not None else None
+    return {
+        "total_keywords": total,
+        "checked_today": done,
+        "due_today": max(0, total - done),
+        "coverage_pct": round(done / total * 100) if total else 0,
+        "runs_today": runs,
+    }
 
 
 class SiteConfig(BaseModel):
@@ -1936,9 +2183,7 @@ def logs_alerts_seen():
 @app.post("/api/cron/log-404-check")
 def cron_log_404_check(authorization: str = Header(None)):
     """Daily job: flag any log site whose 404 rate exceeds LOG_404_ALERT_PCT (default 10%)."""
-    cron_secret = os.getenv("CRON_SECRET", "")
-    if cron_secret and authorization != f"Bearer {cron_secret}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_cron_auth(authorization)
     results = _check_log_404_all()
     return {"checked": len(results), "results": results}
 
@@ -2229,10 +2474,187 @@ def _fetch_page_text(url, auth=None):
         tag.extract()
     return soup.get_text(separator=' ', strip=True)[:100000]
 
-def _gemini_generate(prompt: str) -> str:
+def _page_structure_digest(soup, max_chars=9000):
+    """
+    Structural digest of a page for Featured Snippet analysis.
+
+    _fetch_page_text() flattens a page to one prose blob, which drops exactly the signals an
+    FS plan depends on: heading levels, whether the answer sits in a list/table/paragraph,
+    schema types, and what block immediately follows each heading (which is what Google
+    actually lifts into a snippet). This returns those as facts so the model stops guessing.
+
+    Takes a BeautifulSoup of the full document — JSON-LD is read before <script> is stripped.
+    """
+    schema_types = []
+    for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        try:
+            data = json.loads(tag.string or "")
+        except Exception:
+            continue
+        nodes = data if isinstance(data, list) else [data]
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            nodes.extend(n for n in (node.get("@graph") or []) if isinstance(n, dict))
+            t = node.get("@type")
+            if t:
+                schema_types.extend(t if isinstance(t, list) else [t])
+
+    title = (soup.title.get_text(strip=True) if soup.title else "") or "(none)"
+    meta_tag = soup.find("meta", attrs={"name": "description"})
+    meta_desc = (meta_tag.get("content") or "").strip() if meta_tag else ""
+
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "noscript"]):
+        tag.extract()
+    body = soup.body or soup
+
+    def _clip(text, words):
+        parts = text.split()
+        return " ".join(parts[:words]) + ("…" if len(parts) > words else "")
+
+    def _describe(el):
+        name = getattr(el, "name", None)
+        if name in ("ol", "ul"):
+            return f"<{name}> with {len(el.find_all('li', recursive=False))} items"
+        if name == "table":
+            rows = el.find_all("tr")
+            cols = len(rows[0].find_all(["th", "td"])) if rows else 0
+            return f"<table> {len(rows)} rows x {cols} cols"
+        words = len(el.get_text(separator=" ", strip=True).split())
+        return f"<{name or 'text'}> paragraph, {words} words"
+
+    outline = []
+    for h in body.find_all(["h1", "h2", "h3", "h4"]):
+        heading = h.get_text(separator=" ", strip=True)
+        if not heading:
+            continue
+        follows, opening = "(nothing before the next heading)", "(none)"
+        for sib in h.find_next_siblings():
+            if getattr(sib, "name", None) in ("h1", "h2", "h3", "h4"):
+                break
+            text = sib.get_text(separator=" ", strip=True)
+            if not text:
+                continue
+            follows, opening = _describe(sib), _clip(text, 45)
+            break
+        outline.append(f"  {h.name.upper()} — {heading}\n"
+                       f"      immediately after: {follows}\n"
+                       f"      opening text: {opening}")
+
+    lists = body.find_all(["ol", "ul"])
+    ol_count = sum(1 for el in lists if el.name == "ol")
+    tables = body.find_all("table")
+    table_lines = []
+    for t in tables[:5]:
+        rows = t.find_all("tr")
+        cells = rows[0].find_all(["th", "td"]) if rows else []
+        heads = " | ".join(c.get_text(strip=True) for c in cells)[:120]
+        table_lines.append(f"  - {len(rows)} rows x {len(cells)} cols — header row: {heads or '(none)'}")
+
+    digest = "\n".join([
+        f"TITLE: {title}",
+        f"META DESCRIPTION: {meta_desc or '(none)'}",
+        f"TOTAL WORD COUNT: {len(body.get_text(separator=' ', strip=True).split())}",
+        f"SCHEMA (JSON-LD @type): {', '.join(dict.fromkeys(schema_types)) or '(none found)'}",
+        f"LISTS: {ol_count} <ol>, {len(lists) - ol_count} <ul>",
+        f"TABLES: {len(tables)}",
+        *table_lines,
+        "HEADING OUTLINE (document order):",
+        "\n".join(outline) if outline else "  (no headings found)",
+    ])
+    return digest[:max_chars]
+
+
+def _fetch_page_profile(url, auth=None, text_chars=12000):
+    """
+    Fetch a page ONCE and return both representations the FS analysis needs:
+    {"text": prose, "structure": structural digest}. Raises on fetch failure.
+    """
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/91.0 Safari/537.36"}
+    response = http_requests.get(url, headers=headers, timeout=15, auth=auth)
+    response.raise_for_status()
+    structure = _page_structure_digest(BeautifulSoup(response.text, "html.parser"))
+    soup = BeautifulSoup(response.text, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+        tag.extract()
+    return {"text": soup.get_text(separator=" ", strip=True)[:text_chars], "structure": structure}
+
+
+_MD_SEP_ROW = re.compile(r"^\s*\|?[\s:|-]*-{2,}[\s:|-]*\|?\s*$")
+
+
+def _split_md_row(line):
+    """Split one markdown table row into cells, honouring \\| escapes."""
+    body = line.strip()
+    if body.startswith("|"):
+        body = body[1:]
+    if body.endswith("|") and not body.endswith("\\|"):
+        body = body[:-1]
+    return [c.strip() for c in re.split(r"(?<!\\)\|", body)]
+
+
+def _normalize_markdown_tables(md: str) -> str:
+    """
+    Repair pipe tables in AI output so they parse as real GFM tables.
+
+    Models get table *content* right and the scaffolding wrong: separator rows padded out to the
+    pixel width of a long header, rows with the wrong cell count, and tables glued to the previous
+    paragraph. GFM rejects all three, and a rejected table degrades into a run-on paragraph of
+    pipes and hyphens — which is exactly what lands in front of the user. Rebuilding the
+    scaffolding here means the render no longer depends on the model's formatting discipline.
+    """
+    lines = md.split("\n")
+    out, i = [], 0
+
+    def is_row(s):
+        return s.strip().startswith("|") and s.count("|") >= 2
+
+    while i < len(lines):
+        line = lines[i]
+        # A table needs a header row followed by a separator row.
+        if is_row(line) and i + 1 < len(lines) and _MD_SEP_ROW.match(lines[i + 1]) and "|" in lines[i + 1]:
+            header = _split_md_row(line)
+            ncols = len(header)
+
+            aligns = []
+            for cell in _split_md_row(lines[i + 1]):
+                left, right = cell.startswith(":"), cell.endswith(":")
+                aligns.append(":---:" if left and right else "---:" if right else ":---" if left else "---")
+            aligns = (aligns + ["---"] * ncols)[:ncols]
+
+            rows = []
+            i += 2
+            while i < len(lines) and is_row(lines[i]):
+                cells = _split_md_row(lines[i])
+                # Drop stray separator rows the model sometimes repeats mid-table.
+                if not _MD_SEP_ROW.match(lines[i]):
+                    rows.append((cells + [""] * ncols)[:ncols])
+                i += 1
+
+            # GFM will not let a table interrupt a paragraph — it needs a blank line above it.
+            if out and out[-1].strip():
+                out.append("")
+            out.append("| " + " | ".join(header) + " |")
+            out.append("|" + "|".join(aligns) + "|")
+            out.extend("| " + " | ".join(r) + " |" for r in rows)
+            if i < len(lines) and lines[i].strip():
+                out.append("")
+            continue
+
+        out.append(line)
+        i += 1
+
+    return "\n".join(out)
+
+
+def _gemini_generate(prompt: str, max_output_tokens: int = None) -> str:
     model_name = _get_flash_model()
     model = genai.GenerativeModel(model_name)
-    response = model.generate_content(prompt)
+    if max_output_tokens:
+        response = model.generate_content(
+            prompt, generation_config={"max_output_tokens": max_output_tokens})
+    else:
+        response = model.generate_content(prompt)
     return response.text
 
 
@@ -2402,7 +2824,8 @@ Provide your findings in clear, formatted markdown."""
 from serp_utils import fetch_serp_results, GEOLOCATIONS
 
 
-def _serp_cached(keyword: str, location_name: str = "Global (No Geolocation)") -> dict:
+def _serp_cached(keyword: str, location_name: str = "Global (No Geolocation)",
+                 provider: str = "auto") -> dict:
     """
     SERP fetch with a short-lived DB cache to avoid re-buying the same query.
     Reuses a stored result for (keyword, location) within SERP_CACHE_TTL_HOURS (default 6h)
@@ -2426,13 +2849,18 @@ def _serp_cached(keyword: str, location_name: str = "Global (No Geolocation)") -
                         res = row["result"]
                         if isinstance(res, str):
                             res = json.loads(res)
-                        if isinstance(res, dict):
+                        # A cached entry from a fallback engine must not satisfy a caller that
+                        # explicitly demanded SerpAPI — that would reintroduce the mixed-source
+                        # data the provider pin exists to prevent.
+                        if isinstance(res, dict) and not (
+                            provider == "serpapi" and res.get("source") != "serpapi"
+                        ):
                             res["_cached"] = True
                             return res
         except Exception:
             pass
 
-    res = fetch_serp_results(keyword, location_name=location_name)
+    res = fetch_serp_results(keyword, location_name=location_name, provider=provider)
     if isinstance(res, dict) and res.get("organic"):
         try:
             with _db_connect() as conn:
@@ -3339,12 +3767,11 @@ def seo_health_history(site: str, days: int = 30):
     return {"history": history}
 
 
-@app.post("/api/cron/seo-health-snapshot")
+# Scheduled in vercel.json — must accept GET, which is how the platform triggers crons.
+@app.api_route("/api/cron/seo-health-snapshot", methods=["GET", "POST"])
 def cron_seo_health_snapshot(authorization: str = Header(None)):
     """Daily job: record a SEO-health snapshot for every configured site so history accrues without opening the app."""
-    cron_secret = os.getenv("CRON_SECRET", "")
-    if cron_secret and authorization != f"Bearer {cron_secret}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_cron_auth(authorization)
     raw = os.getenv("SEO_HEALTH_SITES", "[]")
     try:
         sites = _json_mod.loads(raw)
@@ -3531,9 +3958,7 @@ def _snapshot_cwv_all() -> list:
 @app.post("/api/cron/cwv-snapshot")
 def cron_cwv_snapshot(authorization: str = Header(None)):
     """Daily job: snapshot Core Web Vitals for every CWV_URLS entry so history accrues automatically."""
-    cron_secret = os.getenv("CRON_SECRET", "")
-    if cron_secret and authorization != f"Bearer {cron_secret}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_cron_auth(authorization)
     results = _snapshot_cwv_all()
     return {"recorded": len(results), "results": results}
 
@@ -3712,41 +4137,143 @@ def fs_stealer_analyze(req: FsStealerRequest):
 
     organic = serp.get("organic", [])
     related_keywords = serp.get("related_keywords", [])
-    fs_holder = organic[0]
+    paa = serp.get("paa", [])
+
+    # The REAL featured snippet, when the provider can report one. Google frequently lifts the
+    # snippet from a result that is not #1 — and plenty of SERPs have no snippet at all — so
+    # treating organic[0] as "the FS holder" was a guess presented to the user as fact.
+    featured = serp.get("featured_snippet")
+    fs_known = serp.get("source") == "serpapi"      # only SerpAPI can confirm absence
+    if featured and featured.get("link"):
+        fs_link = featured["link"]
+        fs_holder = next(
+            (r for r in organic if _clean_domain(r.get("link", "")) == _clean_domain(fs_link)),
+            {"title": featured.get("title", ""), "link": fs_link, "snippet": featured.get("content", "")[:300]},
+        )
+    else:
+        fs_holder = organic[0]
+
+    # Is the target already the page holding the snippet? If so the plan must defend and widen
+    # it, not "steal" it — otherwise the model writes a plan to beat the user's own page.
+    target_host = _clean_domain(target_url)
+    target_is_holder = bool(target_host) and _clean_domain(fs_holder.get("link", "")) == target_host
+    # A page that holds no snippet cannot be "defending" one.
+    if fs_known and not featured:
+        target_is_holder = False
+    target_position = next(
+        (i + 1 for i, r in enumerate(organic) if _clean_domain(r.get("link", "")) == target_host), None)
+    fs_holder_position = next(
+        (i + 1 for i, r in enumerate(organic)
+         if _clean_domain(r.get("link", "")) == _clean_domain(fs_holder.get("link", ""))), None)
+
+    # Who to compare the target against: normally the FS holder, but when the target already IS
+    # the holder that comparison is the page against itself — use the closest challenger instead.
+    pos_text = (f"currently ranks #{target_position} in this SERP" if target_position
+                else "does NOT appear anywhere in these results")
+    if target_is_holder:
+        rival = next((r for r in organic
+                      if _clean_domain(r.get("link", "")) != target_host), fs_holder)
+        rival_title = "Closest Challenger"
+        rival_label = "CLOSEST CHALLENGER"
+        # Only claim the snippet is held when Google actually reported one; on a fallback SERP
+        # all we truly know is that the target is the top organic result.
+        holds = ("ALREADY HOLDS the featured snippet" if featured else
+                 "is the top organic result, and MAY hold the snippet — the SERP source could not "
+                 "confirm the snippet box, so state this as unverified")
+        mode_line = (f"MODE: DEFEND. The target page {holds}. Do NOT write a plan to beat it. Write a plan "
+                     "to lock the snippet in and widen it — close remaining PAA/related-keyword gaps, "
+                     "harden the answer block against the challengers below it, and expand into adjacent "
+                     "snippet types.")
+    elif fs_known and not featured:
+        # Nobody holds a snippet: this is an open land-grab, not a theft. Saying "steal it from
+        # position #1" here would send the user chasing a competitor who has won nothing.
+        rival = fs_holder
+        rival_title = "Position #1"
+        rival_label = "POSITION #1 (no snippet holder — strongest organic result)"
+        mode_line = ("MODE: CREATE. Google shows NO featured snippet for this keyword right now, so there is "
+                     f"nothing to steal — the slot is unclaimed. The target page {pos_text}. Write a plan to "
+                     "TRIGGER a snippet: say plainly that no snippet currently exists, pick the format the "
+                     "intent and SERP most likely reward, and structure the answer block to earn position 0. "
+                     "Note that some queries never generate one, so frame this as an opportunity, not a "
+                     "guarantee. Never claim position #1 'holds the snippet' — it does not.")
+    else:
+        rival = fs_holder
+        rival_title = "FS Holder"
+        held_at = f"organic #{fs_holder_position}" if fs_holder_position else "not in the organic list"
+        rival_label = (f"FS HOLDER — the page Google actually lifts the snippet from ({held_at})" if featured
+                       else f"TOP ORGANIC RESULT — presumed snippet holder, unconfirmed ({held_at})")
+        mode_line = (f"MODE: STEAL. The target page {pos_text} and must take the snippet from the FS holder. "
+                     + ("" if fs_known else
+                        "NOTE: this SERP came from a fallback engine that cannot report the snippet box, so "
+                        "the 'FS holder' below is the top organic result and is an ASSUMPTION — say so, and "
+                        "avoid stating the snippet's exact format as fact."))
 
     # Fetch the ACTUAL page content so recommendations reflect what the target already has.
     # Without this, Gemini guesses from the URL alone and suggests changes already in place.
     from concurrent.futures import ThreadPoolExecutor
     _auth = (req.auth_user, req.auth_pass) if req.auth_user else None
 
-    def _safe_fetch(url, a=None):
+    def _safe_profile(url, a=None):
         try:
-            return _fetch_page_text(url, auth=a)
+            return _fetch_page_profile(url, auth=a)
         except Exception as e:
-            return f"[could not fetch this page: {str(e)[:120]}]"
+            err = f"[could not fetch this page: {str(e)[:120]}]"
+            return {"text": err, "structure": err}
 
     with ThreadPoolExecutor(max_workers=2) as _ex:
-        _f_target = _ex.submit(_safe_fetch, target_url, _auth)
-        _f_holder = _ex.submit(_safe_fetch, fs_holder["link"])
-        target_content = _f_target.result()
-        holder_content = _f_holder.result()
-    target_excerpt = target_content[:12000]
-    holder_excerpt = holder_content[:8000]
+        _f_target = _ex.submit(_safe_profile, target_url, _auth)
+        _f_rival = _ex.submit(_safe_profile, rival["link"])
+        target_page = _f_target.result()
+        rival_page = _f_rival.result()
+    target_excerpt = target_page["text"][:12000]
+    rival_excerpt = rival_page["text"][:8000]
 
     serp_context = "\n".join(
         f"#{i+1} — {r['title']}\n   URL: {r['link']}\n   Snippet: {r['snippet']}"
         for i, r in enumerate(organic[:5])
     )
     related_context = ", ".join(related_keywords) if related_keywords else "None detected."
+    # PAA questions are the highest-value FS targets on the page — Google already shows it
+    # wants a short direct answer to each one, so they belong in the prompt.
+    # When Google itself reports the snippet, its format is a fact — don't let the model guess it.
+    if featured and featured["type"] == "List":
+        fs_type_directive = "<Numbered List|Bulleted List> (Google reports a LIST snippet — decide ordered vs bulleted from the holder's page structure)"
+        fs_status_line = "Held — Google shows a list snippet for this query"
+    elif featured:
+        fs_type_directive = f"{featured['type']} (confirmed by Google — use exactly this)"
+        fs_status_line = f"Held — Google shows a {featured['type'].lower()} snippet for this query"
+    elif fs_known:
+        fs_type_directive = "<Paragraph|Numbered List|Bulleted List|Table> (the format you recommend TRIGGERING)"
+        fs_status_line = "**No featured snippet exists for this keyword** — position 0 is unclaimed"
+    else:
+        fs_type_directive = "<Paragraph|Numbered List|Bulleted List|Table|Unknown>"
+        fs_status_line = "Unknown — the snippet box could not be read from this SERP source"
+
+    if featured:
+        fs_context = (f"Format Google is using: {featured['type']}\n"
+                      f"Source page: {featured.get('link') or '(not attributed)'}\n"
+                      f"Title: {featured.get('title') or '(none)'}\n"
+                      f"EXACT TEXT GOOGLE IS SHOWING IN THE SNIPPET BOX:\n{featured['content']}")
+    elif fs_known:
+        fs_context = ("NO featured snippet is present on this SERP. The position-0 slot is unclaimed.")
+    else:
+        fs_context = ("UNKNOWN — this SERP came from a fallback engine that does not expose the snippet box. "
+                      "Do not state as fact whether a snippet exists or what format it uses.")
+
+    paa_context = "\n".join(
+        f"Q: {p.get('question', '')}\n   Google's current answer: {p.get('answer', '')}"
+        for p in paa[:6]
+    ) or "None detected."
 
     # Step 2 — Gemini generates the full action plan from real SERP data (~5-8s)
     prompt = f"""You are an elite SEO strategist specializing in Featured Snippet (FS) optimization.
-The SERP data below is real and current. Use it alongside your knowledge of the FS holder domain and target page to make recommendations specific and copy-paste ready.
+The SERP data and page structures below are real and current. Base every judgement on them — never on assumptions about what a page "probably" contains.
 
 KEYWORD: "{req.keyword}"
 DETECTED INTENT: {intent}
 TARGET PAGE: {target_url}
 GEOLOCATION: {req.location_name}
+{mode_line}
 
 ═══ REAL SERP (top 5) ═══
 {serp_context}
@@ -3754,16 +4281,28 @@ GEOLOCATION: {req.location_name}
 ═══ RELATED SEARCHES (semantic cluster) ═══
 {related_context}
 
-═══ FS HOLDER (Position #1) ═══
-URL: {fs_holder["link"]}
-Title: {fs_holder["title"]}
-Snippet: {fs_holder["snippet"]}
+═══ PEOPLE ALSO ASK (questions Google already wants short answers for) ═══
+{paa_context}
+
+═══ THE FEATURED SNIPPET ITSELF (what Google renders at position 0 right now) ═══
+{fs_context}
+
+═══ {rival_label} ═══
+URL: {rival["link"]}
+Title: {rival["title"]}
+Search-result snippet: {rival["snippet"]}
+
+═══ TARGET PAGE — STRUCTURE (authoritative: headings, lists, tables, schema, word counts) ═══
+{target_page["structure"]}
 
 ═══ TARGET PAGE — CURRENT LIVE CONTENT (source of truth for what already exists) ═══
 {target_excerpt}
 
-═══ FS HOLDER — CURRENT LIVE CONTENT ═══
-{holder_excerpt}
+═══ {rival_label} — STRUCTURE ═══
+{rival_page["structure"]}
+
+═══ {rival_label} — CURRENT LIVE CONTENT ═══
+{rival_excerpt}
 
 FS TYPE WINNING STRATEGIES:
 - Paragraph FS → 40-60 word direct answer right after the H2/H3 matching the query.
@@ -3774,58 +4313,117 @@ FS TYPE WINNING STRATEGIES:
 ---
 
 CRITICAL RULES:
-1. The "TARGET PAGE — CURRENT LIVE CONTENT" above is the source of truth for what the page ALREADY has. Do NOT recommend anything already present there. If the target already has a direct answer, list, table, matching heading, schema, or covers a keyword, acknowledge it and SKIP it — never suggest adding what exists.
-2. Every action-plan step must close a REAL gap: something the FS holder does (visible in its content above) that the target genuinely lacks or does worse. If the target already matches or beats the holder on a factor, say "already optimized" and move on.
-3. If the target content shows "[could not fetch this page: …]", state that you could not read the live page and clearly label recommendations as unverified/general.
+1. The TARGET PAGE STRUCTURE + CURRENT LIVE CONTENT above are the source of truth for what the page ALREADY has. Do NOT recommend anything already present. If the target already has a direct answer, list, table, matching heading, or schema type, acknowledge it and SKIP it — never suggest adding what exists.
+2. Cite the evidence. When you claim the target lacks something, name the heading it should sit under from the outline above. When you claim the holder does something, point to the structural fact that shows it (e.g. "holder has an <ol> with 7 items directly under its H2"). Claims with no basis in the data above are forbidden.
+3. Never assert a schema type, word count, heading, list or table that does not appear in the structure blocks above — those blocks are complete for those signals. "No <table> listed" means the page has none.
+4. Every action-plan step must close a REAL gap the target genuinely lacks or does worse. If the target already matches or beats the holder on a factor, say "already optimized" and move on.
+5. If a page shows "[could not fetch this page: …]", state that you could not read it and clearly label affected recommendations as unverified.
+6. Write the plan in the language of the SERP results above, not English, unless the SERP is English.
 
-Provide the Featured Snippet Steal Action Plan in clean Markdown:
+MARKDOWN TABLE RULES (the output is rendered as real HTML tables — malformed rows break the page):
+- Every table row goes on ONE line of its own, starting and ending with a pipe.
+- Keep each cell under ~140 characters. Never put a newline, a bullet list, or an unescaped "|" inside a cell.
+- One subject per cell — the column header already says which page it refers to, so do NOT prefix cells with the site name.
+- Keep the exact column count of the header row in every row.
+
+Provide the Featured Snippet plan in clean Markdown, starting with this exact machine-readable header:
+
+FS_TYPE: {fs_type_directive}
+FS_SCORE: <1-10>
 
 ## 🔎 SERP Intent
 One sentence confirming the {intent} intent and what content format Google rewards for it.
 
 ## 🔍 Featured Snippet Diagnosis
-- **FS Type**: Paragraph / Numbered List / Bulleted List / Table
-- **What Google is extracting**: exact block description
-- **Why the current holder wins**: 2-3 bullets
-- **FS opportunity score**: N/10 — justification specific to {target_url}
+- **Snippet status**: {fs_status_line}
+- **FS Type**: matches FS_TYPE above
+- **What Google is extracting**: describe the exact block, quoting the snippet text above when it is available
+- **Why the current holder wins**: 2-3 bullets, each tied to a structural fact
+- **FS opportunity score**: matches FS_SCORE above — justification specific to {target_url}
 
-## 🧩 Semantic Gap — Related Keywords Analysis
-| Related Keyword | Covered on Target Page? | Recommended Placement |
-|-----------------|------------------------|-----------------------|
-[5-7 rows — set "Covered?" to ✅/❌ based STRICTLY on the TARGET PAGE CURRENT LIVE CONTENT above. Only give a "Recommended Placement" for the ❌ (missing) rows.]
+## 🧩 Semantic Gap — Related Keywords & PAA
+| Query | Covered? | Recommended Placement |
+|-------|----------|-----------------------|
+[6-8 rows mixing related searches AND the PAA questions above. "Covered?" is ✅ or ❌ only — nothing else in that cell — based STRICTLY on the target page data. Give a "Recommended Placement" naming a real heading from the outline only for the ❌ rows; write "—" for ✅ rows.]
 
-## 📊 Gap Analysis — Target vs FS Holder
-| Factor | FS Holder ({fs_holder["link"]}) | Target Page ({target_url}) | Priority |
-|--------|--------------------------------|---------------------------|----------|
-[Fill the Target Page column from its CURRENT LIVE CONTENT above (not assumptions). Rows: Direct answer placement, Content format, Word count of answer block, Header structure, Schema markup, Reading level, Mobile formatting, Semantic coverage. Set Priority to "—" / "already optimized" for any factor the target already handles well.]
+## 📊 Gap Analysis — Target vs {rival_title}
+| Factor | {_clean_domain(rival["link"]) or rival_title} | {target_host or "Target page"} | Priority |
+|--------|--------------------|--------------------|----------|
+[Fill BOTH page columns from the structure blocks with concrete values (real word counts, real heading text, real schema types, real list/table dimensions) — never "unknown" or "likely". One short factual phrase per cell, no site-name prefixes. Rows: Direct answer placement, Content format, Word count of answer block, Header structure, Schema markup, Reading level, Semantic coverage. Priority is exactly one of: High / Medium / Low / — already optimized.]
 
 ## 🎯 Step-by-Step Action Plan
-[5-8 numbered steps. Each must have:
+[5-8 numbered steps, ordered by impact. Each must have:
 - **What to do**: specific action
-- **Exactly where**: section / heading / element on {target_url}
-- **Copy-paste example**: actual HTML or content — not a description]
+- **Exactly where**: quote the real heading from the target's outline that it goes under (or state which new heading to insert and after which existing one)
+- **Copy-paste example**: actual HTML or content ready to paste — not a description
+- **Why it wins the FS**: one line tying it to what the data shows]
 
 ## ⚡ Quick Wins (implement in < 1 hour)
-3 changes that alone could trigger a FS swap within days.
+3 changes that alone could trigger a FS swap within days. Each with the exact copy to paste.
 
 ## 📋 Validation Checklist
 Checkbox list the user ticks off after each change.
 
-Be ruthlessly specific — tie every recommendation to what {fs_holder["link"]} does that {target_url} does not."""
+Be ruthlessly specific and evidence-backed — every recommendation must trace to a concrete difference visible in the data above."""
 
     try:
-        analysis = _gemini_generate(prompt)
+        # The plan is long (tables + copy-paste HTML per step); the default ceiling truncates it
+        # mid-section and the user loses the Quick Wins / Checklist at the end.
+        analysis = _gemini_generate(prompt, max_output_tokens=8192)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {e}")
+
+    # Lift FS type + score out of the header so the UI can show them as headline stats, then
+    # drop those lines — they are plumbing, not part of the readable plan. Scans only the top
+    # few lines and tolerates the model bolding or fencing them, which would otherwise both
+    # break the parse and leak raw "FS_TYPE:" text into the rendered output.
+    import re as _re
+    fs_type = fs_score = None
+    lines = analysis.lstrip().splitlines()
+    consumed = 0
+    for line in lines[:6]:
+        bare = line.strip().strip("*`>#- ")
+        if not bare:
+            consumed += 1
+            continue
+        m = _re.match(r"FS_TYPE:(.+)", bare, _re.I)
+        if m:
+            fs_type = m.group(1).strip("*`\" :") or None
+            consumed += 1
+            continue
+        m = _re.match(r"FS_SCORE:\D*(\d{1,2})", bare, _re.I)
+        if m:
+            fs_score = min(10, int(m.group(1)))
+            consumed += 1
+            continue
+        break
+    if fs_type or fs_score is not None:
+        analysis = "\n".join(lines[consumed:]).lstrip()
+    if (fs_type or "").lower() in ("none", "n/a", "unknown", ""):
+        fs_type = None
+
+    # Rebuild table scaffolding before the markdown ever reaches the renderer or the .md export.
+    analysis = _normalize_markdown_tables(analysis)
+    # Google's own answer box outranks the model on the format question — but only for the two
+    # types it reports unambiguously; for "List" the model resolves ordered vs bulleted.
+    if featured and featured["type"] in ("Paragraph", "Table"):
+        fs_type = featured["type"]
 
     out = {
         "keyword": req.keyword,
         "target_url": target_url,
         "intent": intent,
         "fs_holder": fs_holder,
+        "fs_holder_position": fs_holder_position,
+        "featured_snippet": featured,
+        "fs_status": ("held" if featured else "none" if fs_known else "unknown"),
+        "fs_type": fs_type,
+        "opportunity_score": fs_score,
+        "target_position": target_position,
+        "target_is_holder": target_is_holder,
         "organic": organic[:5],
         "related_keywords": related_keywords,
-        "paa": serp.get("paa", []),
+        "paa": paa,
         "analysis": analysis,
     }
     _save_run(
@@ -3834,7 +4432,10 @@ Be ruthlessly specific — tie every recommendation to what {fs_holder["link"]} 
         keyword=req.keyword,
         target_url=target_url,
         location=req.location_name,
-        summary=f"FS held by {fs_holder.get('domain', fs_holder.get('link', '')[:40])}",
+        summary=("You hold the FS" if target_is_holder
+                 else "No FS on this SERP — slot unclaimed" if (fs_known and not featured)
+                 else f"FS held by {_clean_domain(fs_holder.get('link', '')) or 'unknown'}"
+                      + (f" · opportunity {fs_score}/10" if fs_score else "")),
     )
     return out
 
@@ -5019,9 +5620,7 @@ def _check_freshness_all(sites: list = None) -> list:
 
 @app.post("/api/cron/freshness-check")
 def cron_freshness_check(authorization: str = Header(None)):
-    cron_secret = os.getenv("CRON_SECRET", "")
-    if cron_secret and authorization != f"Bearer {cron_secret}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_cron_auth(authorization)
     return {"results": _check_freshness_all()}
 
 
@@ -5078,9 +5677,7 @@ def indexation_alerts_seen(site_slug: Optional[str] = None):
 @app.post("/api/cron/indexation-snapshot")
 def cron_indexation_snapshot(authorization: str = Header(None)):
     """Daily job: snapshot index health for every INDEXATION_SITES entry."""
-    cron_secret = os.getenv("CRON_SECRET", "")
-    if cron_secret and authorization != f"Bearer {cron_secret}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_cron_auth(authorization)
     results = _snapshot_indexation_all()
     return {"recorded": len(results), "results": results}
 

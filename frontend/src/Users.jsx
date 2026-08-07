@@ -62,7 +62,7 @@ function PasswordForm() {
           padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem', marginBottom: 12,
           background: msg.type === 'ok' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
           border: `1px solid ${msg.type === 'ok' ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
-          color: msg.type === 'ok' ? '#4ade80' : '#f87171',
+          color: msg.type === 'ok' ? '#15803d' : '#dc2626',
         }}>
           {msg.text}
         </div>
@@ -95,7 +95,7 @@ function ChangePasswordPanel() {
 }
 
 const ROLE_LABELS = { 'super-admin': 'Super Admin', editor: 'Editor' };
-const ROLE_COLORS = { 'super-admin': '#E20071', editor: '#60a5fa' };
+const ROLE_COLORS = { 'super-admin': '#E20071', editor: '#2563eb' };
 
 function RoleBadge({ role }) {
   return (
@@ -258,11 +258,11 @@ export default function Users({ currentUser }) {
           display: 'flex', alignItems: 'flex-start', gap: 10,
           padding: '12px 16px', borderRadius: 8,
           background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)',
-          color: '#fbbf24', fontSize: '0.82rem', lineHeight: 1.5,
+          color: '#b45309', fontSize: '0.82rem', lineHeight: 1.5,
         }}>
           <AlertCircle size={15} style={{ marginTop: 1, flexShrink: 0 }} />
           <span>
-            <strong>Changes are temporary</strong> — set the <code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: 3 }}>VERCEL_TOKEN</code> environment variable to persist user changes across deployments.
+            <strong>Changes are temporary</strong> — set the <code style={{ background: 'rgb(var(--ink) / 0.08)', padding: '1px 5px', borderRadius: 3 }}>VERCEL_TOKEN</code> environment variable to persist user changes across deployments.
           </span>
         </div>
       )}
@@ -313,7 +313,7 @@ export default function Users({ currentUser }) {
               </div>
             </div>
             {addError && (
-              <div role="alert" style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171', fontSize: '0.8rem', marginBottom: 12 }}>
+              <div role="alert" style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', color: '#dc2626', fontSize: '0.8rem', marginBottom: 12 }}>
                 {addError}
               </div>
             )}
@@ -337,7 +337,7 @@ export default function Users({ currentUser }) {
             Loading users…
           </div>
         ) : error ? (
-          <div style={{ padding: 24, color: '#f87171', fontSize: '0.875rem' }}>{error}</div>
+          <div style={{ padding: 24, color: '#dc2626', fontSize: '0.875rem' }}>{error}</div>
         ) : (
           <table className="data-table">
             <thead>
@@ -401,7 +401,7 @@ export default function Users({ currentUser }) {
                   ) : deleteId === user.id ? (
                     /* ── Confirm delete row ── */
                     <>
-                      <td colSpan={3} style={{ padding: '14px 20px', color: '#f87171', fontSize: '0.875rem' }}>
+                      <td colSpan={3} style={{ padding: '14px 20px', color: '#dc2626', fontSize: '0.875rem' }}>
                         Delete <strong>{user.name || user.email}</strong>? This cannot be undone.
                       </td>
                       <td style={{ padding: '14px 20px', textAlign: 'right' }}>

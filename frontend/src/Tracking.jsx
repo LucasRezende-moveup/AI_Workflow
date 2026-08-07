@@ -30,7 +30,7 @@ function timeAgo(isoStr) {
 }
 
 const btnStyle = {
-  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)',
+  background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.09)',
   borderRadius: 6, padding: '5px 7px', cursor: 'pointer', color: 'var(--text-muted)',
   display: 'flex', alignItems: 'center', transition: 'background 0.15s',
 };
@@ -50,13 +50,13 @@ function PositionBadge({ position }) {
   if (position == null) return (
     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>not ranking</span>
   );
-  const color = position === 1 ? '#E20071' : position <= 3 ? '#f59e0b' : position <= 10 ? '#4ade80' : '#94a3b8';
+  const color = position === 1 ? '#E20071' : position <= 3 ? '#b45309' : position <= 10 ? '#15803d' : '#64748b';
   return (
     <span style={{ fontWeight: 800, fontSize: '1.1rem', color, fontVariantNumeric: 'tabular-nums' }}>#{position}</span>
   );
 }
 
-const SERP_PALETTE = ['#60a5fa', '#f59e0b', '#a78bfa', '#4ade80', '#f472b6', '#22d3ee', '#fb923c'];
+const SERP_PALETTE = ['#2563eb', '#b45309', '#7c3aed', '#15803d', '#db2777', '#0891b2', '#c2410c'];
 
 function PositionChart({ history, targetDomain }) {
   if (!history || history.length < 2) return (
@@ -78,12 +78,18 @@ function PositionChart({ history, targetDomain }) {
   if (!hasSerp) {
     const data = history.map(r => ({ label: new Date(r.checked_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), position: r.position }));
     const positions = data.map(d => d.position).filter(p => p != null);
+    // Every check came back unranked — Math.min(...[]) is Infinity, which breaks the axis.
+    if (!positions.length) return (
+      <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+        Not ranking in any of the {data.length} recorded checks.
+      </div>
+    );
     return (
       <ResponsiveContainer width="100%" height={160}>
         <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
           <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(data.length / 5)} />
           <YAxis domain={[Math.max(1, Math.min(...positions) - 1), Math.min(20, Math.max(...positions) + 2)]} reversed tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={v => `#${v}`} />
-          <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.78rem' }} labelStyle={{ color: '#94a3b8' }} formatter={v => [`#${v}`, 'Position']} />
+          <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8, fontSize: '0.78rem' }} labelStyle={{ color: '#64748b' }} formatter={v => [`#${v}`, 'Position']} />
           <Line type="monotone" dataKey="position" stroke="#E20071" strokeWidth={2} dot={{ fill: '#E20071', r: 3 }} activeDot={{ r: 5 }} connectNulls={false} />
         </LineChart>
       </ResponsiveContainer>
@@ -112,7 +118,7 @@ function PositionChart({ history, targetDomain }) {
     <div>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
         {selected.map(d => (
-          <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: d === tgt ? '#fff' : 'var(--text-muted)', fontWeight: d === tgt ? 700 : 500 }}>
+          <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: d === tgt ? 'var(--text-strong)' : 'var(--text-muted)', fontWeight: d === tgt ? 700 : 500 }}>
             <span style={{ width: 11, height: 3, background: colors[d], borderRadius: 2, display: 'inline-block' }} />{d}{d === tgt ? ' (us)' : ''}
           </span>
         ))}
@@ -121,7 +127,7 @@ function PositionChart({ history, targetDomain }) {
         <LineChart data={data} margin={{ top: 8, right: 10, bottom: 0, left: -20 }}>
           <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(data.length / 6)} />
           <YAxis domain={[1, 10]} reversed ticks={[1, 3, 5, 10]} tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={v => `#${v}`} allowDecimals={false} />
-          <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.76rem' }} labelStyle={{ color: '#94a3b8' }} formatter={(v, name) => [`#${v}`, name]} />
+          <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8, fontSize: '0.76rem' }} labelStyle={{ color: '#64748b' }} formatter={(v, name) => [`#${v}`, name]} />
           {selected.map(d => (
             <Line key={d} type="monotone" dataKey={d} stroke={colors[d]} strokeWidth={d === tgt ? 2.5 : 1.5}
               dot={{ fill: colors[d], r: d === tgt ? 3 : 2, strokeWidth: 0 }} activeDot={{ r: 4 }} connectNulls={false} />
@@ -137,9 +143,9 @@ function PositionChart({ history, targetDomain }) {
 
 const HISTORY_METRICS = {
   avg_position: { label: 'Avg. position', color: '#E20071', reversed: true },
-  visibility:   { label: 'Visibility %', color: '#4ade80', reversed: false },
-  top10:        { label: 'In top 10',    color: '#60a5fa', reversed: false },
-  top3:         { label: 'In top 3',     color: '#f59e0b', reversed: false },
+  visibility:   { label: 'Visibility %', color: '#15803d', reversed: false },
+  top10:        { label: 'In top 10',    color: '#2563eb', reversed: false },
+  top3:         { label: 'In top 3',     color: '#b45309', reversed: false },
 };
 
 function ProjectHistoryChart({ projectId }) {
@@ -164,8 +170,10 @@ function ProjectHistoryChart({ projectId }) {
     label: new Date(d.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
     value: d[metric],
   })).filter(d => d.value != null);
+  // Days exist but this metric is null throughout (e.g. avg. position with nothing ranking).
+  // Guarded because Math.min(...[]) is Infinity, which produces an unrenderable axis.
   const vals = chartData.map(d => d.value);
-  const domain = metric === 'avg_position'
+  const domain = !vals.length ? [0, 1] : metric === 'avg_position'
     ? [Math.max(1, Math.floor(Math.min(...vals)) - 1), Math.ceil(Math.max(...vals)) + 1]
     : metric === 'visibility' ? [0, 100] : [0, Math.max(...vals) + 1];
 
@@ -175,24 +183,30 @@ function ProjectHistoryChart({ projectId }) {
         {Object.entries(HISTORY_METRICS).map(([k, mm]) => (
           <button key={k} type="button" onClick={() => setMetric(k)} aria-pressed={metric === k}
             style={metric === k
-              ? { background: 'rgba(226,0,113,0.15)', border: '1px solid rgba(226,0,113,0.4)', color: '#fff', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }
-              : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+              ? { background: 'rgba(226,0,113,0.15)', border: '1px solid rgba(226,0,113,0.4)', color: 'var(--primary)', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }
+              : { background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
             {mm.label}
           </button>
         ))}
       </div>
-      <ResponsiveContainer width="100%" height={180}>
-        <LineChart data={chartData} margin={{ top: 8, right: 10, bottom: 0, left: -18 }}>
-          <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(chartData.length / 6)} />
-          <YAxis domain={domain} reversed={m.reversed} tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false}
-            tickFormatter={v => metric === 'avg_position' ? `#${v}` : (metric === 'visibility' ? `${v}%` : v)} allowDecimals={false} />
-          <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.78rem' }}
-            labelStyle={{ color: '#94a3b8' }}
-            formatter={v => [metric === 'avg_position' ? `#${v}` : (metric === 'visibility' ? `${v}%` : v), m.label]} />
-          <Line type="monotone" dataKey="value" stroke={m.color} strokeWidth={2}
-            dot={{ fill: m.color, r: 2.5, strokeWidth: 0 }} activeDot={{ r: 5, fill: m.color }} connectNulls />
-        </LineChart>
-      </ResponsiveContainer>
+      {!chartData.length ? (
+        <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+          No “{m.label}” recorded yet — none of this project’s keywords have ranked.
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={180}>
+          <LineChart data={chartData} margin={{ top: 8, right: 10, bottom: 0, left: -18 }}>
+            <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(chartData.length / 6)} />
+            <YAxis domain={domain} reversed={m.reversed} tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false}
+              tickFormatter={v => metric === 'avg_position' ? `#${v}` : (metric === 'visibility' ? `${v}%` : v)} allowDecimals={false} />
+            <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8, fontSize: '0.78rem' }}
+              labelStyle={{ color: '#64748b' }}
+              formatter={v => [metric === 'avg_position' ? `#${v}` : (metric === 'visibility' ? `${v}%` : v), m.label]} />
+            <Line type="monotone" dataKey="value" stroke={m.color} strokeWidth={2}
+              dot={{ fill: m.color, r: 2.5, strokeWidth: 0 }} activeDot={{ r: 5, fill: m.color }} connectNulls />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 }
@@ -258,7 +272,7 @@ function CompetitorChart({ projectId }) {
       {domains.length > 0 && (
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
           {domains.map(d => (
-            <span key={d.domain} title={`${d.coverage} top-10 appearances`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: d.is_target ? '#fff' : 'var(--text-muted)', fontWeight: d.is_target || d.pinned ? 700 : 500 }}>
+            <span key={d.domain} title={`${d.coverage} top-10 appearances`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: d.is_target ? 'var(--text-strong)' : 'var(--text-muted)', fontWeight: d.is_target || d.pinned ? 700 : 500 }}>
               <span style={{ width: 11, height: 3, background: colors[d.domain], borderRadius: 2, display: 'inline-block' }} />
               {d.domain}{d.is_target ? ' (us)' : d.pinned ? ' 📌' : ''}
               {!d.is_target && (d.pinned
@@ -279,8 +293,8 @@ function CompetitorChart({ projectId }) {
             {[['pos', 'Avg. position'], ['vis', 'Visibility %']].map(([k, lbl]) => (
               <button key={k} type="button" onClick={() => setMetric(k)} aria-pressed={metric === k}
                 style={metric === k
-                  ? { background: 'rgba(226,0,113,0.15)', border: '1px solid rgba(226,0,113,0.4)', color: '#fff', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }
-                  : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                  ? { background: 'rgba(226,0,113,0.15)', border: '1px solid rgba(226,0,113,0.4)', color: 'var(--primary)', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }
+                  : { background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)', padding: '4px 11px', borderRadius: 7, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
                 {lbl}
               </button>
             ))}
@@ -290,7 +304,7 @@ function CompetitorChart({ projectId }) {
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} interval={Math.floor(chartData.length / 6)} />
               <YAxis domain={reversed ? [1, 10] : [0, 100]} reversed={reversed} ticks={reversed ? [1, 3, 5, 10] : undefined}
                 tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={fmt} allowDecimals={false} />
-              <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: '0.76rem' }} labelStyle={{ color: '#94a3b8' }} formatter={(v, name) => [fmt(v), name]} />
+              <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8, fontSize: '0.76rem' }} labelStyle={{ color: '#64748b' }} formatter={(v, name) => [fmt(v), name]} />
               {domains.map(d => (
                 <Line key={d.domain} type="monotone" dataKey={d.domain} stroke={colors[d.domain]} strokeWidth={d.is_target ? 2.5 : 1.5}
                   dot={{ fill: colors[d.domain], r: d.is_target ? 3 : 2, strokeWidth: 0 }} activeDot={{ r: 4 }} connectNulls={false} />
@@ -313,29 +327,31 @@ function TrackedRow({ item, onDelete, onCheck }) {
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  async function loadHistory() {
-    if (history) return;
+  // `force` skips the already-loaded guard: after setHistory(null) this closure still
+  // holds the pre-reset array, so a re-check would otherwise never refetch.
+  async function loadHistory(force = false) {
+    if (history && !force) return;
     const res = await API(`/api/tracking/${item.id}/history`);
     const d = await res.json();
     setHistory(d.history || []);
   }
   async function handleExpand() { const next = !expanded; setExpanded(next); if (next) loadHistory(); }
   async function handleCheck() {
-    setChecking(true); await onCheck(item.id); setHistory(null); setChecking(false); if (expanded) loadHistory();
+    setChecking(true); await onCheck(item.id); setHistory(null); setChecking(false); if (expanded) loadHistory(true);
   }
   async function handleDelete() { setDeleting(true); await onDelete(item.id); }
 
   return (
-    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, overflow: 'hidden', transition: 'border-color 0.2s' }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; setConfirmDelete(false); }}>
+    <div style={{ background: 'rgb(var(--ink) / 0.03)', border: '1px solid rgb(var(--ink) / 0.08)', borderRadius: 10, overflow: 'hidden', transition: 'border-color 0.2s' }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = 'rgb(var(--ink) / 0.15)'}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgb(var(--ink) / 0.08)'; setConfirmDelete(false); }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px' }}>
         <div style={{ width: 52, textAlign: 'center', flexShrink: 0 }}>
           <PositionBadge position={item.position} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+            <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
               {item.keyword}
             </span>
             {item.target_url ? (
@@ -343,14 +359,14 @@ function TrackedRow({ item, onDelete, onCheck }) {
                 <Target size={11} aria-hidden="true" /> {hostname(item.target_url)}
               </span>
             ) : (
-              <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', fontStyle: 'italic', border: '1px dashed rgba(255,255,255,0.15)', borderRadius: 20, padding: '2px 9px', flexShrink: 0 }}>
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', fontStyle: 'italic', border: '1px dashed rgb(var(--ink) / 0.15)', borderRadius: 20, padding: '2px 9px', flexShrink: 0 }}>
                 no target site
               </span>
             )}
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             {item.target_url && item.position != null && item.ranking_url && (
-              <span title={item.ranking_url} style={{ fontSize: '0.72rem', color: '#4ade80', display: 'flex', alignItems: 'center', gap: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 300 }}>
+              <span title={item.ranking_url} style={{ fontSize: '0.72rem', color: '#15803d', display: 'flex', alignItems: 'center', gap: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 300 }}>
                 <Link size={10} aria-hidden="true" /> ranking page: {urlPath(item.ranking_url)}
               </span>
             )}
@@ -389,18 +405,18 @@ function TrackedRow({ item, onDelete, onCheck }) {
           </button>
           {confirmDelete ? (
             <button onClick={handleDelete} disabled={deleting} title="Confirm delete" aria-label="Confirm delete keyword"
-              style={{ ...btnStyle, color: '#fff', background: 'rgba(248,113,113,0.9)', borderColor: 'rgba(248,113,113,0.9)', gap: 4, padding: '5px 9px', fontSize: '0.72rem' }}>
+              style={{ ...btnStyle, color: 'var(--on-primary)', background: 'var(--danger)', borderColor: 'var(--danger)', gap: 4, padding: '5px 9px', fontSize: '0.72rem' }}>
               <Trash2 size={13} aria-hidden="true" /> Confirm
             </button>
           ) : (
-            <button onClick={() => setConfirmDelete(true)} disabled={deleting} title="Remove" aria-label="Delete keyword" style={{ ...btnStyle, color: '#f87171' }}>
+            <button onClick={() => setConfirmDelete(true)} disabled={deleting} title="Remove" aria-label="Delete keyword" style={{ ...btnStyle, color: '#dc2626' }}>
               <Trash2 size={13} aria-hidden="true" />
             </button>
           )}
         </div>
       </div>
       {expanded && (
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', padding: '14px 16px' }}>
+        <div style={{ borderTop: '1px solid rgb(var(--ink) / 0.07)', padding: '14px 16px' }}>
           {history === null
             ? <div role="status" style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading…</div>
             : <PositionChart history={history} targetDomain={hostname(item.target_url)} />}
@@ -466,7 +482,7 @@ function AddForm({ project, onSaved, onClose }) {
   }
 
   const tabStyle = active => active ? { padding: '5px 14px', fontSize: '0.8rem' } : {
-    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+    background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)',
     color: 'var(--text-muted)', padding: '5px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem',
   };
   const urlPlaceholder = project
@@ -474,9 +490,9 @@ function AddForm({ project, onSaved, onClose }) {
     : 'Target site to rank — e.g. https://netvasco.com.br/apostas/…';
 
   return (
-    <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 12, padding: '18px 20px' }}>
+    <div style={{ background: 'rgb(var(--ink) / 0.04)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 12, padding: '18px 20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <span style={{ fontWeight: 600, fontSize: '0.88rem', color: '#fff' }}>
+        <span style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-strong)' }}>
           Add keywords{project ? ` to ${project.domain}` : ''}
         </span>
         <button onClick={onClose} aria-label="Close" style={{ ...btnStyle, padding: '3px 5px' }}><X size={13} aria-hidden="true" /></button>
@@ -515,7 +531,7 @@ function AddForm({ project, onSaved, onClose }) {
         <select className="glass-input glass-select" aria-label="Geolocation" value={location} onChange={e => setLocation(e.target.value)}>
           {geoList.map(g => <option key={g} value={g}>{g}</option>)}
         </select>
-        {error && <div role="alert" style={{ fontSize: '0.78rem', color: '#f87171' }}>{error}</div>}
+        {error && <div role="alert" style={{ fontSize: '0.78rem', color: '#dc2626' }}>{error}</div>}
         <button type="submit" className="btn-primary" disabled={loading || (mode === 'bulk' && bulkCount === 0)} style={{ padding: '9px', fontSize: '0.84rem' }}>
           {loading
             ? (mode === 'bulk' ? `Checking ${bulkCount} live SERP${bulkCount !== 1 ? 's' : ''}…` : 'Checking live SERP…')
@@ -555,9 +571,9 @@ function RegisterForm({ onSaved, onClose }) {
   }
 
   return (
-    <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 12, padding: '18px 20px' }}>
+    <div style={{ background: 'rgb(var(--ink) / 0.04)', border: '1px solid rgba(226,0,113,0.3)', borderRadius: 12, padding: '18px 20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <span style={{ fontWeight: 600, fontSize: '0.88rem', color: '#fff' }}>Register a project (domain)</span>
+        <span style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-strong)' }}>Register a project (domain)</span>
         <button onClick={onClose} aria-label="Close" style={{ ...btnStyle, padding: '3px 5px' }}><X size={13} aria-hidden="true" /></button>
       </div>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -566,7 +582,7 @@ function RegisterForm({ onSaved, onClose }) {
         <select className="glass-input glass-select" aria-label="Default location" value={location} onChange={e => setLocation(e.target.value)}>
           {geoList.map(g => <option key={g} value={g}>{g}</option>)}
         </select>
-        {error && <div role="alert" style={{ fontSize: '0.78rem', color: '#f87171' }}>{error}</div>}
+        {error && <div role="alert" style={{ fontSize: '0.78rem', color: '#dc2626' }}>{error}</div>}
         <button type="submit" className="btn-primary" disabled={loading} style={{ padding: '9px', fontSize: '0.84rem' }}>
           {loading ? 'Creating…' : 'Create project'}
         </button>
@@ -579,7 +595,7 @@ function Kpi({ label, value, color }) {
   return (
     <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
       <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
-      <span style={{ fontSize: '1rem', fontWeight: 800, color: color || '#fff', fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+      <span style={{ fontSize: '1rem', fontWeight: 800, color: color || 'var(--text-strong)', fontVariantNumeric: 'tabular-nums' }}>{value}</span>
     </span>
   );
 }
@@ -587,7 +603,7 @@ function Kpi({ label, value, color }) {
 function ProjectCard({ project, onOpen, onDelete }) {
   const [confirm, setConfirm] = useState(false);
   const vis = project.visibility || 0;
-  const visColor = vis >= 60 ? '#4ade80' : vis >= 30 ? '#f59e0b' : '#f87171';
+  const visColor = vis >= 60 ? '#15803d' : vis >= 30 ? '#b45309' : '#dc2626';
   return (
     <div className="glass-panel" style={{ padding: 0, overflow: 'hidden', cursor: 'pointer', transition: 'border-color 0.2s' }}
       role="button" tabIndex={0} onClick={() => onOpen(project)}
@@ -599,7 +615,7 @@ function ProjectCard({ project, onOpen, onDelete }) {
           <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Favicon domain={project.domain} size={18} />
-              <span style={{ fontWeight: 700, fontSize: '0.95rem', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.domain}</span>
+              <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.domain}</span>
             </div>
             {project.name && project.name !== project.domain && (
               <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>{project.name}</div>
@@ -607,30 +623,30 @@ function ProjectCard({ project, onOpen, onDelete }) {
           </div>
           {confirm ? (
             <button onClick={e => { e.stopPropagation(); onDelete(project.id); }} aria-label="Confirm delete project"
-              style={{ ...btnStyle, color: '#fff', background: 'rgba(248,113,113,0.9)', borderColor: 'rgba(248,113,113,0.9)', fontSize: '0.7rem', gap: 4, padding: '4px 8px', flexShrink: 0 }}>
+              style={{ ...btnStyle, color: 'var(--on-primary)', background: 'var(--danger)', borderColor: 'var(--danger)', fontSize: '0.7rem', gap: 4, padding: '4px 8px', flexShrink: 0 }}>
               <Trash2 size={12} aria-hidden="true" /> Delete
             </button>
           ) : (
             <button onClick={e => { e.stopPropagation(); setConfirm(true); }} aria-label="Delete project"
-              style={{ ...btnStyle, color: '#f87171', flexShrink: 0 }}><Trash2 size={13} aria-hidden="true" /></button>
+              style={{ ...btnStyle, color: '#dc2626', flexShrink: 0 }}><Trash2 size={13} aria-hidden="true" /></button>
           )}
         </div>
         <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
           <Kpi label="Keywords" value={project.keyword_count} />
           <Kpi label="Avg. pos" value={project.avg_position != null ? `#${project.avg_position}` : '—'} />
-          <Kpi label="Top 3" value={project.top3} color={project.top3 > 0 ? '#4ade80' : undefined} />
+          <Kpi label="Top 3" value={project.top3} color={project.top3 > 0 ? '#15803d' : undefined} />
           <Kpi label="Top 10" value={project.top10} />
         </div>
         <div style={{ marginTop: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.62rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
             <span>Visibility (top 10)</span><span style={{ color: visColor, fontWeight: 700 }}>{vis}%</span>
           </div>
-          <div style={{ height: 5, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{ height: 5, background: 'rgb(var(--ink) / 0.08)', borderRadius: 3, overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${vis}%`, background: visColor, borderRadius: 3 }} />
           </div>
         </div>
       </div>
-      <div style={{ padding: '8px 18px', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '0.68rem', color: 'var(--text-dim)', display: 'flex', justifyContent: 'space-between' }}>
+      <div style={{ padding: '8px 18px', borderTop: '1px solid rgb(var(--ink) / 0.06)', fontSize: '0.68rem', color: 'var(--text-dim)', display: 'flex', justifyContent: 'space-between' }}>
         <span>checked {timeAgo(project.last_checked)}</span>
         <span style={{ color: 'var(--primary)', fontWeight: 600 }}>Open →</span>
       </div>
@@ -708,7 +724,7 @@ export default function Tracking() {
             <button onClick={() => { setActiveId(null); setShowForm(false); }} aria-label="Back to projects" style={btnStyle}><ArrowLeft size={15} aria-hidden="true" /></button>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {activeProject ? <Favicon domain={activeProject.domain} size={20} /> : <Globe size={18} color="var(--primary)" aria-hidden="true" />}
-              <span style={{ fontWeight: 700, fontSize: '1.05rem', color: '#fff' }}>{label}</span>
+              <span style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-strong)' }}>{label}</span>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>· {detailItems.length} keyword{detailItems.length !== 1 ? 's' : ''}</span>
             </div>
           </div>
@@ -722,9 +738,9 @@ export default function Tracking() {
         {detailSummary && (
           <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'center', padding: '13px 18px', background: 'rgba(226,0,113,0.06)', border: '1px solid rgba(226,0,113,0.18)', borderRadius: 10 }}>
             <Kpi label="Avg. position" value={detailSummary.avg != null ? `#${detailSummary.avg}` : '—'} />
-            <Kpi label="Top 3" value={detailSummary.top3} color="#4ade80" />
+            <Kpi label="Top 3" value={detailSummary.top3} color="#15803d" />
             <Kpi label="Top 10" value={detailSummary.top10} />
-            <Kpi label="Not ranking" value={detailSummary.notRanking} color="#f87171" />
+            <Kpi label="Not ranking" value={detailSummary.notRanking} color="#dc2626" />
           </div>
         )}
 
@@ -776,7 +792,7 @@ export default function Tracking() {
       {showRegister && <RegisterForm onSaved={afterSave} onClose={() => setShowRegister(false)} />}
 
       {error && (
-        <div role="alert" style={{ padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171' }}>{error}</div>
+        <div role="alert" style={{ padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#dc2626' }}>{error}</div>
       )}
       {loading && <div role="status" style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Loading…</div>}
 
@@ -797,7 +813,7 @@ export default function Tracking() {
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveId('__none__'); } }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
                 <Folder size={15} color="var(--text-muted)" aria-hidden="true" />
-                <span style={{ fontWeight: 700, fontSize: '0.95rem', color: '#fff' }}>Unassigned</span>
+                <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-strong)' }}>Unassigned</span>
               </div>
               <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                 {unassigned.length} keyword{unassigned.length !== 1 ? 's' : ''} without a target site.

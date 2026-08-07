@@ -119,7 +119,7 @@ export default function SerpAnalyzer() {
             {result.organic.map((res, i) => (
               <div key={i} className="glass-panel">
                 <div className="flex items-center gap-2 mb-3">
-                  <span style={{background: 'var(--primary)', color: 'white', borderRadius: '50%', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem', fontWeight: 700, flexShrink: 0}}>
+                  <span style={{background: 'var(--primary)', color: 'var(--on-primary)', borderRadius: '50%', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem', fontWeight: 700, flexShrink: 0}}>
                     #{i + 1}
                   </span>
                   <a href={res.link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:text-white transition-colors" style={{color: 'var(--primary)', fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>

@@ -23,9 +23,9 @@ function BrokenRedirectAudit({ sfResult }) {
     return (
       <div className="glass-panel">
         <h3 className="flex items-center gap-2 mb-3" style={{ fontSize: '1rem' }}>
-          <GitBranch size={18} color="#4ade80" /> Redirect Audit
+          <GitBranch size={18} color="#15803d" /> Redirect Audit
         </h3>
-        <p style={{ color: '#4ade80', fontSize: '0.85rem' }}>No redirects (3xx) detected in this crawl.</p>
+        <p style={{ color: '#15803d', fontSize: '0.85rem' }}>No redirects (3xx) detected in this crawl.</p>
       </div>
     );
   }
@@ -47,12 +47,12 @@ function BrokenRedirectAudit({ sfResult }) {
   return (
     <div className="glass-panel">
       <h3 className="flex items-center gap-2 mb-4" style={{ fontSize: '1rem' }}>
-        <GitBranch size={18} color="#f59e0b" /> Redirect Audit
-        <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: 99, background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.3)', color: '#f59e0b', fontWeight: 700 }}>
+        <GitBranch size={18} color="#b45309" /> Redirect Audit
+        <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: 99, background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.3)', color: '#b45309', fontWeight: 700 }}>
           {redirectRows.length} redirects
         </span>
         {chains.length > 0 && (
-          <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: 99, background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', fontWeight: 700 }}>
+          <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: 99, background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#dc2626', fontWeight: 700 }}>
             {chains.length} chains
           </span>
         )}
@@ -60,10 +60,10 @@ function BrokenRedirectAudit({ sfResult }) {
 
       <div className="grid grid-cols-4 gap-4 mb-5">
         {[
-          { label: 'Total Redirects',  value: redirectRows.length, color: '#f59e0b' },
-          { label: '301 Permanent',    value: count301,            color: '#00f2fe' },
-          { label: '302 Temporary',    value: count302,            color: '#8b5cf6' },
-          { label: 'Redirect Chains',  value: chains.length,       color: chains.length > 0 ? '#f87171' : '#4ade80' },
+          { label: 'Total Redirects',  value: redirectRows.length, color: '#b45309' },
+          { label: '301 Permanent',    value: count301,            color: '#0891b2' },
+          { label: '302 Temporary',    value: count302,            color: '#7c3aed' },
+          { label: 'Redirect Chains',  value: chains.length,       color: chains.length > 0 ? '#dc2626' : '#15803d' },
         ].map(m => (
           <div key={m.label} className="glass-panel interactive" style={{ padding: 16 }}>
             <div className="metric-label">{m.label}</div>
@@ -73,7 +73,7 @@ function BrokenRedirectAudit({ sfResult }) {
       </div>
 
       {chains.length > 0 && (
-        <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', fontSize: '0.82rem', color: '#fca5a5' }}>
+        <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', fontSize: '0.82rem', color: '#dc2626' }}>
           <AlertTriangle size={13} style={{ display: 'inline', marginRight: 6 }} />
           {chains.length} redirect chain{chains.length !== 1 ? 's' : ''} detected — each extra hop wastes crawl budget and may dilute link equity.
         </div>
@@ -108,8 +108,8 @@ function BrokenRedirectAudit({ sfResult }) {
                   )}
                   <td>
                     {isChain
-                      ? <span style={{ color: '#f87171', fontSize: '0.78rem', fontWeight: 600 }}>Chain</span>
-                      : <span style={{ color: '#4ade80', fontSize: '0.78rem' }}>OK</span>}
+                      ? <span style={{ color: '#dc2626', fontSize: '0.78rem', fontWeight: 600 }}>Chain</span>
+                      : <span style={{ color: '#15803d', fontSize: '0.78rem' }}>OK</span>}
                   </td>
                 </tr>
               );
@@ -136,7 +136,7 @@ function CrawlBudgetAnalysis({ analytics }) {
     return (
       <div className="glass-panel">
         <h3 className="flex items-center gap-2 mb-3" style={{ fontSize: '1rem' }}>
-          <TrendingUp size={18} color="#4ade80" /> Crawl Budget Analysis
+          <TrendingUp size={18} color="#15803d" /> Crawl Budget Analysis
         </h3>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No Googlebot activity found in the loaded log files.</p>
       </div>
@@ -154,7 +154,7 @@ function CrawlBudgetAnalysis({ analytics }) {
   const efficiency = totalGb > 0 ? Math.round((okHits / totalGb) * 100) : 0;
   const wastedPct = totalGb > 0 ? Math.round(((errorHits + redirectHits) / totalGb) * 100) : 0;
 
-  const efficiencyColor = efficiency >= 80 ? '#4ade80' : efficiency >= 60 ? '#f59e0b' : '#f87171';
+  const efficiencyColor = efficiency >= 80 ? '#15803d' : efficiency >= 60 ? '#b45309' : '#dc2626';
 
   const topPaths = (gbData.top_paths || []).slice(0, 8).map(p => ({
     path: p.path.length > 42 ? p.path.substring(0, 42) + '…' : p.path,
@@ -164,15 +164,15 @@ function CrawlBudgetAnalysis({ analytics }) {
   return (
     <div className="glass-panel">
       <h3 className="flex items-center gap-2 mb-4" style={{ fontSize: '1rem' }}>
-        <TrendingUp size={18} color="#4ade80" /> Crawl Budget Analysis
+        <TrendingUp size={18} color="#15803d" /> Crawl Budget Analysis
       </h3>
 
       <div className="grid grid-cols-4 gap-4 mb-5">
         {[
-          { label: 'Googlebot Hits',   value: totalGb.toLocaleString(),   color: '#4ade80', sub: `${analytics.googlebot_rate}% of total traffic` },
+          { label: 'Googlebot Hits',   value: totalGb.toLocaleString(),   color: '#15803d', sub: `${analytics.googlebot_rate}% of total traffic` },
           { label: 'Crawl Efficiency', value: `${efficiency}%`,           color: efficiencyColor, sub: `${okHits.toLocaleString()} valid out of ${totalGb.toLocaleString()}` },
-          { label: 'Wasted Budget',    value: `${wastedPct}%`,            color: wastedPct > 20 ? '#f87171' : '#f59e0b', sub: `${(errorHits + redirectHits).toLocaleString()} non-200 hits` },
-          { label: 'Error Hits',       value: errorHits.toLocaleString(), color: errorHits > 0 ? '#f87171' : '#4ade80', sub: '4xx + 5xx served to Googlebot' },
+          { label: 'Wasted Budget',    value: `${wastedPct}%`,            color: wastedPct > 20 ? '#dc2626' : '#b45309', sub: `${(errorHits + redirectHits).toLocaleString()} non-200 hits` },
+          { label: 'Error Hits',       value: errorHits.toLocaleString(), color: errorHits > 0 ? '#dc2626' : '#15803d', sub: '4xx + 5xx served to Googlebot' },
         ].map(m => (
           <div key={m.label} className="glass-panel interactive" style={{ padding: 16 }}>
             <div className="metric-label">{m.label}</div>
@@ -183,7 +183,7 @@ function CrawlBudgetAnalysis({ analytics }) {
       </div>
 
       {wastedPct > 20 && (
-        <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', fontSize: '0.82rem', color: '#fca5a5' }}>
+        <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', fontSize: '0.82rem', color: '#dc2626' }}>
           <AlertTriangle size={13} style={{ display: 'inline', marginRight: 6 }} />
           {wastedPct}% of crawl budget wasted on non-200 responses. Fix 4xx/5xx errors and redirect chains to free up budget for new content.
         </div>
@@ -195,9 +195,9 @@ function CrawlBudgetAnalysis({ analytics }) {
           <ResponsiveContainer width="100%" height="85%">
             <BarChart data={topPaths} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
               <XAxis type="number" hide />
-              <YAxis dataKey="path" type="category" width={190} tick={{ fill: '#94a3b8', fontSize: 11 }} />
-              <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(74,222,128,0.3)', borderRadius: 8 }} />
-              <Bar dataKey="hits" fill="#4ade80" radius={[0, 4, 4, 0]} />
+              <YAxis dataKey="path" type="category" width={190} tick={{ fill: '#64748b', fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8 }} />
+              <Bar dataKey="hits" fill="#15803d" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -210,7 +210,7 @@ function CrawlBudgetAnalysis({ analytics }) {
             {statusData.map(s => {
               const pct = totalGb > 0 ? ((s.value / totalGb) * 100).toFixed(1) : 0;
               return (
-                <div key={s.name} style={{ padding: '8px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                <div key={s.name} style={{ padding: '8px 14px', borderRadius: 8, background: 'rgb(var(--ink) / 0.04)', border: '1px solid rgb(var(--ink) / 0.1)' }}>
                   <span className={`tag status-${s.name}`}>{s.name}</span>
                   <span style={{ marginLeft: 8, fontWeight: 700 }}>{s.value.toLocaleString()}</span>
                   <span style={{ marginLeft: 4, color: 'var(--text-muted)', fontSize: '0.78rem' }}>{pct}%</span>
@@ -244,8 +244,8 @@ export default function TechnicalAudit() {
                 padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: '0.9rem',
                 cursor: 'pointer', transition: 'background 0.15s, color 0.15s, box-shadow 0.15s',
                 ...(isActive
-                  ? { background: 'var(--primary)', color: 'white', border: '1px solid var(--primary)', boxShadow: '0 0 14px rgba(226,0,113,0.35)' }
-                  : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }),
+                  ? { background: 'var(--primary)', color: 'var(--on-primary)', border: '1px solid var(--primary)', boxShadow: '0 4px 12px rgba(226,0,113,0.3)' }
+                  : { background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)' }),
               }}
             >
               <Icon size={15} /> {label}

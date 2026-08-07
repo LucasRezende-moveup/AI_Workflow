@@ -124,6 +124,59 @@ def fetch_serp_duckduckgo(query, location_name="Global (No Geolocation)"):
         return {"organic": [], "related_keywords": [], "error": str(e)}
 
 
+# Answer boxes Google composes itself. No page owns them, so there is no snippet to win.
+_UNSTEALABLE_ANSWER_BOXES = {
+    "calculator_result", "currency_converter", "weather_result", "unit_converter",
+    "translation_result", "time", "finance_results", "sports_results", "dictionary_results",
+}
+
+
+def normalize_answer_box(box):
+    """
+    Normalize SerpAPI's `answer_box` into the featured snippet shape used across the app:
+    {type, title, link, content}. Returns None when the SERP has no featured snippet, or when
+    the box is a Google-generated widget nobody can take.
+
+    Without this the FS tools can only *assume* organic #1 holds the snippet — an assumption
+    that is wrong whenever the SERP has no snippet at all, or the snippet is lifted from a
+    result further down the page.
+    """
+    if not isinstance(box, dict):
+        return None
+
+    raw_type = (box.get("type") or "").lower()
+    if raw_type in _UNSTEALABLE_ANSWER_BOXES:
+        return None
+
+    table = box.get("table")
+    items = box.get("list")
+    if isinstance(table, list) and table:
+        fs_type = "Table"
+        content = "\n".join(
+            " | ".join(str(c) for c in row) if isinstance(row, list) else str(row)
+            for row in table[:12]
+        )
+    elif isinstance(items, list) and items:
+        # SerpAPI does not reliably flag ordered vs unordered; the holder's page structure
+        # settles it downstream, so stay honest rather than guessing here.
+        fs_type = "List"
+        content = "\n".join(f"- {i}" for i in items[:12])
+    else:
+        content = (box.get("snippet") or box.get("answer") or box.get("result") or "")
+        content = content.strip() if isinstance(content, str) else ""
+        if not content:
+            return None
+        fs_type = "Paragraph"
+
+    return {
+        "type": fs_type,
+        "title": box.get("title", ""),
+        "link": box.get("link") or box.get("displayed_link") or "",
+        "content": content[:2000],
+        "raw_type": raw_type,
+    }
+
+
 def fetch_serp_via_serpapi(query, location_name="Global (No Geolocation)"):
     """
     Fetches real Google SERP via SerpAPI. Returns the standard shape:
@@ -166,7 +219,15 @@ def fetch_serp_via_serpapi(query, location_name="Global (No Geolocation)"):
             for p in data.get("people_also_ask", [])[:5]
         ]
 
-        return {"organic": organic, "related_keywords": related_keywords, "paa": paa}
+        # source lets callers tell "Google definitively shows no featured snippet" apart from
+        # "we used a fallback engine that cannot report one" — very different conclusions.
+        return {
+            "organic": organic,
+            "related_keywords": related_keywords,
+            "paa": paa,
+            "featured_snippet": normalize_answer_box(data.get("answer_box")),
+            "source": "serpapi",
+        }
     except Exception as e:
         return {"error": f"SerpAPI request failed: {e}"}
 
@@ -175,12 +236,21 @@ def fetch_serp_results(query, location_name="Global (No Geolocation)", hl="en", 
     """
     SERP fetcher. Priority: SerpAPI (real Google) → DuckDuckGo → Google scraper.
     Fallback chain always runs in full — SerpAPI failure never blocks DDG.
+
+    provider="serpapi" disables the fallback chain entirely and returns an error instead.
+    Rank tracking uses that: DuckDuckGo's rankings are not Google's, so quietly substituting
+    them produces phantom position changes and false rank-drop alerts in a stored time series.
     """
     # SerpAPI — real Google data, used whenever the key is configured
     serpapi_result = fetch_serp_via_serpapi(query, location_name)
     if serpapi_result.get("organic"):
         return serpapi_result
     serpapi_error = serpapi_result.get("error", "")
+
+    if provider == "serpapi":
+        return {"organic": [], "related_keywords": [], "paa": [], "featured_snippet": None,
+                "source": "serpapi",
+                "error": serpapi_error or "SerpAPI returned no organic results"}
 
     # DuckDuckGo — reliable from cloud IPs, used as fallback when SerpAPI fails
     ddg = fetch_serp_duckduckgo(query, location_name)

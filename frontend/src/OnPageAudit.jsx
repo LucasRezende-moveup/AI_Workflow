@@ -13,9 +13,9 @@ const TABS = [
 ];
 
 const SEVERITY = {
-  critical: { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)', text: '#f87171', label: 'Critical' },
-  warning:  { bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)', text: '#fbbf24', label: 'Warning'  },
-  info:     { bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.3)',  text: '#60a5fa', label: 'Info'     },
+  critical: { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)', text: '#dc2626', label: 'Critical' },
+  warning:  { bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)', text: '#b45309', label: 'Warning'  },
+  info:     { bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.3)',  text: '#2563eb', label: 'Info'     },
 };
 
 const H_SIZE = { 1: '1.05rem', 2: '0.95rem', 3: '0.88rem', 4: '0.82rem', 5: '0.78rem', 6: '0.75rem' };
@@ -52,7 +52,7 @@ function HeaderAnalysis() {
     }
   };
 
-  const scoreColor = (s) => s >= 80 ? '#4ade80' : s >= 60 ? '#f59e0b' : '#f87171';
+  const scoreColor = (s) => s >= 80 ? '#15803d' : s >= 60 ? '#b45309' : '#dc2626';
 
   return (
     <div className="flex-col gap-6">
@@ -118,7 +118,7 @@ function HeaderAnalysis() {
                 {result.issues.length === 0 ? '✅ No issues detected' : `Issues (${result.issues.length})`}
               </h4>
               {result.issues.length === 0 ? (
-                <p style={{ color: '#4ade80', fontSize: '0.85rem' }}>Heading structure looks solid for the keyword.</p>
+                <p style={{ color: '#15803d', fontSize: '0.85rem' }}>Heading structure looks solid for the keyword.</p>
               ) : (
                 <div className="flex-col gap-2">
                   {result.issues.map((issue, i) => {
@@ -133,7 +133,7 @@ function HeaderAnalysis() {
                         <span style={{ fontWeight: 700, flexShrink: 0, fontSize: '0.75rem', marginTop: 1 }}>
                           {s.label.toUpperCase()}
                         </span>
-                        <span style={{ color: 'rgba(255,255,255,0.85)' }}>{issue.message}</span>
+                        <span style={{ color: 'rgb(var(--ink) / 0.85)' }}>{issue.message}</span>
                       </div>
                     );
                   })}
@@ -159,16 +159,16 @@ function HeaderAnalysis() {
                     paddingRight: 12,
                     paddingTop: 7,
                     paddingBottom: 7,
-                    borderLeft: `3px solid ${h.has_keyword ? '#4ade80' : 'rgba(255,255,255,0.1)'}`,
+                    borderLeft: `3px solid ${h.has_keyword ? '#15803d' : 'rgb(var(--ink) / 0.1)'}`,
                     borderRadius: '0 6px 6px 0',
-                    background: h.level === 1 ? 'rgba(226,0,113,0.06)' : i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+                    background: h.level === 1 ? 'rgba(226,0,113,0.06)' : i % 2 === 0 ? 'rgb(var(--ink) / 0.02)' : 'transparent',
                     display: 'flex', alignItems: 'center', gap: 8,
                   }}
                 >
                   <span style={{
                     fontSize: '0.68rem', fontFamily: 'monospace', fontWeight: 700,
                     padding: '2px 6px', borderRadius: 4,
-                    background: h.level === 1 ? 'rgba(226,0,113,0.2)' : 'rgba(255,255,255,0.07)',
+                    background: h.level === 1 ? 'rgba(226,0,113,0.2)' : 'rgb(var(--ink) / 0.07)',
                     color: h.level === 1 ? 'var(--primary)' : 'var(--text-muted)',
                     flexShrink: 0,
                   }}>
@@ -177,13 +177,13 @@ function HeaderAnalysis() {
                   <span style={{
                     fontSize: H_SIZE[h.level] || '0.82rem',
                     fontWeight: H_WEIGHT[h.level] || 500,
-                    color: h.level === 1 ? 'white' : 'rgba(255,255,255,0.85)',
+                    color: h.level === 1 ? 'var(--text-strong)' : 'rgb(var(--ink) / 0.85)',
                     flex: 1,
                   }}>
                     {h.text}
                   </span>
                   {h.has_keyword && (
-                    <span style={{ fontSize: '0.7rem', color: '#4ade80', flexShrink: 0, fontWeight: 600 }}>
+                    <span style={{ fontSize: '0.7rem', color: '#15803d', flexShrink: 0, fontWeight: 600 }}>
                       ✓ keyword
                     </span>
                   )}
@@ -223,8 +223,8 @@ export default function OnPageAudit() {
                 padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: '0.9rem',
                 cursor: 'pointer', transition: 'background 0.15s, color 0.15s, box-shadow 0.15s',
                 ...(isActive
-                  ? { background: 'var(--primary)', color: 'white', border: '1px solid var(--primary)', boxShadow: '0 0 14px rgba(226,0,113,0.35)' }
-                  : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }),
+                  ? { background: 'var(--primary)', color: 'var(--on-primary)', border: '1px solid var(--primary)', boxShadow: '0 4px 12px rgba(226,0,113,0.3)' }
+                  : { background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)' }),
               }}
             >
               <Icon size={15} /> {label}

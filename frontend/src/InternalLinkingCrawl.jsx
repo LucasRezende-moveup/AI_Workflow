@@ -166,7 +166,7 @@ function StatCard({ icon, label, value, valueColor }) {
         {icon}
         <span style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)' }}>{label}</span>
       </div>
-      <div style={{ fontSize: '2rem', fontWeight: 800, lineHeight: 1, color: valueColor || 'white' }}>{value}</div>
+      <div style={{ fontSize: '2rem', fontWeight: 800, lineHeight: 1, color: valueColor || 'var(--text-strong)' }}>{value}</div>
     </div>
   );
 }
@@ -346,7 +346,7 @@ export default function InternalLinkingCrawl() {
         className="glass-panel flex flex-col items-center justify-center"
         style={{
           padding: '40px 24px', borderStyle: 'dashed', borderWidth: 2,
-          borderColor: dragging ? 'var(--primary)' : 'rgba(255,255,255,0.18)',
+          borderColor: dragging ? 'var(--primary)' : 'rgb(var(--ink) / 0.18)',
           transition: 'border-color .2s',
         }}
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -365,7 +365,7 @@ export default function InternalLinkingCrawl() {
         <input type="file" id="sf-inlinks-upload" accept=".csv,.xlsx" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) { setFile(f); setResult(null); setError(''); } }} />
         <label htmlFor="sf-inlinks-upload" className="btn-primary" style={{ cursor: 'pointer' }}>Select File</label>
-        {file && <div className="mt-4" style={{ color: '#4ade80', fontWeight: 600, fontSize: '0.85rem' }}>{file.name}</div>}
+        {file && <div className="mt-4" style={{ color: '#15803d', fontWeight: 600, fontSize: '0.85rem' }}>{file.name}</div>}
         {file && (
           <button className="btn-primary mt-4" style={{ minWidth: 240 }} onClick={handleUpload} disabled={loading}>
             {loading ? <><div className="loader" /> Parsing crawl…</> : '🐸 Audit Internal Links'}
@@ -380,7 +380,7 @@ export default function InternalLinkingCrawl() {
           {/* ── Header: loaded file + upload-new button ── */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#d8d8e6', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {file?.name || 'Crawl loaded'}
               </div>
               <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
@@ -394,16 +394,16 @@ export default function InternalLinkingCrawl() {
 
           {/* ── Stats ── */}
           <div className="grid grid-cols-4 gap-4">
-            <StatCard icon={<Link2 size={16} color="#00f2fe" />}     label="Hyperlinks"      value={result.total_links.toLocaleString()} />
-            <StatCard icon={<UsersIcon size={16} color="#a78bfa" />}  label="Source Pages"    value={result.unique_sources.toLocaleString()} />
-            <StatCard icon={<Target size={16} color="#4ade80" />}     label="Target Pages"    value={result.unique_targets.toLocaleString()} />
-            <StatCard icon={<AlertTriangle size={16} color="#f87171" />} label="Broken (4xx/5xx)" value={result.broken_links.toLocaleString()}
-              valueColor={result.broken_links > 0 ? '#f87171' : '#4ade80'} />
+            <StatCard icon={<Link2 size={16} color="#0891b2" />}     label="Hyperlinks"      value={result.total_links.toLocaleString()} />
+            <StatCard icon={<UsersIcon size={16} color="#7c3aed" />}  label="Source Pages"    value={result.unique_sources.toLocaleString()} />
+            <StatCard icon={<Target size={16} color="#15803d" />}     label="Target Pages"    value={result.unique_targets.toLocaleString()} />
+            <StatCard icon={<AlertTriangle size={16} color="#dc2626" />} label="Broken (4xx/5xx)" value={result.broken_links.toLocaleString()}
+              valueColor={result.broken_links > 0 ? '#dc2626' : '#15803d'} />
           </div>
 
           {/* ── Notices ── */}
           {!result.type_filtered && (
-            <div className="glass-panel" style={{ padding: '10px 16px', fontSize: '0.8rem', color: '#f59e0b' }}>
+            <div className="glass-panel" style={{ padding: '10px 16px', fontSize: '0.8rem', color: '#b45309' }}>
               ⚠️ No <strong>Type</strong> column found — could not filter to hyperlinks only. Showing every link row in the export.
             </div>
           )}
@@ -419,7 +419,7 @@ export default function InternalLinkingCrawl() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ minWidth: 0 }}>
                   <h3 style={{ fontSize: '1rem', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <AlertTriangle size={16} color={anchorConflicts.length ? '#f59e0b' : '#4ade80'} />
+                    <AlertTriangle size={16} color={anchorConflicts.length ? '#b45309' : '#15803d'} />
                     Anchor Consistency
                   </h3>
                   <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '6px 0 0', maxWidth: 620 }}>
@@ -430,20 +430,20 @@ export default function InternalLinkingCrawl() {
                 <span style={{
                   fontSize: '0.72rem', fontWeight: 700, padding: '3px 10px', borderRadius: 20, flexShrink: 0,
                   background: anchorConflicts.length ? 'rgba(245,158,11,.1)' : 'rgba(34,197,94,.1)',
-                  color: anchorConflicts.length ? '#f59e0b' : '#4ade80',
+                  color: anchorConflicts.length ? '#b45309' : '#15803d',
                 }}>
                   {anchorConflicts.length} {anchorConflicts.length === 1 ? 'conflict' : 'conflicts'}
                 </span>
               </div>
 
               {anchorConflicts.length === 0 ? (
-                <p style={{ fontSize: '0.85rem', color: '#4ade80', marginTop: 14 }}>✓ Every anchor points to a single destination.</p>
+                <p style={{ fontSize: '0.85rem', color: '#15803d', marginTop: 14 }}>✓ Every anchor points to a single destination.</p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
                   {anchorConflicts.slice(0, showAllConflicts ? anchorConflicts.length : 15).map((c, i) => {
                     const open = !!openConflicts[c.anchor];
                     return (
-                      <div key={i} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(245,158,11,0.15)', borderRadius: 8, overflow: 'hidden' }}>
+                      <div key={i} style={{ background: 'rgb(var(--ink) / 0.02)', border: '1px solid rgba(245,158,11,0.15)', borderRadius: 8, overflow: 'hidden' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 14px' }}>
                           <button
                             type="button"
@@ -452,8 +452,8 @@ export default function InternalLinkingCrawl() {
                             style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: 0, background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', textAlign: 'left' }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#d8d8e6' }}>"{c.anchor}"</span>
-                              <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '1px 8px', borderRadius: 10, background: 'rgba(245,158,11,.1)', color: '#f59e0b' }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>"{c.anchor}"</span>
+                              <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '1px 8px', borderRadius: 10, background: 'rgba(245,158,11,.1)', color: '#b45309' }}>
                                 {c.destinations.length} destinations
                               </span>
                               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{c.total} links</span>
@@ -481,7 +481,7 @@ export default function InternalLinkingCrawl() {
                         {open && (
                           <div style={{ padding: '0 14px 12px' }}>
                             {c.destinations.map((d, j) => (
-                              <div key={j} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                              <div key={j} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '6px 0', borderTop: '1px solid rgb(var(--ink) / 0.04)' }}>
                                 <a href={d.url} target="_blank" rel="noopener noreferrer" title={d.url}
                                   style={{ fontSize: '0.8rem', color: 'var(--primary)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {shortLabel(d.url)}
@@ -513,7 +513,7 @@ export default function InternalLinkingCrawl() {
                   {filtered.length.toLocaleString()} shown
                 </span>
                 {anchorExact && (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, padding: '3px 6px 3px 10px', borderRadius: 20, background: 'rgba(245,158,11,.12)', color: '#f59e0b' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, padding: '3px 6px 3px 10px', borderRadius: 20, background: 'rgba(245,158,11,.12)', color: '#b45309' }}>
                     anchor = "{anchorExact}"
                     <button type="button" aria-label="Clear filter"
                       style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'inline-flex' }}
@@ -633,11 +633,11 @@ export default function InternalLinkingCrawl() {
                         </td>
                         <td style={{ maxWidth: 300 }}>
                           <a href={r.to} target="_blank" rel="noopener noreferrer" title={r.to}
-                            style={{ color: '#d8d8e6', textDecoration: 'none', fontSize: '0.8rem', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            style={{ color: '#334155', textDecoration: 'none', fontSize: '0.8rem', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {shortLabel(r.to)}
                           </a>
                         </td>
-                        <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.8rem', color: r.anchor ? '#d8d8e6' : 'var(--text-muted)' }}
+                        <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.8rem', color: r.anchor ? '#334155' : 'var(--text-muted)' }}
                           title={r.anchor}>
                           {r.anchor || '[no anchor / image link]'}
                         </td>

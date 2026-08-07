@@ -6,18 +6,18 @@ const STALE_MS       = 24 * 60 * 60 * 1000; // 24 h
 const SEVEN_DAYS_MS  = 7  * 24 * 60 * 60 * 1000;
 
 const CAT_COLOR = {
-  traffic:     '#00f2fe',
-  rankings:    '#8b5cf6',
-  technical:   '#f59e0b',
-  backlinks:   '#4ade80',
+  traffic:     '#0891b2',
+  rankings:    '#7c3aed',
+  technical:   '#b45309',
+  backlinks:   '#15803d',
   conversions: '#E20071',
-  other:       '#94a3b8',
+  other:       '#64748b',
 };
 
 const CAT_ORDER = ['traffic', 'rankings', 'backlinks', 'technical', 'conversions', 'other'];
 
 function scoreColor(s) {
-  return s >= 90 ? '#4ade80' : s >= 75 ? '#a3e635' : s >= 55 ? '#f59e0b' : '#f87171';
+  return s >= 90 ? '#15803d' : s >= 75 ? '#4d7c0f' : s >= 55 ? '#b45309' : '#dc2626';
 }
 
 function fmt(val, unit) {
@@ -77,7 +77,7 @@ function ScoreSparkline({ history }) {
   ].join(' ');
 
   const delta     = n >= 2 ? last.s - first.s : null;
-  const deltaClr  = delta === null ? null : delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : '#94a3b8';
+  const deltaClr  = delta === null ? null : delta > 0 ? '#15803d' : delta < 0 ? '#dc2626' : '#64748b';
   const thresholds = [90, 75, 55].filter(t => t > minS && t < maxS);
 
   // Which pts get a bottom day label (first, last, plus mid if ≥ 4 pts)
@@ -103,7 +103,7 @@ function ScoreSparkline({ history }) {
           <line key={t}
             x1={padL} y1={yOf(t).toFixed(1)}
             x2={W - padR} y2={yOf(t).toFixed(1)}
-            stroke="rgba(255,255,255,0.06)" strokeDasharray="3,3"
+            stroke="#e4e7ee" strokeDasharray="3,3"
           />
         ))}
 
@@ -143,7 +143,7 @@ function ScoreSparkline({ history }) {
         {n > 1 && Math.abs(last.x - first.x) > 24 && (
           <text
             x={first.x.toFixed(1)} y={(first.y - 6).toFixed(1)}
-            fontSize="9" fill="rgba(255,255,255,0.3)"
+            fontSize="9" fill="#64748b"
             textAnchor={first.x < W * 0.25 ? 'start' : 'middle'}
           >
             {first.s}
@@ -159,7 +159,7 @@ function ScoreSparkline({ history }) {
             <text key={i}
               x={p.x.toFixed(1)} y={H}
               fontSize="8"
-              fill={isLast ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'}
+              fill={isLast ? 'rgb(var(--ink) / 0.45)' : 'rgb(var(--ink) / 0.22)'}
               textAnchor={anchor}
             >
               {dayLabel(p.ts)}
@@ -168,7 +168,7 @@ function ScoreSparkline({ history }) {
         })}
       </svg>
 
-      <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.2)', textAlign: 'center' }}>
+      <div style={{ fontSize: '0.6rem', color: 'rgb(var(--ink) / 0.2)', textAlign: 'center' }}>
         {n} {n === 1 ? 'snapshot' : 'snapshots'}
       </div>
     </div>
@@ -188,7 +188,7 @@ function TrendBadge({ current, previous, trend }) {
       display: 'inline-flex', alignItems: 'center', gap: 3,
       fontSize: '0.72rem', fontWeight: 700, padding: '2px 7px', borderRadius: 99,
       background: up ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)',
-      color:      up ? '#4ade80'                : '#f87171',
+      color:      up ? '#15803d'                : '#dc2626',
     }}>
       {up ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
       {pct ? `${pct}%` : (up ? '↑' : '↓')}
@@ -243,10 +243,10 @@ function MetricCard({ m, sparkValues }) {
   const color = CAT_COLOR[m.category] || CAT_COLOR.other;
   return (
     <div className="glass-panel interactive" style={{ padding: '14px 16px', borderTop: `3px solid ${color}` }}>
-      <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.6)', marginBottom: 4, lineHeight: 1.2 }}>
+      <div style={{ fontSize: '0.78rem', color: 'rgb(var(--ink) / 0.6)', marginBottom: 4, lineHeight: 1.2 }}>
         {m.name}
       </div>
-      <div style={{ fontSize: '2rem', fontWeight: 800, color: 'white', lineHeight: 1, marginBottom: 7 }}>
+      <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-strong)', lineHeight: 1, marginBottom: 7 }}>
         {fmt(m.current, m.unit)}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -269,7 +269,7 @@ function HealthGauge({ score, label }) {
   return (
     <div style={{ position: 'relative', width: 80, height: 80, flexShrink: 0 }}>
       <svg width="80" height="80" style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx="40" cy="40" r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="6" />
+        <circle cx="40" cy="40" r={r} fill="none" stroke="#e4e7ee" strokeWidth="6" />
         <circle cx="40" cy="40" r={r} fill="none" stroke={color} strokeWidth="6"
           strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
           style={{ transition: 'stroke-dashoffset 0.6s ease' }} />
@@ -291,8 +291,8 @@ function ScoreBreakdown({ breakdown }) {
       </div>
       {breakdown.map((b, i) => (
         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem' }}>
-          <span style={{ color: 'rgba(255,255,255,0.75)' }}>{b.issue}</span>
-          <span style={{ color: '#f87171', fontWeight: 700, flexShrink: 0, marginLeft: 12 }}>−{b.penalty}</span>
+          <span style={{ color: 'rgb(var(--ink) / 0.75)' }}>{b.issue}</span>
+          <span style={{ color: '#dc2626', fontWeight: 700, flexShrink: 0, marginLeft: 12 }}>−{b.penalty}</span>
         </div>
       ))}
     </div>
@@ -357,8 +357,8 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
           {history.length > 0 && score != null && (
             <div style={{
               flexShrink: 0, padding: '6px 10px', borderRadius: 8,
-              background: 'rgba(255,255,255,0.025)',
-              border: '1px solid rgba(255,255,255,0.06)',
+              background: 'rgb(var(--ink) / 0.025)',
+              border: '1px solid rgb(var(--ink) / 0.06)',
             }}>
               <ScoreSparkline history={history} />
             </div>
@@ -385,8 +385,8 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '8px 14px', borderRadius: 7, fontSize: '0.82rem', fontWeight: 600,
-            background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
-            color: 'white', cursor: isLoading ? 'wait' : 'pointer', flexShrink: 0,
+            background: 'rgb(var(--ink) / 0.06)', border: '1px solid rgb(var(--ink) / 0.12)',
+            color: 'var(--text-strong)', cursor: isLoading ? 'wait' : 'pointer', flexShrink: 0,
           }}
         >
           {isLoading
@@ -400,7 +400,7 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
         <div style={{
           padding: '10px 14px', borderRadius: 8, marginBottom: 14,
           background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
-          color: '#fca5a5', fontSize: '0.83rem', display: 'flex', gap: 8,
+          color: '#dc2626', fontSize: '0.83rem', display: 'flex', gap: 8,
         }}>
           <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} /> {err}
         </div>
@@ -424,7 +424,7 @@ function SiteCard({ site, cached, isLoading, err, onRefresh }) {
             style={{
               display: 'flex', alignItems: 'center', gap: 6, width: '100%',
               padding: '9px 14px', borderRadius: 8, fontSize: '0.82rem', fontWeight: 600,
-              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgb(var(--ink) / 0.04)', border: '1px solid rgb(var(--ink) / 0.1)',
               color: 'var(--text-muted)', cursor: 'pointer', textAlign: 'left',
             }}
           >
@@ -576,21 +576,21 @@ export default function SeoHealth() {
       )}
 
       {sitesError && (
-        <div role="alert" className="glass-panel" style={{ color: '#f87171' }}>
+        <div role="alert" className="glass-panel" style={{ color: '#dc2626' }}>
           Could not load site configuration: {sitesError}
         </div>
       )}
 
       {!sitesLoading && !sitesError && sites.length === 0 && (
         <div className="glass-panel" style={{ textAlign: 'center', padding: '3.5rem 2rem' }}>
-          <Settings size={48} color="rgba(255,255,255,0.1)" style={{ margin: '0 auto 16px' }} />
+          <Settings size={48} color="#475569" style={{ margin: '0 auto 16px' }} />
           <p style={{ color: 'var(--text-muted)', marginBottom: 8 }}>No sites configured yet.</p>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', lineHeight: 1.6, maxWidth: 480, margin: '0 auto' }}>
-            Add a <code style={{ background: 'rgba(255,255,255,0.07)', padding: '1px 6px', borderRadius: 4 }}>SEO_HEALTH_SITES</code> environment variable with this format:
+            Add a <code style={{ background: 'rgb(var(--ink) / 0.07)', padding: '1px 6px', borderRadius: 4 }}>SEO_HEALTH_SITES</code> environment variable with this format:
           </p>
           <pre style={{
             marginTop: 16, padding: '12px 16px', borderRadius: 8, textAlign: 'left',
-            background: 'rgba(0,0,0,0.3)', color: '#4ade80', fontSize: '0.78rem',
+            background: 'var(--surface-sunken)', color: '#15803d', fontSize: '0.78rem',
             display: 'inline-block', maxWidth: 520,
           }}>
 {`[

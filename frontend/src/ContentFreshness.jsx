@@ -23,7 +23,7 @@ function StatCard({ label, value, color }) {
   return (
     <div className="glass-panel" style={{ padding: '14px 18px', flex: 1, minWidth: 130 }}>
       <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontWeight: 800, fontSize: '1.5rem', lineHeight: 1, color: color || '#fff', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+      <div style={{ fontWeight: 800, fontSize: '1.5rem', lineHeight: 1, color: color || 'var(--text-strong)', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
     </div>
   );
 }
@@ -132,13 +132,13 @@ export default function ContentFreshness() {
           <button type="button" onClick={() => setMode('site')}
             className={mode === 'site' ? 'btn-primary' : ''}
             aria-pressed={mode === 'site'}
-            style={mode !== 'site' ? { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' } : {}}>
+            style={mode !== 'site' ? { background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' } : {}}>
             GSC Site
           </button>
           <button type="button" onClick={() => setMode('sitemap')}
             className={mode === 'sitemap' ? 'btn-primary' : ''}
             aria-pressed={mode === 'sitemap'}
-            style={mode !== 'sitemap' ? { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' } : {}}>
+            style={mode !== 'sitemap' ? { background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' } : {}}>
             Sitemap URL
           </button>
         </div>
@@ -224,9 +224,9 @@ export default function ContentFreshness() {
       {result && (
         <>
           <div className="flex gap-3" style={{ flexWrap: 'wrap' }}>
-            <StatCard label={`Stale (>${result.threshold_days}d)`} value={result.stale_count} color="#f87171" />
-            <StatCard label="Fresh" value={result.fresh_count} color="#4ade80" />
-            {result.unknown_count > 0 && <StatCard label="No date found" value={result.unknown_count} color="#f59e0b" />}
+            <StatCard label={`Stale (>${result.threshold_days}d)`} value={result.stale_count} color="#dc2626" />
+            <StatCard label="Fresh" value={result.fresh_count} color="#15803d" />
+            {result.unknown_count > 0 && <StatCard label="No date found" value={result.unknown_count} color="#b45309" />}
             <StatCard label="Pages checked" value={result.checked} />
           </div>
 
@@ -251,11 +251,11 @@ export default function ContentFreshness() {
               </h3>
               <div className="flex gap-2">
                 <button type="button" onClick={() => setOnlyStale(v => !v)} aria-pressed={onlyStale}
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
+                  style={{ background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
                   {onlyStale ? 'Show all' : 'Show stale only'}
                 </button>
                 <button type="button" onClick={exportCsv} aria-label="Export CSV"
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  style={{ background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   <Download size={13} aria-hidden="true" /> CSV
                 </button>
               </div>
@@ -263,7 +263,7 @@ export default function ContentFreshness() {
 
             {shown.length === 0 ? (
               <div className="empty-state">
-                <CheckCircle size={28} color="#4ade80" aria-hidden="true" />
+                <CheckCircle size={28} color="#15803d" aria-hidden="true" />
                 <div style={{ marginTop: 8 }}>Nothing stale — every checked page was updated within {result.threshold_days} days.</div>
               </div>
             ) : (
@@ -291,7 +291,7 @@ export default function ContentFreshness() {
                           </a>
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.last_modified)}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600, color: r.age_days == null ? '#f59e0b' : r.flagged ? '#f87171' : '#4ade80' }}>
+                        <td style={{ textAlign: 'right', fontWeight: 600, color: r.age_days == null ? '#b45309' : r.flagged ? '#dc2626' : '#15803d' }}>
                           {ageLabel(r.age_days)}
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>

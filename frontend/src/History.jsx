@@ -3,15 +3,15 @@ import { Clock, RefreshCw, ChevronDown, ChevronUp, MapPin, Link } from 'lucide-r
 
 const TOOL_META = {
   fs_stealer:       { label: 'FS Stealer',       color: '#E20071', bg: 'rgba(226,0,113,0.12)' },
-  serp_analyzer:    { label: 'SERP Analyzer',    color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
-  seo_health:       { label: 'SEO Health',       color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-  cwv:              { label: 'Core Web Vitals',  color: '#00bcd4', bg: 'rgba(0,188,212,0.12)' },
-  eeat:             { label: 'E-E-A-T',          color: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
-  schema:           { label: 'Schema',           color: '#38bdf8', bg: 'rgba(56,189,248,0.12)' },
-  image_alt:        { label: 'Image Alt',        color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
-  headers:          { label: 'Headers',          color: '#fb923c', bg: 'rgba(251,146,60,0.12)' },
-  comparator:       { label: 'URL Comparator',   color: '#14b8a6', bg: 'rgba(20,184,166,0.12)' },
-  internal_linking: { label: 'Internal Linking', color: '#eab308', bg: 'rgba(234,179,8,0.12)' },
+  serp_analyzer:    { label: 'SERP Analyzer',    color: '#4f46e5', bg: 'rgba(99,102,241,0.12)' },
+  seo_health:       { label: 'SEO Health',       color: '#b45309', bg: 'rgba(245,158,11,0.12)' },
+  cwv:              { label: 'Core Web Vitals',  color: '#0891b2', bg: 'rgba(0,188,212,0.12)' },
+  eeat:             { label: 'E-E-A-T',          color: '#15803d', bg: 'rgba(34,197,94,0.12)' },
+  schema:           { label: 'Schema',           color: '#0284c7', bg: 'rgba(56,189,248,0.12)' },
+  image_alt:        { label: 'Image Alt',        color: '#7c3aed', bg: 'rgba(167,139,250,0.12)' },
+  headers:          { label: 'Headers',          color: '#c2410c', bg: 'rgba(251,146,60,0.12)' },
+  comparator:       { label: 'URL Comparator',   color: '#0d9488', bg: 'rgba(20,184,166,0.12)' },
+  internal_linking: { label: 'Internal Linking', color: '#a16207', bg: 'rgba(234,179,8,0.12)' },
 };
 
 const ALL_TOOLS = [
@@ -29,7 +29,7 @@ const ALL_TOOLS = [
 ];
 
 function ToolBadge({ tool }) {
-  const m = TOOL_META[tool] || { label: tool, color: '#94a3b8', bg: 'rgba(148,163,184,0.12)' };
+  const m = TOOL_META[tool] || { label: tool, color: '#64748b', bg: 'rgba(148,163,184,0.12)' };
   return (
     <span style={{
       fontSize: '0.7rem', fontWeight: 600, padding: '2px 8px', borderRadius: 4,
@@ -53,11 +53,11 @@ function timeAgo(isoStr) {
 function RunCard({ run, onExpand, expanded }) {
   return (
     <div style={{
-      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+      background: 'rgb(var(--ink) / 0.03)', border: '1px solid rgb(var(--ink) / 0.08)',
       borderRadius: 10, padding: '14px 16px', transition: 'border-color 0.2s',
     }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.16)'}
-      onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
+      onMouseEnter={e => e.currentTarget.style.borderColor = 'rgb(var(--ink) / 0.16)'}
+      onMouseLeave={e => e.currentTarget.style.borderColor = 'rgb(var(--ink) / 0.08)'}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -66,7 +66,7 @@ function RunCard({ run, onExpand, expanded }) {
             <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{timeAgo(run.created_at)}</span>
           </div>
 
-          <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#fff', marginBottom: 4, wordBreak: 'break-word' }}>
+          <div style={{ fontSize: '0.92rem', fontWeight: 600, color: 'var(--text-strong)', marginBottom: 4, wordBreak: 'break-word' }}>
             {run.keyword || '—'}
           </div>
 
@@ -96,7 +96,7 @@ function RunCard({ run, onExpand, expanded }) {
           onClick={() => onExpand(run.id)}
           aria-expanded={expanded}
           style={{
-            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)',
             borderRadius: 6, padding: '5px 8px', cursor: 'pointer', color: 'var(--text-muted)',
             display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', flexShrink: 0,
           }}
@@ -142,8 +142,8 @@ function RunDetail({ runId }) {
 
   return (
     <pre style={{
-      marginTop: 12, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.07)',
-      borderRadius: 8, padding: 12, fontSize: '0.75rem', color: '#cbd5e1',
+      marginTop: 12, background: 'var(--surface-sunken)', border: '1px solid rgb(var(--ink) / 0.07)',
+      borderRadius: 8, padding: 12, fontSize: '0.75rem', color: '#475569',
       overflowX: 'auto', maxHeight: 300, overflowY: 'auto',
     }}>
       {JSON.stringify(result, null, 2)}
@@ -153,16 +153,16 @@ function RunDetail({ runId }) {
 
 function AnalysisDetail({ text, url, score }) {
   return (
-    <div style={{ marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ marginTop: 12, borderTop: '1px solid rgb(var(--ink) / 0.07)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
       {(url || score != null) && (
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           {url && <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: '0.78rem', color: '#E20071', wordBreak: 'break-all' }}>{url}</a>}
-          {score != null && <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Score: <b style={{ color: '#fff' }}>{score}/100</b></span>}
+          {score != null && <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Score: <b style={{ color: 'var(--text-strong)' }}>{score}/100</b></span>}
         </div>
       )}
       <div style={{
-        background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.07)',
-        borderRadius: 8, padding: 12, fontSize: '0.78rem', color: '#cbd5e1',
+        background: 'var(--surface-sunken)', border: '1px solid rgb(var(--ink) / 0.07)',
+        borderRadius: 8, padding: 12, fontSize: '0.78rem', color: '#475569',
         maxHeight: 260, overflowY: 'auto', whiteSpace: 'pre-wrap', lineHeight: 1.6,
       }}>
         {String(text).slice(0, 1200)}{String(text).length > 1200 ? '…' : ''}
@@ -174,7 +174,7 @@ function AnalysisDetail({ text, url, score }) {
 function FsStealerDetail({ result }) {
   const fs = result.fs_holder || {};
   return (
-    <div style={{ marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ marginTop: 12, borderTop: '1px solid rgb(var(--ink) / 0.07)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
       {fs.link && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', paddingTop: 2 }}>FS Holder</span>
@@ -186,8 +186,8 @@ function FsStealerDetail({ result }) {
         <div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 5 }}>Top results</div>
           {result.organic.slice(0, 3).map((r, i) => (
-            <div key={i} style={{ fontSize: '0.78rem', color: '#e2e8f0', padding: '4px 0',
-              borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+            <div key={i} style={{ fontSize: '0.78rem', color: '#334155', padding: '4px 0',
+              borderBottom: '1px solid rgb(var(--ink) / 0.05)' }}>
               <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>#{i + 1}</span>
               {r.title}
             </div>
@@ -196,8 +196,8 @@ function FsStealerDetail({ result }) {
       )}
       {result.analysis && (
         <div style={{
-          background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.07)',
-          borderRadius: 8, padding: 12, fontSize: '0.78rem', color: '#cbd5e1',
+          background: 'var(--surface-sunken)', border: '1px solid rgb(var(--ink) / 0.07)',
+          borderRadius: 8, padding: 12, fontSize: '0.78rem', color: '#475569',
           maxHeight: 220, overflowY: 'auto', whiteSpace: 'pre-wrap', lineHeight: 1.6,
         }}>
           {result.analysis.slice(0, 800)}{result.analysis.length > 800 ? '…' : ''}
@@ -209,14 +209,14 @@ function FsStealerDetail({ result }) {
 
 function SeoHealthDetail({ result }) {
   const score = result.score;
-  const color = score >= 90 ? '#4ade80' : score >= 75 ? '#a3e635' : score >= 55 ? '#f59e0b' : '#f87171';
+  const color = score >= 90 ? '#15803d' : score >= 75 ? '#4d7c0f' : score >= 55 ? '#b45309' : '#dc2626';
   const breakdown = result.score_breakdown || {};
   return (
-    <div style={{ marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ marginTop: 12, borderTop: '1px solid rgb(var(--ink) / 0.07)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
         <span style={{ fontSize: '2rem', fontWeight: 800, color, fontVariantNumeric: 'tabular-nums' }}>{score}</span>
         <div>
-          <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#fff' }}>{result.score_label}</div>
+          <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-strong)' }}>{result.score_label}</div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{result.site_name}</div>
         </div>
       </div>
@@ -225,11 +225,11 @@ function SeoHealthDetail({ result }) {
           {Object.entries(breakdown).map(([cat, val]) => (
             <div key={cat} style={{
               padding: '4px 10px', borderRadius: 6, fontSize: '0.72rem',
-              background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
+              background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.08)',
               color: 'var(--text-muted)',
             }}>
               <span style={{ textTransform: 'capitalize', marginRight: 4 }}>{cat}:</span>
-              <span style={{ color: '#fff', fontWeight: 600 }}>{typeof val === 'number' ? val.toFixed(0) : val}</span>
+              <span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{typeof val === 'number' ? val.toFixed(0) : val}</span>
             </div>
           ))}
         </div>
@@ -240,13 +240,13 @@ function SeoHealthDetail({ result }) {
 
 function SerpDetail({ result }) {
   return (
-    <div style={{ marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ marginTop: 12, borderTop: '1px solid rgb(var(--ink) / 0.07)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
       {result.organic && (
         <div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 5 }}>Top results</div>
           {result.organic.slice(0, 5).map((r, i) => (
-            <div key={i} style={{ fontSize: '0.78rem', color: '#e2e8f0', padding: '4px 0',
-              borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+            <div key={i} style={{ fontSize: '0.78rem', color: '#334155', padding: '4px 0',
+              borderBottom: '1px solid rgb(var(--ink) / 0.05)' }}>
               <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>#{i + 1}</span>
               {r.title}
             </div>
@@ -255,8 +255,8 @@ function SerpDetail({ result }) {
       )}
       {result.analysis && (
         <div style={{
-          background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.07)',
-          borderRadius: 8, padding: 12, fontSize: '0.78rem', color: '#cbd5e1',
+          background: 'var(--surface-sunken)', border: '1px solid rgb(var(--ink) / 0.07)',
+          borderRadius: 8, padding: 12, fontSize: '0.78rem', color: '#475569',
           maxHeight: 220, overflowY: 'auto', whiteSpace: 'pre-wrap', lineHeight: 1.6,
         }}>
           {result.analysis.slice(0, 800)}{result.analysis.length > 800 ? '…' : ''}
@@ -305,8 +305,8 @@ export default function History() {
               aria-pressed={toolFilter === t.value}
               style={{
                 padding: '5px 12px', borderRadius: 6, fontSize: '0.78rem', cursor: 'pointer',
-                border: toolFilter === t.value ? '1px solid #E20071' : '1px solid rgba(255,255,255,0.1)',
-                background: toolFilter === t.value ? 'rgba(226,0,113,0.12)' : 'rgba(255,255,255,0.04)',
+                border: toolFilter === t.value ? '1px solid #E20071' : '1px solid rgb(var(--ink) / 0.1)',
+                background: toolFilter === t.value ? 'rgba(226,0,113,0.12)' : 'rgb(var(--ink) / 0.04)',
                 color: toolFilter === t.value ? '#E20071' : 'var(--text-muted)',
                 fontWeight: toolFilter === t.value ? 600 : 400,
               }}>
@@ -316,7 +316,7 @@ export default function History() {
         </div>
         <button onClick={load} style={{
           display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px',
-          background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+          background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)',
           borderRadius: 6, cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.78rem',
         }}>
           <RefreshCw size={12} /> Refresh

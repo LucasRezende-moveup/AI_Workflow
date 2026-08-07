@@ -85,7 +85,7 @@ export default function UrlComparator() {
           <input className="glass-input" placeholder="e.g. best seo tools" value={keyword} onChange={e => setKeyword(e.target.value)} />
         </div>
 
-        <div className="flex items-center gap-3 mb-5" style={{ padding: '12px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+        <div className="flex items-center gap-3 mb-5" style={{ padding: '12px 14px', borderRadius: 10, background: 'rgb(var(--ink) / 0.03)', border: '1px solid rgb(var(--ink) / 0.07)' }}>
           <Globe size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <select
             className="glass-input glass-select"

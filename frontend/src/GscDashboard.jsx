@@ -336,7 +336,7 @@ export default function GscDashboard() {
     <div className="flex-col gap-6">
 
       {/* Main tabs */}
-      <div className="flex gap-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 16 }}>
+      <div className="flex gap-3" style={{ borderBottom: '1px solid rgb(var(--ink) / 0.1)', paddingBottom: 16 }}>
         {[
           { id: 'gsc',   label: 'GSC Performance',    icon: Search },
           { id: 'ahrefs', label: 'Ahrefs Intelligence', icon: BarChart2 },
@@ -431,10 +431,10 @@ export default function GscDashboard() {
           {gscData.length > 0 && (
             <>
               <div className="grid grid-cols-4 gap-4">
-                <MetricCard icon={MousePointerClick} label="Total Clicks"      value={totalClicks.toLocaleString()}        color="#00f2fe" />
-                <MetricCard icon={Eye}               label="Total Impressions" value={totalImpressions.toLocaleString()}    color="#8b5cf6" />
-                <MetricCard icon={TrendingUp}        label="Avg CTR"           value={`${(avgCtr * 100).toFixed(2)}%`}     color="#4ade80" />
-                <MetricCard icon={BarChart2}         label="Avg Position"      value={avgPos.toFixed(1)}                   color="#f59e0b" />
+                <MetricCard icon={MousePointerClick} label="Total Clicks"      value={totalClicks.toLocaleString()}        color="#0891b2" />
+                <MetricCard icon={Eye}               label="Total Impressions" value={totalImpressions.toLocaleString()}    color="#7c3aed" />
+                <MetricCard icon={TrendingUp}        label="Avg CTR"           value={`${(avgCtr * 100).toFixed(2)}%`}     color="#15803d" />
+                <MetricCard icon={BarChart2}         label="Avg Position"      value={avgPos.toFixed(1)}                   color="#b45309" />
               </div>
 
               <div className="glass-panel">
@@ -470,7 +470,7 @@ export default function GscDashboard() {
                 </div>
               </div>
 
-              <div className="flex gap-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 12 }}>
+              <div className="flex gap-3" style={{ borderBottom: '1px solid rgb(var(--ink) / 0.1)', paddingBottom: 12 }}>
                 {[{ id: 'data', label: 'Data Table', Icon: DatabaseIcon }, { id: 'insights', label: 'AI Insights', Icon: Sparkles }, { id: 'chat', label: 'AI Chat', Icon: MessageSquare }]
                   .map(({ id, label, Icon }) => (
                     <button key={id} className={`nav-item ${gscTab === id ? 'active' : ''}`}
@@ -551,13 +551,13 @@ export default function GscDashboard() {
                       </div>
                     ) : chatLog.map((msg, i) => (
                       <div key={i} className={`mb-4 ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
-                        <div style={{ display: 'inline-block', padding: '12px 16px', borderRadius: 12, background: msg.role === 'user' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', maxWidth: '80%', textAlign: 'left' }}>
+                        <div style={{ display: 'inline-block', padding: '12px 16px', borderRadius: 12, background: msg.role === 'user' ? 'var(--primary)' : 'rgb(var(--ink) / 0.05)', maxWidth: '80%', textAlign: 'left' }}>
                           <ReactMarkdown>{msg.content}</ReactMarkdown>
                         </div>
                       </div>
                     ))}
                     {chatLoading && (
-                      <div className="text-left"><div style={{ display: 'inline-block', padding: '12px 16px', borderRadius: 12, background: 'rgba(255,255,255,0.05)' }}>
+                      <div className="text-left"><div style={{ display: 'inline-block', padding: '12px 16px', borderRadius: 12, background: 'rgb(var(--ink) / 0.05)' }}>
                         <div className="loader" style={{ width: 16, height: 16, borderWidth: 2 }} /></div></div>
                     )}
                   </div>
@@ -594,7 +594,7 @@ export default function GscDashboard() {
             </div>
           </div>
 
-          <div className="flex gap-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 12 }}>
+          <div className="flex gap-3" style={{ borderBottom: '1px solid rgb(var(--ink) / 0.1)', paddingBottom: 12 }}>
             {[
               { id: 'overview',    label: 'Overview',      Icon: Globe },
               { id: 'ranker',      label: 'Rank Tracker',  Icon: TrendingUp },
@@ -629,11 +629,11 @@ export default function GscDashboard() {
             return (
               <>
                 <div className="grid grid-cols-3 gap-4">
-                  <MetricCard icon={Search}     label="Tracked Keywords" value={totalKw.toLocaleString()}       color="#f59e0b" sub={`as of ${reportDate}`} />
-                  <MetricCard icon={Star}       label="Top-3 Positions"  value={top3Kw.toLocaleString()}         color="#4ade80" sub={`${top10Kw} in top 10`} />
-                  <MetricCard icon={TrendingUp} label="Est. Traffic"     value={totalTraffic.toLocaleString()}   color="#00f2fe" sub="from tracked keywords" />
-                  <MetricCard icon={BarChart2}  label="Avg. Position"    value={avgPos}                          color="#8b5cf6" />
-                  <MetricCard icon={Globe}      label="Report Date"      value={reportDate}                      color="#38bdf8" sub={selectedProject} />
+                  <MetricCard icon={Search}     label="Tracked Keywords" value={totalKw.toLocaleString()}       color="#b45309" sub={`as of ${reportDate}`} />
+                  <MetricCard icon={Star}       label="Top-3 Positions"  value={top3Kw.toLocaleString()}         color="#15803d" sub={`${top10Kw} in top 10`} />
+                  <MetricCard icon={TrendingUp} label="Est. Traffic"     value={totalTraffic.toLocaleString()}   color="#0891b2" sub="from tracked keywords" />
+                  <MetricCard icon={BarChart2}  label="Avg. Position"    value={avgPos}                          color="#7c3aed" />
+                  <MetricCard icon={Globe}      label="Report Date"      value={reportDate}                      color="#0284c7" sub={selectedProject} />
                   <MetricCard icon={Link}       label="Keywords w/ Traffic" value={rankTracker.filter(k => (k.traffic || 0) > 0).length.toLocaleString()} color="#E20071" />
                 </div>
                 <div className="glass-panel">
@@ -650,11 +650,11 @@ export default function GscDashboard() {
                             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openKwHistory(row); } }}
                             onMouseEnter={e => e.currentTarget.style.background = 'rgba(226,0,113,0.08)'}
                             onMouseLeave={e => e.currentTarget.style.background = ''}>
-                            <td><span style={{ fontWeight: 700, color: row.position <= 3 ? '#4ade80' : row.position <= 10 ? '#f59e0b' : 'var(--text-muted)' }}>#{row.position}</span></td>
+                            <td><span style={{ fontWeight: 700, color: row.position <= 3 ? '#15803d' : row.position <= 10 ? '#b45309' : 'var(--text-muted)' }}>#{row.position}</span></td>
                             <td style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.keyword}</td>
                             <td>{(row.volume || 0).toLocaleString()}</td>
                             <td>{(row.traffic || 0).toLocaleString()}</td>
-                            <td><span style={{ padding: '2px 8px', borderRadius: 4, fontSize: '0.75rem', background: row.keyword_difficulty >= 70 ? 'rgba(248,113,113,0.2)' : row.keyword_difficulty >= 40 ? 'rgba(245,158,11,0.2)' : 'rgba(74,222,128,0.2)', color: row.keyword_difficulty >= 70 ? '#f87171' : row.keyword_difficulty >= 40 ? '#f59e0b' : '#4ade80' }}>{row.keyword_difficulty}</span></td>
+                            <td><span style={{ padding: '2px 8px', borderRadius: 4, fontSize: '0.75rem', background: row.keyword_difficulty >= 70 ? 'rgba(248,113,113,0.2)' : row.keyword_difficulty >= 40 ? 'rgba(245,158,11,0.2)' : 'rgba(74,222,128,0.2)', color: row.keyword_difficulty >= 70 ? '#dc2626' : row.keyword_difficulty >= 40 ? '#b45309' : '#15803d' }}>{row.keyword_difficulty}</span></td>
                           </tr>
                         ))}
                       </tbody>
@@ -686,7 +686,7 @@ export default function GscDashboard() {
                         onMouseEnter={e => e.currentTarget.style.background = 'rgba(226,0,113,0.08)'}
                         onMouseLeave={e => e.currentTarget.style.background = ''}>
                         <td>
-                          <span style={{ fontWeight: 700, color: row.position <= 3 ? '#4ade80' : row.position <= 10 ? '#f59e0b' : 'var(--text-muted)' }}>
+                          <span style={{ fontWeight: 700, color: row.position <= 3 ? '#15803d' : row.position <= 10 ? '#b45309' : 'var(--text-muted)' }}>
                             #{row.position}
                           </span>
                         </td>
@@ -695,7 +695,7 @@ export default function GscDashboard() {
                         <td>
                           <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: '0.75rem',
                             background: row.keyword_difficulty >= 70 ? 'rgba(248,113,113,0.2)' : row.keyword_difficulty >= 40 ? 'rgba(245,158,11,0.2)' : 'rgba(74,222,128,0.2)',
-                            color: row.keyword_difficulty >= 70 ? '#f87171' : row.keyword_difficulty >= 40 ? '#f59e0b' : '#4ade80' }}>
+                            color: row.keyword_difficulty >= 70 ? '#dc2626' : row.keyword_difficulty >= 40 ? '#b45309' : '#15803d' }}>
                             {row.keyword_difficulty}
                           </span>
                         </td>
@@ -727,7 +727,7 @@ export default function GscDashboard() {
                         <td>
                           <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: '0.75rem',
                             background: row.difficulty >= 70 ? 'rgba(248,113,113,0.2)' : row.difficulty >= 40 ? 'rgba(245,158,11,0.2)' : 'rgba(74,222,128,0.2)',
-                            color: row.difficulty >= 70 ? '#f87171' : row.difficulty >= 40 ? '#f59e0b' : '#4ade80' }}>
+                            color: row.difficulty >= 70 ? '#dc2626' : row.difficulty >= 40 ? '#b45309' : '#15803d' }}>
                             {row.difficulty}
                           </span>
                         </td>
@@ -882,25 +882,25 @@ export default function GscDashboard() {
                       return (
                         <div key={i} style={{
                           display: 'flex', gap: 14, padding: '14px 16px', borderRadius: 10,
-                          background: isTarget ? 'rgba(226,0,113,0.1)' : 'rgba(255,255,255,0.03)',
-                          border: isTarget ? '1px solid rgba(226,0,113,0.4)' : '1px solid rgba(255,255,255,0.07)',
+                          background: isTarget ? 'rgba(226,0,113,0.1)' : 'rgb(var(--ink) / 0.03)',
+                          border: isTarget ? '1px solid rgba(226,0,113,0.4)' : '1px solid rgb(var(--ink) / 0.07)',
                           transition: 'background 0.2s',
                         }}
-                          onMouseEnter={e => { if (!isTarget) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
-                          onMouseLeave={e => { if (!isTarget) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                          onMouseEnter={e => { if (!isTarget) e.currentTarget.style.background = 'rgb(var(--ink) / 0.05)'; }}
+                          onMouseLeave={e => { if (!isTarget) e.currentTarget.style.background = 'rgb(var(--ink) / 0.03)'; }}
                         >
-                          <div style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1rem', background: i < 3 ? 'rgba(226,0,113,0.2)' : 'rgba(255,255,255,0.06)', color: i < 3 ? 'var(--primary)' : 'var(--text-muted)' }}>
+                          <div style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1rem', background: i < 3 ? 'rgba(226,0,113,0.2)' : 'rgb(var(--ink) / 0.06)', color: i < 3 ? 'var(--primary)' : 'var(--text-muted)' }}>
                             {i + 1}
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div className="flex items-center gap-2 mb-1">
                               <span style={{ fontWeight: 600, fontSize: '0.92rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{row.title}</span>
                               {isTarget && (
-                                <span style={{ flexShrink: 0, fontSize: '0.7rem', padding: '2px 8px', borderRadius: 4, background: 'var(--primary)', color: 'white', fontWeight: 700 }}>YOUR PAGE</span>
+                                <span style={{ flexShrink: 0, fontSize: '0.7rem', padding: '2px 8px', borderRadius: 4, background: 'var(--primary)', color: 'var(--on-primary)', fontWeight: 700 }}>YOUR PAGE</span>
                               )}
                             </div>
                             <a href={row.link} target="_blank" rel="noopener noreferrer"
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.78rem', color: '#4ade80', marginBottom: 6, textDecoration: 'none' }}>
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.78rem', color: '#15803d', marginBottom: 6, textDecoration: 'none' }}>
                               {hostname} <ExternalLink size={10} />
                             </a>
                             <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>{row.snippet}</p>
@@ -929,9 +929,9 @@ export default function GscDashboard() {
       {/* ════════ Keyword History Modal ════════ */}
       {kwModal && (
         <div onClick={() => setKwModal(null)} aria-hidden="true"
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          style={{ position: 'fixed', inset: 0, background: 'rgb(var(--ink) / 0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
           <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true"
-            style={{ background: 'var(--bg-card)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 820, maxHeight: '90vh', overflowY: 'auto' }}>
+            style={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 820, maxHeight: '90vh', overflowY: 'auto' }}>
 
             {/* Header */}
             <div className="flex justify-between items-start mb-4">
@@ -947,10 +947,10 @@ export default function GscDashboard() {
             {/* Quick stats */}
             <div className="grid grid-cols-4 gap-3 mb-5">
               {[
-                { label: 'Current Position', value: `#${kwModal.currentPos}`, color: kwModal.currentPos <= 3 ? '#4ade80' : kwModal.currentPos <= 10 ? '#f59e0b' : 'var(--text-muted)' },
-                { label: 'Best (30d)', value: kwHistory.length > 0 ? `#${Math.min(...kwHistory.map(d => d.position))}` : '—', color: '#4ade80' },
-                { label: 'Search Volume', value: (kwModal.volume || 0).toLocaleString(), color: '#00f2fe' },
-                { label: 'Difficulty', value: kwModal.difficulty, color: kwModal.difficulty >= 70 ? '#f87171' : kwModal.difficulty >= 40 ? '#f59e0b' : '#4ade80' },
+                { label: 'Current Position', value: `#${kwModal.currentPos}`, color: kwModal.currentPos <= 3 ? '#15803d' : kwModal.currentPos <= 10 ? '#b45309' : 'var(--text-muted)' },
+                { label: 'Best (30d)', value: kwHistory.length > 0 ? `#${Math.min(...kwHistory.map(d => d.position))}` : '—', color: '#15803d' },
+                { label: 'Search Volume', value: (kwModal.volume || 0).toLocaleString(), color: '#0891b2' },
+                { label: 'Difficulty', value: kwModal.difficulty, color: kwModal.difficulty >= 70 ? '#dc2626' : kwModal.difficulty >= 40 ? '#b45309' : '#15803d' },
               ].map(({ label, value, color }) => (
                 <div key={label} className="glass-panel interactive" style={{ padding: '12px 14px' }}>
                   <div className="metric-label" style={{ fontSize: '0.72rem' }}>{label}</div>
@@ -960,7 +960,7 @@ export default function GscDashboard() {
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-3 mb-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 12 }}>
+            <div className="flex gap-3 mb-5" style={{ borderBottom: '1px solid rgb(var(--ink) / 0.1)', paddingBottom: 12 }}>
               {[{ id: 'history', label: 'Position History', icon: TrendingUp }, { id: 'serp', label: 'SERP Snapshot', icon: Search }]
                 .map(({ id, label, icon: Icon }) => (
                   <button key={id} className={`nav-item ${kwModalTab === id ? 'active' : ''}`}
@@ -979,7 +979,7 @@ export default function GscDashboard() {
                   const last  = kwHistory[kwHistory.length - 1].position;
                   const delta = first - last;
                   const TrendIcon = delta > 0 ? ArrowUp : delta < 0 ? ArrowDown : Minus;
-                  const trendColor = delta > 0 ? '#4ade80' : delta < 0 ? '#f87171' : 'var(--text-muted)';
+                  const trendColor = delta > 0 ? '#15803d' : delta < 0 ? '#dc2626' : 'var(--text-muted)';
                   const trendLabel = delta > 0 ? `+${delta} positions gained` : delta < 0 ? `${Math.abs(delta)} positions lost` : 'No change';
                   return (
                     <div className="flex items-center gap-2 mb-4" style={{ fontSize: '0.85rem', color: trendColor }}>
@@ -999,17 +999,17 @@ export default function GscDashboard() {
                   <div style={{ height: 260 }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={kwHistory} margin={{ top: 10, right: 30, left: 0, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e4e7ee" />
                         <XAxis dataKey="date" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickFormatter={d => d.slice(5)} />
                         <YAxis reversed tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickFormatter={v => `#${v}`}
                           domain={['dataMin - 1', 'dataMax + 1']} allowDecimals={false} />
-                        <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
+                        <Tooltip contentStyle={{ background: 'var(--surface)', color: 'var(--text-strong)', border: '1px solid rgb(var(--ink) / 0.1)', boxShadow: 'var(--shadow-lg)', borderRadius: 8 }}
                           labelStyle={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}
                           formatter={v => [`#${v}`, 'Position']} labelFormatter={l => `Date: ${l}`} />
                         <ReferenceLine y={10} stroke="rgba(245,158,11,0.4)" strokeDasharray="4 4" label={{ value: 'Top 10', fill: 'rgba(245,158,11,0.6)', fontSize: 10, position: 'right' }} />
                         <ReferenceLine y={3}  stroke="rgba(74,222,128,0.4)" strokeDasharray="4 4" label={{ value: 'Top 3',  fill: 'rgba(74,222,128,0.6)',  fontSize: 10, position: 'right' }} />
                         <Line type="monotone" dataKey="position" stroke="var(--primary)" strokeWidth={2}
-                          dot={{ fill: 'var(--primary)', r: 4, strokeWidth: 0 }} activeDot={{ r: 6, fill: 'white' }} />
+                          dot={{ fill: 'var(--primary)', r: 4, strokeWidth: 0 }} activeDot={{ r: 6, fill: '#fff', stroke: '#E20071', strokeWidth: 2 }} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -1037,11 +1037,11 @@ export default function GscDashboard() {
                     {serpData.map((r) => (
                       <div key={r.position}
                         style={{ display: 'flex', gap: 12, padding: '10px 14px', borderRadius: 8,
-                          background: r.is_tracked ? 'rgba(226,0,113,0.1)' : 'rgba(255,255,255,0.03)',
-                          border: r.is_tracked ? '1px solid rgba(226,0,113,0.35)' : '1px solid rgba(255,255,255,0.06)' }}>
+                          background: r.is_tracked ? 'rgba(226,0,113,0.1)' : 'rgb(var(--ink) / 0.03)',
+                          border: r.is_tracked ? '1px solid rgba(226,0,113,0.35)' : '1px solid rgb(var(--ink) / 0.06)' }}>
                         <div style={{ flexShrink: 0, width: 32, textAlign: 'center', paddingTop: 2 }}>
                           <span style={{ fontWeight: 700, fontSize: '1rem',
-                            color: r.position <= 3 ? '#4ade80' : r.position <= 10 ? '#f59e0b' : 'var(--text-muted)' }}>
+                            color: r.position <= 3 ? '#15803d' : r.position <= 10 ? '#b45309' : 'var(--text-muted)' }}>
                             #{r.position}
                           </span>
                         </div>
@@ -1049,12 +1049,12 @@ export default function GscDashboard() {
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
                             <span style={{ fontWeight: 600, fontSize: '0.88rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</span>
                             {r.is_tracked && (
-                              <span style={{ flexShrink: 0, fontSize: '0.7rem', padding: '1px 7px', borderRadius: 4, background: 'var(--primary)', color: 'white' }}>
+                              <span style={{ flexShrink: 0, fontSize: '0.7rem', padding: '1px 7px', borderRadius: 4, background: 'var(--primary)', color: 'var(--on-primary)' }}>
                                 {r.tracked_site_id}
                               </span>
                             )}
                           </div>
-                          <div style={{ fontSize: '0.73rem', color: '#4ade80', marginBottom: 3 }}>{r.displayed_link}</div>
+                          <div style={{ fontSize: '0.73rem', color: '#15803d', marginBottom: 3 }}>{r.displayed_link}</div>
                           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>{r.snippet}</div>
                         </div>
                       </div>
@@ -1066,7 +1066,7 @@ export default function GscDashboard() {
                         People Also Ask ({serpPaa.length})
                       </div>
                       {serpPaa.map((q, i) => (
-                        <div key={i} style={{ padding: '8px 12px', marginBottom: 4, borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', fontSize: '0.82rem' }}>
+                        <div key={i} style={{ padding: '8px 12px', marginBottom: 4, borderRadius: 6, background: 'rgb(var(--ink) / 0.03)', border: '1px solid rgb(var(--ink) / 0.06)', fontSize: '0.82rem' }}>
                           <div style={{ fontWeight: 600, marginBottom: 2 }}>{q.question}</div>
                           <div style={{ color: 'var(--text-muted)', fontSize: '0.77rem' }}>{q.snippet}</div>
                         </div>
