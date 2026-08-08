@@ -1,7 +1,11 @@
-import { useState, useEffect } from 'react';
-import { CalendarClock, RefreshCw, Download, ExternalLink, AlertTriangle, CheckCircle, HelpCircle } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  CalendarClock, RefreshCw, Download, ExternalLink, AlertTriangle, CheckCircle,
+  HelpCircle, ChevronLeft, Search, Globe, Clock,
+} from 'lucide-react';
 
 const token = () => localStorage.getItem('auth_token');
+const authHeaders = () => ({ Authorization: `Bearer ${token()}` });
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -19,18 +23,375 @@ function ageLabel(days) {
   return `${days} days`;
 }
 
-function StatCard({ label, value, color }) {
+function timeAgo(iso) {
+  if (!iso) return 'Never checked';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return 'Never checked';
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url || ''; }
+}
+
+function StatCard({ label, value, color, hint }) {
   return (
     <div className="glass-panel" style={{ padding: '14px 18px', flex: 1, minWidth: 130 }}>
       <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
       <div style={{ fontWeight: 800, fontSize: '1.5rem', lineHeight: 1, color: color || 'var(--text-strong)', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+      {hint && <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', marginTop: 5 }}>{hint}</div>}
     </div>
   );
 }
 
-export default function ContentFreshness() {
+/* Proportional fresh / stale / unknown bar — the at-a-glance shape of a property. */
+function FreshnessBar({ fresh, stale, unknown }) {
+  const total = (fresh || 0) + (stale || 0) + (unknown || 0);
+  if (!total) return <div style={{ height: 6, borderRadius: 3, background: 'rgb(var(--ink) / 0.08)' }} />;
+  const seg = (n, color, label) => n > 0 && (
+    <div title={`${label}: ${n.toLocaleString()}`} style={{ width: `${(n / total) * 100}%`, background: color }} />
+  );
+  return (
+    <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', background: 'rgb(var(--ink) / 0.08)' }}>
+      {seg(fresh, '#15803d', 'Fresh')}
+      {seg(stale, '#dc2626', 'Stale')}
+      {seg(unknown, '#b45309', 'No date found')}
+    </div>
+  );
+}
+
+function StatusBadge({ row }) {
+  if (row.age_days == null) {
+    return <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><HelpCircle size={11} aria-hidden="true" /> Unknown</span>;
+  }
+  if (row.flagged) {
+    return <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={11} aria-hidden="true" /> Stale</span>;
+  }
+  return <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><CheckCircle size={11} aria-hidden="true" /> Fresh</span>;
+}
+
+function toCsv(rows) {
+  const head = ['URL', 'Last updated', 'Age (days)', 'Source', 'Google last crawl', 'Google crawl age (days)', 'Status'];
+  const body = rows.map(r => [
+    r.url, r.last_modified || '', r.age_days ?? '', r.source || '',
+    r.gsc_last_crawl || '', r.gsc_crawl_age_days ?? '',
+    r.age_days == null ? 'Unknown' : r.flagged ? 'Stale' : 'Fresh',
+  ]);
+  return [head, ...body].map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+}
+
+function download(name, csv) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+const softBtn = {
+  background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)',
+  color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 8, cursor: 'pointer',
+  fontSize: '0.8rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6,
+};
+
+/* ── Properties dashboard ──────────────────────────────────────────────────── */
+
+function ProjectCard({ p, onOpen, onRecheck, busy }) {
+  const staleColor = p.stale_count > 0 ? '#dc2626' : '#15803d';
+  return (
+    <div className="glass-panel interactive" onClick={() => onOpen(p.site)} role="button" tabIndex={0}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(p.site); } }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+
+      <div className="flex items-center justify-between" style={{ gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-strong)' }} className="truncate">{p.site}</div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+            <Globe size={10} aria-hidden="true" /> <span className="truncate">{hostOf(p.sitemap_url)}</span>
+          </div>
+        </div>
+        <span className={`badge ${p.stale_count > 0 ? 'badge-danger' : p.last_run ? 'badge-success' : 'badge-neutral'}`}>
+          {p.last_run ? (p.stale_count > 0 ? `${p.stale_count} stale` : 'All fresh') : 'Never checked'}
+        </span>
+      </div>
+
+      <FreshnessBar fresh={p.fresh_count} stale={p.stale_count} unknown={p.unknown_count} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+        {[
+          ['Fresh', p.fresh_pct == null ? '—' : `${p.fresh_pct}%`, p.fresh_pct == null ? 'var(--text-dim)' : '#15803d'],
+          ['Stale', (p.stale_count || 0).toLocaleString(), staleColor],
+          ['Checked', (p.checked || 0).toLocaleString(), 'var(--text-strong)'],
+        ].map(([label, value, color]) => (
+          <div key={label}>
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</div>
+            <div style={{ fontWeight: 700, fontSize: '1.05rem', color, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-between" style={{ gap: 8, fontSize: '0.68rem', color: 'var(--text-dim)' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <Clock size={10} aria-hidden="true" /> {timeAgo(p.last_run)}
+          {p.unknown_count > 0 && <> · {p.unknown_count} no date</>}
+          {p.oldest_age_days != null && <> · oldest {p.oldest_age_days}d</>}
+        </span>
+        <button type="button" style={{ ...softBtn, padding: '4px 9px', fontSize: '0.7rem' }} disabled={busy}
+          onClick={e => { e.stopPropagation(); onRecheck(p.site); }}
+          aria-label={`Re-check ${p.site}`}>
+          {busy ? <><span className="loader" style={{ width: 10, height: 10, borderWidth: 2 }} /> Checking…</> : <><RefreshCw size={11} aria-hidden="true" /> Re-check</>}
+        </button>
+      </div>
+
+      {p.error && (
+        <div style={{ fontSize: '0.68rem', color: 'var(--danger)' }} title={p.error}>
+          Last sweep failed: <span className="truncate">{p.error}</span>
+        </div>
+      )}
+      {p.capped && (
+        <div style={{ fontSize: '0.66rem', color: 'var(--text-dim)' }}>
+          Capped at {(p.checked || 0).toLocaleString()} of {(p.total_urls || 0).toLocaleString()} matching URLs.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Dashboard({ data, loading, error, onOpen, onRecheck, busySite, onRefresh }) {
+  const t = data?.totals;
+  return (
+    <div className="flex-col gap-6">
+      <div className="flex gap-3" style={{ flexWrap: 'wrap' }}>
+        <StatCard label="Properties" value={t?.properties ?? '—'}
+          hint={t?.never_checked ? `${t.never_checked} never checked` : null} />
+        <StatCard label="Pages checked" value={(t?.checked ?? 0).toLocaleString()} />
+        <StatCard label="Stale" value={(t?.stale_count ?? 0).toLocaleString()} color={t?.stale_count ? '#dc2626' : '#15803d'} />
+        <StatCard label="Fresh" value={t?.fresh_pct == null ? '—' : `${t.fresh_pct}%`} color="#15803d"
+          hint="Of pages with a known date" />
+        {t?.unknown_count > 0 && <StatCard label="No date found" value={t.unknown_count.toLocaleString()} color="#b45309" />}
+      </div>
+
+      {error && <div className="banner banner-error" role="alert">{error}</div>}
+
+      <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: 10 }}>
+        <h3 style={{ fontSize: '1rem', margin: 0 }}>Properties</h3>
+        <button type="button" style={softBtn} onClick={onRefresh} disabled={loading}>
+          <RefreshCw size={13} aria-hidden="true" /> Refresh
+        </button>
+      </div>
+
+      {loading && !data ? (
+        <div className="card-grid">
+          {[0, 1, 2, 3].map(i => <div key={i} className="skeleton" style={{ height: 168 }} />)}
+        </div>
+      ) : !data?.projects?.length ? (
+        <div className="glass-panel">
+          <div className="empty-state">
+            <CalendarClock size={28} className="empty-icon" aria-hidden="true" />
+            <div className="empty-title">No properties configured</div>
+            <div className="empty-hint">
+              Properties come from the <code>FRESHNESS_SITES</code> environment variable (a JSON list of
+              <code>{' {name, sitemap_url, threshold_days, limit, include, exclude} '}</code>), falling back to the
+              built-in defaults.
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="card-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))' }}>
+          {data.projects.map(p => (
+            <ProjectCard key={p.site} p={p} onOpen={onOpen} onRecheck={onRecheck} busy={busySite === p.site} />
+          ))}
+        </div>
+      )}
+
+      {data?.db_error && (
+        <div className="banner banner-warning" role="note">
+          Couldn’t read the freshness store: {data.db_error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Single property: every checked page ───────────────────────────────────── */
+
+function ProjectDetail({ site, project, onBack, onRecheck, busy, reloadKey }) {
+  const [rows, setRows] = useState([]);
+  const [meta, setMeta] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
+  const [onlyStale, setOnlyStale] = useState(false);
+  const debounce = useRef(null);
+
+  const load = useCallback(async (q, staleOnly) => {
+    setLoading(true); setError('');
+    try {
+      const params = new URLSearchParams({ site });
+      if (q) params.set('q', q);
+      if (staleOnly) params.set('stale_only', 'true');
+      const res = await fetch(`/api/freshness/pages?${params}`, { headers: authHeaders() });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Could not load pages');
+      setRows(d.rows || []);
+      setMeta(d);
+    } catch (e) {
+      setError(e.message || String(e));
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [site]);
+
+  // Debounced so typing in the URL filter doesn't fire a request per keystroke.
+  useEffect(() => {
+    clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => load(query, onlyStale), query ? 260 : 0);
+    return () => clearTimeout(debounce.current);
+  }, [query, onlyStale, load, reloadKey]);
+
+  const run = meta?.run;
+  const threshold = run?.threshold_days ?? project?.threshold_days ?? 4;
+
+  return (
+    <div className="flex-col gap-6">
+      <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: 10 }}>
+        <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
+          <button type="button" onClick={onBack} style={softBtn} aria-label="Back to properties">
+            <ChevronLeft size={14} aria-hidden="true" /> Properties
+          </button>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-strong)' }} className="truncate">{site}</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+              Stale after {threshold}d · swept {timeAgo(run?.ran_at || project?.last_run)}
+              {project?.sitemap_url && <> · {hostOf(project.sitemap_url)}</>}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" style={softBtn} disabled={busy} onClick={() => onRecheck(site)}>
+            {busy ? <><span className="loader" style={{ width: 11, height: 11, borderWidth: 2 }} /> Checking…</> : <><RefreshCw size={13} aria-hidden="true" /> Re-check</>}
+          </button>
+          <button type="button" style={softBtn} disabled={!rows.length}
+            onClick={() => download(`freshness-${site.replace(/\W+/g, '-').toLowerCase()}.csv`, toCsv(rows))}>
+            <Download size={13} aria-hidden="true" /> CSV
+          </button>
+        </div>
+      </div>
+
+      <div className="flex gap-3" style={{ flexWrap: 'wrap' }}>
+        <StatCard label={`Stale (>${threshold}d)`} value={(run?.stale_count ?? 0).toLocaleString()} color="#dc2626" />
+        <StatCard label="Fresh" value={(run?.fresh_count ?? 0).toLocaleString()} color="#15803d" />
+        {(run?.unknown_count ?? 0) > 0 && <StatCard label="No date found" value={run.unknown_count.toLocaleString()} color="#b45309" />}
+        <StatCard label="Pages checked" value={(run?.checked ?? meta?.total ?? 0).toLocaleString()} />
+        {project?.oldest_age_days != null && <StatCard label="Oldest page" value={`${project.oldest_age_days}d`} color="#b45309" />}
+      </div>
+
+      {run?.error && <div className="banner banner-error" role="alert">Last sweep failed: {run.error}</div>}
+
+      <div className="glass-panel">
+        <div className="flex items-center justify-between mb-4" style={{ flexWrap: 'wrap', gap: 10 }}>
+          <h3 style={{ fontSize: '1rem', margin: 0 }}>
+            {onlyStale ? 'Stale pages' : 'All checked pages'}
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontWeight: 400, marginLeft: 8 }}>
+              {loading ? 'loading…' : `${rows.length.toLocaleString()} shown${meta && rows.length < meta.total ? ` of ${meta.total.toLocaleString()}` : ''}`}
+            </span>
+          </h3>
+          <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative' }}>
+              <Search size={13} aria-hidden="true" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
+              <input className="glass-input" value={query} onChange={e => setQuery(e.target.value)}
+                placeholder="Filter by URL…" aria-label="Filter by URL"
+                style={{ padding: '6px 12px 6px 30px', fontSize: '0.8rem', width: 230 }} />
+            </div>
+            <button type="button" onClick={() => setOnlyStale(v => !v)} aria-pressed={onlyStale}
+              style={onlyStale
+                ? { ...softBtn, background: 'rgba(226,0,113,0.08)', borderColor: 'rgba(226,0,113,0.45)', color: 'var(--primary)' }
+                : softBtn}>
+              {onlyStale ? 'Showing stale only' : 'Show stale only'}
+            </button>
+          </div>
+        </div>
+
+        {error && <div className="banner banner-error mb-4" role="alert">{error}</div>}
+
+        {loading ? (
+          <div className="flex-col gap-2">
+            {[0, 1, 2, 3, 4].map(i => <div key={i} className="skeleton" style={{ height: 34 }} />)}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="empty-state">
+            <CheckCircle size={28} color="#15803d" aria-hidden="true" />
+            <div className="empty-title" style={{ marginTop: 8 }}>
+              {query ? 'No pages match that URL filter'
+                : onlyStale ? `Nothing stale — every checked page was updated within ${threshold} days`
+                : run ? 'No pages stored for this property yet'
+                : 'This property hasn’t been checked yet'}
+            </div>
+            {!run && <div className="empty-hint">Run “Re-check” to sweep its sitemap now, or wait for the nightly cron.</div>}
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="data-table" style={{ width: '100%' }}>
+              <thead>
+                <tr>
+                  <th>Page</th>
+                  <th>Last updated</th>
+                  <th style={{ textAlign: 'right' }}>Age</th>
+                  <th title="The last time Google crawled this page (GSC URL inspection)">Google last crawl</th>
+                  <th>Source</th>
+                  <th style={{ textAlign: 'center' }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={r.url + i}>
+                    <td style={{ maxWidth: 420 }}>
+                      <a href={r.url} target="_blank" rel="noopener noreferrer" title={r.url}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-main)', textDecoration: 'none' }}>
+                        <span className="truncate">{r.url}</span>
+                        <ExternalLink size={12} aria-hidden="true" style={{ flexShrink: 0, opacity: 0.5 }} />
+                      </a>
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.last_modified)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600, color: r.age_days == null ? '#b45309' : r.flagged ? '#dc2626' : '#15803d' }}>
+                      {ageLabel(r.age_days)}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {r.gsc_last_crawl
+                        ? <span>{fmtDate(r.gsc_last_crawl)} <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem' }}>({ageLabel(r.gsc_crawl_age_days)} ago)</span></span>
+                        : <span style={{ color: 'var(--text-dim)' }}>Not inspected</span>}
+                    </td>
+                    <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{r.source || (r.error ? `error: ${r.error}` : '—')}</td>
+                    <td style={{ textAlign: 'center' }}><StatusBadge row={r} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {meta?.truncated && (
+          <div className="banner banner-info mt-4" role="note">
+            Showing the first {rows.length.toLocaleString()} rows. Narrow the URL filter to see the rest.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Ad-hoc check (unchanged one-shot crawler, kept for sitemaps that aren't
+      configured properties) ─────────────────────────────────────────────────── */
+
+function AdHocCheck() {
   const [sites, setSites] = useState([]);
-  const [mode, setMode] = useState('site');            // 'site' | 'sitemap'
+  const [mode, setMode] = useState('site');
   const [siteSlug, setSiteSlug] = useState('');
   const [siteSearch, setSiteSearch] = useState('');
   const [sitemapUrl, setSitemapUrl] = useState('');
@@ -46,9 +407,10 @@ export default function ContentFreshness() {
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
   const [onlyStale, setOnlyStale] = useState(false);
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
-    fetch('/api/indexation/gsc-sites', { headers: { Authorization: `Bearer ${token()}` } })
+    fetch('/api/indexation/gsc-sites', { headers: authHeaders() })
       .then(r => r.json())
       .then(d => setSites(d.sites || []))
       .catch(() => {});
@@ -61,10 +423,7 @@ export default function ContentFreshness() {
   async function run() {
     setError(''); setResult(null); setLoading(true);
     try {
-      const body = {
-        threshold_days: Number(thresholdDays) || 4,
-        limit: Number(limit) || 80,
-      };
+      const body = { threshold_days: Number(thresholdDays) || 4, limit: Number(limit) || 80 };
       if (mode === 'site') {
         if (!siteSlug) { setError('Pick a site first.'); setLoading(false); return; }
         body.site_slug = siteSlug;
@@ -78,7 +437,7 @@ export default function ContentFreshness() {
 
       const res = await fetch('/api/freshness/check', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -91,56 +450,21 @@ export default function ContentFreshness() {
     }
   }
 
-  function exportCsv() {
-    if (!result) return;
-    const rows = [['URL', 'Last updated', 'Age (days)', 'Source', 'Google last crawl', 'Google crawl age (days)', 'Status']];
-    result.results.forEach(r => rows.push([
-      r.url,
-      r.last_modified || '',
-      r.age_days == null ? '' : r.age_days,
-      r.source || '',
-      r.gsc_last_crawl || '',
-      r.gsc_crawl_age_days == null ? '' : r.gsc_crawl_age_days,
-      r.flagged ? 'Stale' : 'Fresh',
-    ]));
-    const csv = rows.map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `content-freshness-${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-
-  const shown = result ? result.results.filter(r => !onlyStale || r.flagged) : [];
+  const shown = result
+    ? result.results.filter(r => (!onlyStale || r.flagged) && (!query || r.url.toLowerCase().includes(query.toLowerCase())))
+    : [];
 
   return (
     <div className="flex-col gap-6">
-      <div className="page-header">
-        <h1 className="flex items-center gap-2" style={{ fontSize: '1.35rem' }}>
-          <CalendarClock size={22} color="var(--primary)" aria-hidden="true" /> Content Freshness
-        </h1>
-        <p style={{ color: 'var(--text-muted)', marginTop: 4 }}>
-          Flags pages whose content hasn’t been updated recently, read from each page’s own last-updated signals —
-          schema <code>dateModified</code>, meta modified-time tags, then sitemap <code>lastmod</code>.
-        </p>
-      </div>
-
-      {/* Config */}
       <div className="glass-panel">
         <div className="flex gap-2 mb-4">
-          <button type="button" onClick={() => setMode('site')}
-            className={mode === 'site' ? 'btn-primary' : ''}
-            aria-pressed={mode === 'site'}
-            style={mode !== 'site' ? { background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' } : {}}>
-            GSC Site
-          </button>
-          <button type="button" onClick={() => setMode('sitemap')}
-            className={mode === 'sitemap' ? 'btn-primary' : ''}
-            aria-pressed={mode === 'sitemap'}
-            style={mode !== 'sitemap' ? { background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' } : {}}>
-            Sitemap URL
-          </button>
+          {['site', 'sitemap'].map(m => (
+            <button key={m} type="button" onClick={() => setMode(m)}
+              className={mode === m ? 'btn-primary' : ''} aria-pressed={mode === m}
+              style={mode !== m ? { ...softBtn, padding: '8px 16px', fontSize: '0.85rem' } : {}}>
+              {m === 'site' ? 'GSC Site' : 'Sitemap URL'}
+            </button>
+          ))}
         </div>
 
         <div className="grid grid-cols-3 gap-4 mb-4">
@@ -195,7 +519,8 @@ export default function ContentFreshness() {
         </div>
 
         <div className="mb-4">
-          <button type="button" className="flex items-center gap-2 text-sm mb-3" style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          <button type="button" className="flex items-center gap-2 text-sm mb-3"
+            style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
             onClick={() => setShowAuth(v => !v)} aria-expanded={showAuth}>
             <span aria-hidden="true">🔒</span> Authentication (optional, for protected sites) {showAuth ? '▲' : '▼'}
           </button>
@@ -249,13 +574,18 @@ export default function ContentFreshness() {
                   {shown.length} shown
                 </span>
               </h3>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setOnlyStale(v => !v)} aria-pressed={onlyStale}
-                  style={{ background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
+              <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
+                <div style={{ position: 'relative' }}>
+                  <Search size={13} aria-hidden="true" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
+                  <input className="glass-input" value={query} onChange={e => setQuery(e.target.value)}
+                    placeholder="Filter by URL…" aria-label="Filter by URL"
+                    style={{ padding: '6px 12px 6px 30px', fontSize: '0.8rem', width: 230 }} />
+                </div>
+                <button type="button" onClick={() => setOnlyStale(v => !v)} aria-pressed={onlyStale} style={softBtn}>
                   {onlyStale ? 'Show all' : 'Show stale only'}
                 </button>
-                <button type="button" onClick={exportCsv} aria-label="Export CSV"
-                  style={{ background: 'rgb(var(--ink) / 0.05)', border: '1px solid rgb(var(--ink) / 0.1)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <button type="button" onClick={() => download(`content-freshness-${Date.now()}.csv`, toCsv(result.results))}
+                  aria-label="Export CSV" style={softBtn}>
                   <Download size={13} aria-hidden="true" /> CSV
                 </button>
               </div>
@@ -264,7 +594,10 @@ export default function ContentFreshness() {
             {shown.length === 0 ? (
               <div className="empty-state">
                 <CheckCircle size={28} color="#15803d" aria-hidden="true" />
-                <div style={{ marginTop: 8 }}>Nothing stale — every checked page was updated within {result.threshold_days} days.</div>
+                <div style={{ marginTop: 8 }}>
+                  {query ? 'No pages match that URL filter.'
+                    : `Nothing stale — every checked page was updated within ${result.threshold_days} days.`}
+                </div>
               </div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
@@ -283,8 +616,7 @@ export default function ContentFreshness() {
                     {shown.map((r, i) => (
                       <tr key={r.url + i}>
                         <td style={{ maxWidth: 420 }}>
-                          <a href={r.url} target="_blank" rel="noopener noreferrer"
-                            className="truncate" title={r.url}
+                          <a href={r.url} target="_blank" rel="noopener noreferrer" title={r.url}
                             style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-main)', textDecoration: 'none' }}>
                             <span className="truncate">{r.url}</span>
                             <ExternalLink size={12} aria-hidden="true" style={{ flexShrink: 0, opacity: 0.5 }} />
@@ -295,37 +627,126 @@ export default function ContentFreshness() {
                           {ageLabel(r.age_days)}
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>
-                          {r.gsc_last_crawl ? (
-                            <span>{fmtDate(r.gsc_last_crawl)} <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem' }}>({ageLabel(r.gsc_crawl_age_days)} ago)</span></span>
-                          ) : (
-                            <span style={{ color: 'var(--text-dim)' }}>Not inspected</span>
-                          )}
+                          {r.gsc_last_crawl
+                            ? <span>{fmtDate(r.gsc_last_crawl)} <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem' }}>({ageLabel(r.gsc_crawl_age_days)} ago)</span></span>
+                            : <span style={{ color: 'var(--text-dim)' }}>Not inspected</span>}
                         </td>
                         <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{r.source || (r.error ? `error: ${r.error}` : '—')}</td>
-                        <td style={{ textAlign: 'center' }}>
-                          {r.age_days == null ? (
-                            <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><HelpCircle size={11} aria-hidden="true" /> Unknown</span>
-                          ) : r.flagged ? (
-                            <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={11} aria-hidden="true" /> Stale</span>
-                          ) : (
-                            <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><CheckCircle size={11} aria-hidden="true" /> Fresh</span>
-                          )}
-                        </td>
+                        <td style={{ textAlign: 'center' }}><StatusBadge row={r} /></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
-
-            <div className="banner banner-info mt-4" role="note">
-              “Last updated” is the freshest authoritative signal on each page, in priority order: schema <code>dateModified</code> →
-              meta <code>article:modified_time</code> → sitemap <code>lastmod</code> → HTTP <code>Last-Modified</code>. Pages with no
-              date signal are marked “Unknown”.
-            </div>
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/* ── Shell ─────────────────────────────────────────────────────────────────── */
+
+async function fetchProjects() {
+  const res = await fetch('/api/freshness/projects', { headers: authHeaders() });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.detail || 'Could not load properties');
+  return d;
+}
+
+export default function ContentFreshness() {
+  const [tab, setTab] = useState('properties');   // 'properties' | 'adhoc'
+  const [selected, setSelected] = useState(null); // property name
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busySite, setBusySite] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // State is only touched from promise callbacks, never synchronously in the body,
+  // so the mount effect below doesn't trigger a cascading render. `loading` starts
+  // true for the mount case; refresh sets it at the call site.
+  const loadProjects = useCallback(() =>
+    fetchProjects()
+      .then(d => { setData(d); setError(''); })
+      .catch(e => setError(e.message || String(e)))
+      .finally(() => setLoading(false)),
+  []);
+
+  useEffect(() => { loadProjects(); }, [loadProjects]);
+
+  const recheck = useCallback(async (site) => {
+    setBusySite(site); setError('');
+    try {
+      const res = await fetch('/api/freshness/recheck', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ site }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Re-check failed');
+      setReloadKey(k => k + 1);
+      await loadProjects();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusySite('');
+    }
+  }, [loadProjects]);
+
+  const project = data?.projects?.find(p => p.site === selected) || null;
+
+  return (
+    <div className="flex-col gap-6">
+      <div className="page-header">
+        <div>
+          <h1 className="flex items-center gap-2" style={{ fontSize: '1.35rem' }}>
+            <CalendarClock size={22} color="var(--primary)" aria-hidden="true" /> Content Freshness
+          </h1>
+          <p style={{ color: 'var(--text-muted)', marginTop: 4 }}>
+            Flags pages whose content hasn’t been updated recently, read from each page’s own last-updated signals —
+            schema <code>dateModified</code>, meta modified-time tags, then sitemap <code>lastmod</code>.
+          </p>
+        </div>
+        {!selected && (
+          <div className="tab-group" role="tablist">
+            <button role="tab" aria-selected={tab === 'properties'} className={`tab-btn ${tab === 'properties' ? 'active' : ''}`}
+              onClick={() => setTab('properties')}>Properties</button>
+            <button role="tab" aria-selected={tab === 'adhoc'} className={`tab-btn ${tab === 'adhoc' ? 'active' : ''}`}
+              onClick={() => setTab('adhoc')}>Ad-hoc check</button>
+          </div>
+        )}
+      </div>
+
+      {tab === 'adhoc' ? (
+        <AdHocCheck />
+      ) : selected ? (
+        <ProjectDetail
+          site={selected}
+          project={project}
+          reloadKey={reloadKey}
+          busy={busySite === selected}
+          onRecheck={recheck}
+          onBack={() => setSelected(null)}
+        />
+      ) : (
+        <Dashboard
+          data={data}
+          loading={loading}
+          error={error}
+          busySite={busySite}
+          onOpen={setSelected}
+          onRecheck={recheck}
+          onRefresh={() => { setLoading(true); loadProjects(); }}
+        />
+      )}
+
+      <div className="banner banner-info" role="note">
+        “Last updated” is the freshest authoritative signal on each page, in priority order: schema <code>dateModified</code> →
+        meta <code>article:modified_time</code> → sitemap <code>lastmod</code> → HTTP <code>Last-Modified</code>. Pages with no
+        date signal are marked “Unknown” and excluded from the fresh percentage.
+      </div>
     </div>
   );
 }

@@ -358,6 +358,44 @@ def _ensure_schema():
                         PRIMARY KEY (site, url)
                     )
                 """)
+                # Full freshness snapshot: every page the last sweep checked, not just the
+                # stale ones. freshness_stale above is the alert's dedup memory and forgets
+                # pages once they go fresh again, so it can't back a "all checked pages" view.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS freshness_pages (
+                        site               TEXT NOT NULL,
+                        url                TEXT NOT NULL,
+                        last_modified      TEXT,
+                        age_days           INTEGER,
+                        source             TEXT,
+                        flagged            BOOLEAN DEFAULT FALSE,
+                        gsc_last_crawl     TEXT,
+                        gsc_crawl_age_days INTEGER,
+                        error              TEXT,
+                        checked_at         TIMESTAMPTZ DEFAULT NOW(),
+                        PRIMARY KEY (site, url)
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS freshness_pages_site_idx ON freshness_pages (site, flagged)
+                """)
+                # One row per property holding the last sweep's run metadata, so the
+                # dashboard can show coverage and staleness of the data itself.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS freshness_runs (
+                        site           TEXT PRIMARY KEY,
+                        threshold_days INTEGER,
+                        checked        INTEGER,
+                        stale_count    INTEGER,
+                        fresh_count    INTEGER,
+                        unknown_count  INTEGER,
+                        total_urls     INTEGER,
+                        sitemap_total  INTEGER,
+                        capped         BOOLEAN DEFAULT FALSE,
+                        error          TEXT,
+                        ran_at         TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS serp_cache_created_idx ON serp_cache (created_at)
                 """)
@@ -5539,6 +5577,71 @@ _FRESHNESS_SITES_DEFAULT = [
 ]
 
 
+def _freshness_sites(sites: list = None) -> list:
+    """The configured properties: FRESHNESS_SITES env (JSON) or the built-in default."""
+    if sites is not None:
+        return sites
+    raw = os.getenv("FRESHNESS_SITES")
+    try:
+        return _json_mod.loads(raw) if raw else _FRESHNESS_SITES_DEFAULT
+    except Exception:
+        return _FRESHNESS_SITES_DEFAULT
+
+
+def _freshness_store(site, out, threshold, error=None):
+    """Replace the stored snapshot for one property with this run's full result set.
+
+    Deletes-then-inserts inside one transaction so a property is never left holding a
+    mix of two sweeps. Best-effort: a DB outage must not fail the sweep or the alert."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                if out is not None:
+                    cur.execute("DELETE FROM freshness_pages WHERE site=%s", (site,))
+                    rows = [
+                        (site, r.get("url"), r.get("last_modified"), r.get("age_days"),
+                         r.get("source"), bool(r.get("flagged")), r.get("gsc_last_crawl"),
+                         r.get("gsc_crawl_age_days"), r.get("error"))
+                        for r in out.get("results", []) if r.get("url")
+                    ]
+                    if rows:
+                        psycopg2.extras.execute_values(
+                            cur,
+                            """INSERT INTO freshness_pages
+                               (site, url, last_modified, age_days, source, flagged,
+                                gsc_last_crawl, gsc_crawl_age_days, error, checked_at)
+                               VALUES %s
+                               ON CONFLICT (site, url) DO UPDATE SET
+                                 last_modified=EXCLUDED.last_modified, age_days=EXCLUDED.age_days,
+                                 source=EXCLUDED.source, flagged=EXCLUDED.flagged,
+                                 gsc_last_crawl=EXCLUDED.gsc_last_crawl,
+                                 gsc_crawl_age_days=EXCLUDED.gsc_crawl_age_days,
+                                 error=EXCLUDED.error, checked_at=NOW()""",
+                            rows,
+                            template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())",
+                        )
+                cur.execute(
+                    """INSERT INTO freshness_runs
+                       (site, threshold_days, checked, stale_count, fresh_count, unknown_count,
+                        total_urls, sitemap_total, capped, error, ran_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                       ON CONFLICT (site) DO UPDATE SET
+                         threshold_days=EXCLUDED.threshold_days, checked=EXCLUDED.checked,
+                         stale_count=EXCLUDED.stale_count, fresh_count=EXCLUDED.fresh_count,
+                         unknown_count=EXCLUDED.unknown_count, total_urls=EXCLUDED.total_urls,
+                         sitemap_total=EXCLUDED.sitemap_total, capped=EXCLUDED.capped,
+                         error=EXCLUDED.error, ran_at=NOW()""",
+                    (site, threshold,
+                     (out or {}).get("checked"), (out or {}).get("stale_count"),
+                     (out or {}).get("fresh_count"), (out or {}).get("unknown_count"),
+                     (out or {}).get("total_urls"), (out or {}).get("sitemap_total"),
+                     bool((out or {}).get("capped")), error),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+
 def _freshness_update_state(site, current):
     """Upsert the current stale set for a site and return the URLs that are NEWLY stale
     (present now, absent last run). Pages no longer stale are forgotten (self-healing).
@@ -5572,12 +5675,7 @@ def _check_freshness_all(sites: list = None) -> list:
     """Sweep each configured site's sitemap for stale content and push a Slack summary.
     Sites come from the FRESHNESS_SITES env (JSON list of {name, sitemap_url, threshold_days?,
     limit?, include?, exclude?}) or the built-in default. Best-effort per site."""
-    if sites is None:
-        raw = os.getenv("FRESHNESS_SITES")
-        try:
-            sites = _json_mod.loads(raw) if raw else _FRESHNESS_SITES_DEFAULT
-        except Exception:
-            sites = _FRESHNESS_SITES_DEFAULT
+    sites = _freshness_sites(sites)
 
     summary, alert_blocks = [], []
     for s in sites:
@@ -5591,8 +5689,13 @@ def _check_freshness_all(sites: list = None) -> list:
                 resolve_gsc=False,
             )
         except Exception as e:
+            # Record the failure against the property so the dashboard can show *why*
+            # its numbers are stale, rather than silently keeping the last good run.
+            _freshness_store(name, None, thr, error=str(e)[:200])
             summary.append({"site": name, "error": str(e)[:200]})
             continue
+
+        _freshness_store(name, out, thr)
 
         # Alert only on pages with a KNOWN age over the threshold (not "unknown date").
         stale = [r for r in out["results"] if r["age_days"] is not None and r["age_days"] > thr]
@@ -5622,6 +5725,159 @@ def _check_freshness_all(sites: list = None) -> list:
 def cron_freshness_check(authorization: str = Header(None)):
     _require_cron_auth(authorization)
     return {"results": _check_freshness_all()}
+
+
+# --- Content-freshness dashboard (reads the stored sweep) ----------------------
+
+@app.get("/api/freshness/projects")
+def freshness_projects(current_user=Depends(_decode_token)):
+    """Per-property freshness rollup for the dashboard.
+
+    Every configured property is returned even if it has never been swept, so a new
+    property shows up as "Never checked" instead of vanishing from the dashboard."""
+    configured = _freshness_sites()
+    runs, extra = {}, {}
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM freshness_runs")
+                runs = {r["site"]: dict(r) for r in cur.fetchall()}
+                # Age stats come from the page rows: the run row only holds counts.
+                cur.execute(
+                    """SELECT site,
+                              MAX(age_days) AS oldest_age_days,
+                              ROUND(AVG(age_days)) AS avg_age_days,
+                              COUNT(*) FILTER (WHERE flagged) AS flagged_rows,
+                              COUNT(*) AS rows_stored
+                         FROM freshness_pages GROUP BY site"""
+                )
+                extra = {r["site"]: dict(r) for r in cur.fetchall()}
+    except Exception as e:
+        return {"projects": [], "db_error": str(e)[:200]}
+
+    projects = []
+    for s in configured:
+        name = s.get("name") or s.get("sitemap_url") or "site"
+        run, ex = runs.get(name) or {}, extra.get(name) or {}
+        checked = run.get("checked") or 0
+        stale = run.get("stale_count") or 0
+        fresh = run.get("fresh_count") or 0
+        unknown = run.get("unknown_count") or 0
+        projects.append({
+            "site": name,
+            "sitemap_url": s.get("sitemap_url"),
+            "site_slug": s.get("site_slug"),
+            "threshold_days": run.get("threshold_days") or int(s.get("threshold_days", 4)),
+            "checked": checked,
+            "stale_count": stale,
+            "fresh_count": fresh,
+            "unknown_count": unknown,
+            # Share of pages with a KNOWN date that are within the threshold. Unknown-date
+            # pages are excluded from the denominator so they can't masquerade as fresh.
+            "fresh_pct": round(fresh / (checked - unknown) * 100, 1) if (checked - unknown) > 0 else None,
+            "oldest_age_days": ex.get("oldest_age_days"),
+            "avg_age_days": int(ex["avg_age_days"]) if ex.get("avg_age_days") is not None else None,
+            "rows_stored": ex.get("rows_stored") or 0,
+            "total_urls": run.get("total_urls"),
+            "sitemap_total": run.get("sitemap_total"),
+            "capped": bool(run.get("capped")),
+            "error": run.get("error"),
+            "last_run": run.get("ran_at").isoformat() if run.get("ran_at") else None,
+        })
+    projects.sort(key=lambda p: (-(p["stale_count"] or 0), p["site"].lower()))
+
+    tot_checked = sum(p["checked"] for p in projects)
+    tot_unknown = sum(p["unknown_count"] for p in projects)
+    tot_fresh = sum(p["fresh_count"] for p in projects)
+    return {
+        "projects": projects,
+        "totals": {
+            "properties": len(projects),
+            "checked": tot_checked,
+            "stale_count": sum(p["stale_count"] for p in projects),
+            "fresh_count": tot_fresh,
+            "unknown_count": tot_unknown,
+            "fresh_pct": round(tot_fresh / (tot_checked - tot_unknown) * 100, 1)
+                         if (tot_checked - tot_unknown) > 0 else None,
+            "never_checked": sum(1 for p in projects if not p["last_run"]),
+        },
+    }
+
+
+@app.get("/api/freshness/pages")
+def freshness_pages(site: str, q: str = None, stale_only: bool = False,
+                    limit: int = 2000, current_user=Depends(_decode_token)):
+    """Every page stored for one property, newest-stale first.
+
+    `q` filters on the URL (case-insensitive substring) and `stale_only` keeps only
+    flagged rows. Both are applied in SQL so a large property doesn't ship the whole
+    set to the browser just to filter it there."""
+    where, params = ["site=%s"], [site]
+    if stale_only:
+        where.append("flagged")
+    if q and q.strip():
+        where.append("url ILIKE %s")
+        params.append("%" + q.strip() + "%")
+    params.append(max(1, min(int(limit or 2000), 5000)))
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT url, last_modified, age_days, source, flagged, gsc_last_crawl, "
+                    "       gsc_crawl_age_days, error, checked_at "
+                    "  FROM freshness_pages WHERE " + " AND ".join(where) +
+                    # Unknown-date pages first, then oldest -> newest, mirroring _run_freshness.
+                    "  ORDER BY (age_days IS NOT NULL), age_days DESC NULLS FIRST, url LIMIT %s",
+                    params,
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+                cur.execute("SELECT COUNT(*) AS n FROM freshness_pages WHERE site=%s", (site,))
+                total = cur.fetchone()["n"]
+                cur.execute("SELECT * FROM freshness_runs WHERE site=%s", (site,))
+                run = cur.fetchone()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Freshness store unavailable: {e}")
+
+    for r in rows:
+        if r.get("checked_at"):
+            r["checked_at"] = r["checked_at"].isoformat()
+    run = dict(run) if run else None
+    if run and run.get("ran_at"):
+        run["ran_at"] = run["ran_at"].isoformat()
+    return {"site": site, "rows": rows, "returned": len(rows), "total": total,
+            "truncated": len(rows) >= params[-1], "run": run}
+
+
+class FreshnessRecheckRequest(BaseModel):
+    site: str
+
+
+@app.post("/api/freshness/recheck")
+def freshness_recheck(req: FreshnessRecheckRequest, current_user=Depends(_decode_token)):
+    """Re-sweep a single configured property on demand and persist the snapshot.
+
+    Runs the same code path as the daily cron (minus the Slack alert), so the dashboard
+    is usable before the first nightly run and after a config change."""
+    match = next((s for s in _freshness_sites()
+                  if (s.get("name") or s.get("sitemap_url")) == req.site), None)
+    if not match:
+        raise HTTPException(status_code=404, detail=f"'{req.site}' is not a configured freshness property.")
+    thr = int(match.get("threshold_days", 4))
+    try:
+        out = _run_freshness(
+            site_slug=match.get("site_slug"), sitemap_url=match.get("sitemap_url"),
+            threshold_days=thr, limit=int(match.get("limit", 200)),
+            include=match.get("include"), exclude=match.get("exclude"),
+            resolve_gsc=False,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        _freshness_store(req.site, None, thr, error=str(e)[:200])
+        raise HTTPException(status_code=502, detail=str(e)[:200])
+    _freshness_store(req.site, out, thr)
+    return {"site": req.site, "checked": out["checked"], "stale_count": out["stale_count"],
+            "fresh_count": out["fresh_count"], "unknown_count": out["unknown_count"]}
 
 
 @app.get("/api/indexation/alerts")
