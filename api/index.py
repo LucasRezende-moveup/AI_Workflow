@@ -5577,15 +5577,101 @@ _FRESHNESS_SITES_DEFAULT = [
 ]
 
 
-def _freshness_sites(sites: list = None) -> list:
-    """The configured properties: FRESHNESS_SITES env (JSON) or the built-in default."""
+# Discovery is N+1 upstream calls (one site list, one sitemap lookup per site), so the
+# result is cached per warm instance — the dashboard endpoint calls this on every load.
+_FRESHNESS_DISCOVERY_CACHE = {"at": 0.0, "sites": None}
+_FRESHNESS_SOURCE = {"value": "default"}
+_FRESHNESS_DISCOVERY_TTL = 600
+
+
+def _discover_freshness_sites() -> list:
+    """Build the property list from the SEO API instead of a hardcoded list.
+
+    Takes every GSC property from `dims/gsc-sites` and pairs it with its first sitemap
+    (`gsc/{slug}/sitemaps`), the same resolution `_run_freshness` does for a site_slug.
+    Carrying site_slug through matters: it lets the sweep pull Google's last-crawl map
+    for the whole site in one call, so the dashboard's "Google last crawl" column fills in.
+
+    Returns [] on any upstream failure so the caller can fall back rather than wiping
+    the property list because the SEO API had a bad minute."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    try:
+        rows = _seo_get("dims/gsc-sites") or []
+    except Exception:
+        return []
+    sites = [r for r in rows if isinstance(r, dict) and r.get("site_slug")]
+    if not sites:
+        return []
+
+    # Applied to every discovered property. Defaults to the exclusion the hardcoded list
+    # carried: dated match-prediction pages are tied to a past event and never updated,
+    # so they'd otherwise dominate the stale count on the betting sections.
+    default_exclude = os.getenv("FRESHNESS_EXCLUDE", "palpite") or None
+    default_limit = int(os.getenv("FRESHNESS_LIMIT", "200"))
+    default_threshold = int(os.getenv("FRESHNESS_THRESHOLD_DAYS", "4"))
+
+    def resolve(r):
+        slug = r["site_slug"]
+        try:
+            sms = _seo_get(f"gsc/{slug}/sitemaps") or []
+            paths = [s.get("path") for s in sms if isinstance(s, dict) and s.get("path")]
+        except Exception:
+            paths = []
+        if not paths:
+            return None          # no sitemap: nothing to sweep for this property
+        return {
+            "name": r.get("site") or slug,
+            "site_slug": slug,
+            "sitemap_url": paths[0],
+            "threshold_days": default_threshold,
+            "limit": default_limit,
+            "exclude": default_exclude,
+        }
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        resolved = [x for x in ex.map(resolve, sites) if x]
+    resolved.sort(key=lambda s: s["name"].lower())
+    return resolved
+
+
+def _freshness_sites(sites: list = None, use_cache: bool = True) -> list:
+    """The properties to sweep, in priority order:
+
+    1. FRESHNESS_SITES env — an explicit JSON list still wins, for per-site thresholds
+       and excludes that discovery can't infer.
+    2. Discovery from the SEO API.
+    3. The built-in default — last resort, so a SEO API outage degrades to the four
+       known properties rather than an empty dashboard.
+    """
     if sites is not None:
         return sites
     raw = os.getenv("FRESHNESS_SITES")
-    try:
-        return _json_mod.loads(raw) if raw else _FRESHNESS_SITES_DEFAULT
-    except Exception:
-        return _FRESHNESS_SITES_DEFAULT
+    if raw:
+        try:
+            parsed = _json_mod.loads(raw)
+            if parsed:
+                _FRESHNESS_SOURCE["value"] = "env"
+                return parsed
+        except Exception:
+            pass
+
+    now = time.monotonic()
+    cache = _FRESHNESS_DISCOVERY_CACHE
+    if use_cache and cache["sites"] and (now - cache["at"]) < _FRESHNESS_DISCOVERY_TTL:
+        _FRESHNESS_SOURCE["value"] = "discovered"
+        return cache["sites"]
+
+    found = _discover_freshness_sites()
+    if found:
+        cache["sites"], cache["at"] = found, now
+        _FRESHNESS_SOURCE["value"] = "discovered"
+        return found
+    if cache["sites"]:
+        _FRESHNESS_SOURCE["value"] = "discovered"
+        return cache["sites"]
+    _FRESHNESS_SOURCE["value"] = "default"
+    return _FRESHNESS_SITES_DEFAULT
 
 
 def _freshness_store(site, out, threshold, error=None):
@@ -5671,22 +5757,53 @@ def _freshness_update_state(site, current):
         return set(current.keys())
 
 
-def _check_freshness_all(sites: list = None) -> list:
-    """Sweep each configured site's sitemap for stale content and push a Slack summary.
-    Sites come from the FRESHNESS_SITES env (JSON list of {name, sitemap_url, threshold_days?,
-    limit?, include?, exclude?}) or the built-in default. Best-effort per site."""
-    sites = _freshness_sites(sites)
+def _freshness_sweep_order(sites: list) -> list:
+    """Least-recently-swept first, never-swept before that.
 
-    summary, alert_blocks = [], []
+    Discovery can return far more properties than one cron run can crawl, so the run
+    drains a rotating queue instead of always restarting at the same site - otherwise
+    the tail of the list would never be checked. Mirrors the rank-tracking cron."""
+    last = {}
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT site, ran_at FROM freshness_runs")
+                last = {r["site"]: r["ran_at"] for r in cur.fetchall()}
+    except Exception:
+        pass  # no history: original order, everything looks never-swept
+    _epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return sorted(sites, key=lambda s: last.get(s.get("name") or s.get("sitemap_url")) or _epoch)
+
+
+def _check_freshness_all(sites: list = None) -> list:
+    """Sweep configured sites' sitemaps for stale content and push a Slack summary.
+
+    Properties come from FRESHNESS_SITES, else SEO API discovery, else the built-in
+    default. Because discovery can yield many more properties than fit in one run, the
+    sweep is bounded by FRESHNESS_RUN_BUDGET_S and FRESHNESS_MAX_PER_RUN and works
+    through them least-recently-swept first, so coverage rotates across runs rather
+    than timing out the shared daily cron. Best-effort per site."""
+    sites = _freshness_sweep_order(_freshness_sites(sites))
+    budget_s = float(os.getenv("FRESHNESS_RUN_BUDGET_S", "120"))
+    max_per_run = int(os.getenv("FRESHNESS_MAX_PER_RUN", "12"))
+    started = time.monotonic()
+
+    summary, alert_blocks, skipped = [], [], []
     for s in sites:
         name = s.get("name") or s.get("sitemap_url") or "site"
         thr = int(s.get("threshold_days", 4))
+        if len(summary) >= max_per_run or (time.monotonic() - started) > budget_s:
+            skipped.append(name)
+            continue
         try:
             out = _run_freshness(
                 site_slug=s.get("site_slug"), sitemap_url=s.get("sitemap_url"),
                 threshold_days=thr, limit=int(s.get("limit", 200)),
                 include=s.get("include"), exclude=s.get("exclude"),
-                resolve_gsc=False,
+                # One upstream call per site fills Google's last-crawl map for every page
+                # at once. The expensive per-URL fallback stays off: _gsc_crawl_map returns
+                # {} rather than None on failure, so gsc_fallback never trips.
+                resolve_gsc=bool(s.get("site_slug")),
             )
         except Exception as e:
             # Record the failure against the property so the dashboard can show *why*
@@ -5718,6 +5835,10 @@ def _check_freshness_all(sites: list = None) -> list:
 
     if alert_blocks:
         _notify_slack("🕒 *Content freshness alert*\n\n" + "\n\n".join(alert_blocks))
+    if skipped:
+        # Never let a bounded run read as full coverage.
+        summary.append({"skipped": len(skipped), "skipped_sites": skipped[:20],
+                        "note": "deferred to the next run (budget/cap reached)"})
     return summary
 
 
@@ -5791,6 +5912,7 @@ def freshness_projects(current_user=Depends(_decode_token)):
     tot_fresh = sum(p["fresh_count"] for p in projects)
     return {
         "projects": projects,
+        "source": _FRESHNESS_SOURCE["value"],
         "totals": {
             "properties": len(projects),
             "checked": tot_checked,
@@ -5868,7 +5990,7 @@ def freshness_recheck(req: FreshnessRecheckRequest, current_user=Depends(_decode
             site_slug=match.get("site_slug"), sitemap_url=match.get("sitemap_url"),
             threshold_days=thr, limit=int(match.get("limit", 200)),
             include=match.get("include"), exclude=match.get("exclude"),
-            resolve_gsc=False,
+            resolve_gsc=bool(match.get("site_slug")),
         )
     except HTTPException:
         raise

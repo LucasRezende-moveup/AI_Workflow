@@ -99,6 +99,15 @@ const softBtn = {
   fontSize: '0.8rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6,
 };
 
+/* Where the property list came from. Discovery pairs every GSC property with its
+   first sitemap; an explicit FRESHNESS_SITES still wins, and the built-in list is the
+   fallback so a SEO API outage doesn't empty the dashboard. */
+const SOURCE_NOTE = {
+  discovered: 'Discovered from the SEO API (every GSC property with a sitemap).',
+  env: 'From the FRESHNESS_SITES environment variable.',
+  default: 'Built-in default list — SEO API discovery returned nothing.',
+};
+
 /* ── Properties dashboard ──────────────────────────────────────────────────── */
 
 function ProjectCard({ p, onOpen, onRecheck, busy }) {
@@ -179,7 +188,10 @@ function Dashboard({ data, loading, error, onOpen, onRecheck, busySite, onRefres
       {error && <div className="banner banner-error" role="alert">{error}</div>}
 
       <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: 10 }}>
-        <h3 style={{ fontSize: '1rem', margin: 0 }}>Properties</h3>
+        <div>
+          <h3 style={{ fontSize: '1rem', margin: 0 }}>Properties</h3>
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: 2 }}>{SOURCE_NOTE[data?.source] || ''}</div>
+        </div>
         <button type="button" style={softBtn} onClick={onRefresh} disabled={loading}>
           <RefreshCw size={13} aria-hidden="true" /> Refresh
         </button>
@@ -206,6 +218,14 @@ function Dashboard({ data, loading, error, onOpen, onRecheck, busySite, onRefres
           {data.projects.map(p => (
             <ProjectCard key={p.site} p={p} onOpen={onOpen} onRecheck={onRecheck} busy={busySite === p.site} />
           ))}
+        </div>
+      )}
+
+      {data?.projects?.length > 8 && (
+        <div className="banner banner-info" role="note">
+          The nightly sweep is time-boxed and works through properties least-recently-checked
+          first, so with {data.projects.length} properties it rotates across runs rather than
+          doing every one each night. Use <strong>Re-check</strong> on a card to refresh it now.
         </div>
       )}
 
