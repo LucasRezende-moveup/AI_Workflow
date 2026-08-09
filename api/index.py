@@ -5476,7 +5476,7 @@ class FreshnessRequest(BaseModel):
 
 def _run_freshness(site_slug=None, sitemap_url=None, urls=None, threshold_days=4,
                    limit=80, include=None, exclude=None, auth_user=None, auth_pass=None,
-                   resolve_gsc=True, prefix=None):
+                   resolve_gsc=True, prefix=None, exclude_prefixes=None):
     """Core freshness check shared by the API endpoint and the daily cron sweep.
     Raises HTTPException on bad input (the endpoint surfaces it; the cron catches it)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -5510,6 +5510,18 @@ def _run_freshness(site_slug=None, sitemap_url=None, urls=None, threshold_days=4
         if not targets:
             raise HTTPException(status_code=400,
                                 detail=f"No URLs under {prefix} (out of {sitemap_total} in the sitemap).")
+    # Carve out folders that are tracked as properties of their own, so a root property
+    # reports on its own content instead of restating its children.
+    if exclude_prefixes:
+        subs = [_norm_page(p) for p in exclude_prefixes if p]
+        targets = [(u, lm) for (u, lm) in targets
+                   if not any(_norm_page(u) == sp or _norm_page(u).startswith(sp + "/")
+                              for sp in subs)]
+        if not targets:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Every URL under {prefix} belongs to a sub-property "
+                       f"({len(subs)} carved out of {sitemap_total} sitemap URLs).")
     inc = [p.strip().lower() for p in (include or "").split(",") if p.strip()]
     exc = [p.strip().lower() for p in (exclude or "").split(",") if p.strip()]
     if inc:
@@ -5624,11 +5636,25 @@ def _property_name(url: str) -> str:
     return re.sub(r"^https?://", "", (url or "").strip()).rstrip("/") or url
 
 
+def _child_prefixes(prop_url: str, all_props: list = None) -> list:
+    """The other configured properties that live strictly underneath `prop_url`.
+
+    A root property is a URL prefix, so theplayoffs.news/ literally covers /mx/, /ca/
+    and the rest. Those folders are tracked as properties in their own right, so
+    leaving them in would count their pages twice and make the root's numbers a
+    restatement of its children rather than a figure about the root's own content."""
+    props = _FRESHNESS_PROPERTIES if all_props is None else all_props
+    parent = _norm_page(prop_url)
+    return [p for p in props
+            if _norm_page(p) != parent and _norm_page(p).startswith(parent + "/")]
+
+
 # Fallback shape used when the SEO API can't be reached: same properties, sitemap guessed
 # from the prefix (the pattern every site in this portfolio follows).
 _FRESHNESS_SITES_DEFAULT = [
     {"name": _property_name(u), "prefix": u,
-     "sitemap_url": u.rstrip("/") + "/sitemap_index.xml", "exclude": "palpite"}
+     "sitemap_url": u.rstrip("/") + "/sitemap_index.xml", "exclude": "palpite",
+     "exclude_prefixes": _child_prefixes(u)}
     for u in _FRESHNESS_PROPERTIES
 ]
 
@@ -5723,6 +5749,7 @@ def _discover_freshness_sites() -> list:
             "threshold_days": default_threshold,
             "limit": default_limit,
             "exclude": default_exclude,
+            "exclude_prefixes": _child_prefixes(prop_url),
         }
 
     with ThreadPoolExecutor(max_workers=8) as ex:
@@ -5896,7 +5923,7 @@ def _check_freshness_all(sites: list = None) -> list:
                 site_slug=s.get("site_slug"), sitemap_url=s.get("sitemap_url"),
                 threshold_days=thr, limit=int(s.get("limit", 200)),
                 include=s.get("include"), exclude=s.get("exclude"),
-                prefix=s.get("prefix"),
+                prefix=s.get("prefix"), exclude_prefixes=s.get("exclude_prefixes"),
                 # One upstream call per site fills Google's last-crawl map for every page
                 # at once. The expensive per-URL fallback stays off: _gsc_crawl_map returns
                 # {} rather than None on failure, so gsc_fallback never trips.
@@ -5986,6 +6013,7 @@ def freshness_projects(current_user=Depends(_decode_token)):
             "sitemap_url": s.get("sitemap_url"),
             "site_slug": s.get("site_slug"),
             "prefix": s.get("prefix"),
+            "excluded_children": len(s.get("exclude_prefixes") or []),
             "threshold_days": run.get("threshold_days") or int(s.get("threshold_days", 4)),
             "checked": checked,
             "stale_count": stale,
@@ -6088,7 +6116,7 @@ def freshness_recheck(req: FreshnessRecheckRequest, current_user=Depends(_decode
             site_slug=match.get("site_slug"), sitemap_url=match.get("sitemap_url"),
             threshold_days=thr, limit=int(match.get("limit", 200)),
             include=match.get("include"), exclude=match.get("exclude"),
-            prefix=match.get("prefix"),
+            prefix=match.get("prefix"), exclude_prefixes=match.get("exclude_prefixes"),
             resolve_gsc=bool(match.get("site_slug")),
         )
     except HTTPException:

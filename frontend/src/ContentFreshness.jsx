@@ -172,6 +172,11 @@ function ProjectCard({ p, onOpen, onRecheck, busy }) {
           Last sweep failed: <span className="truncate">{p.error}</span>
         </div>
       )}
+      {p.excluded_children > 0 && (
+        <div style={{ fontSize: '0.66rem', color: 'var(--text-dim)' }}>
+          Excludes {p.excluded_children} sub-{p.excluded_children === 1 ? 'property' : 'properties'} tracked separately.
+        </div>
+      )}
       {p.capped && (
         <div style={{ fontSize: '0.66rem', color: 'var(--text-dim)' }}>
           Capped at {(p.checked || 0).toLocaleString()} of {(p.total_urls || 0).toLocaleString()} matching URLs.
