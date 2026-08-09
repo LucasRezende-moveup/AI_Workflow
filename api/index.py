@@ -5636,6 +5636,46 @@ def _property_name(url: str) -> str:
     return re.sub(r"^https?://", "", (url or "").strip()).rstrip("/") or url
 
 
+# Market inference. The folder is authoritative where a property has one (that is what
+# the folder split exists for); otherwise the host decides. Hosts that aren't a country
+# ccTLD are listed explicitly rather than guessed from the TLD.
+_MARKET_BY_CODE = {
+    "ar": "Argentina",          "ca": "Canada",             "ca-on": "Canada (Ontario)",
+    "ch": "Switzerland",        "cl": "Chile",              "en": "International (EN)",
+    "fr": "France",             "int": "International",     "int-en": "International (EN)",
+    "it": "Italy",              "latam": "Latin America",   "mx": "Mexico",
+    "pe": "Peru",               "us": "United States",      "br": "Brazil",
+}
+
+_MARKET_BY_HOST = {
+    "theplayoffs.news": "Brazil",             # pt-BR root; every other locale is foldered
+    "toffeeweb.com": "United Kingdom",
+    "thefootballfaithful.com": "United Kingdom",
+    "criptonizando.com": "Brazil",            # pt-BR root, with /en/ as its English edition
+    "tupi.fm": "Brazil",
+    "bitbol.la": "Latin America",
+}
+
+
+def _property_market(url: str) -> str:
+    """Best-effort market label for grouping the dashboard.
+
+    Folder wins over host: www.toffeeweb.com/mx/ is Mexico even though the root is UK.
+    Sections that aren't markets (/apostas/) fall through to the host."""
+    clean = re.sub(r"^https?://", "", (url or "").strip().lower()).rstrip("/")
+    host, _, path = clean.partition("/")
+    if path:
+        code = path.split("/")[-1]
+        if code in _MARKET_BY_CODE:
+            return _MARKET_BY_CODE[code]
+    bare = re.sub(r"^www\.", "", host)
+    if bare.endswith(".com.br") or bare.endswith(".br"):
+        return "Brazil"
+    if bare.endswith(".cl"):
+        return "Chile"
+    return _MARKET_BY_HOST.get(bare, "Other")
+
+
 def _child_prefixes(prop_url: str, all_props: list = None) -> list:
     """The other configured properties that live strictly underneath `prop_url`.
 
@@ -5654,7 +5694,7 @@ def _child_prefixes(prop_url: str, all_props: list = None) -> list:
 _FRESHNESS_SITES_DEFAULT = [
     {"name": _property_name(u), "prefix": u,
      "sitemap_url": u.rstrip("/") + "/sitemap_index.xml", "exclude": "palpite",
-     "exclude_prefixes": _child_prefixes(u)}
+     "exclude_prefixes": _child_prefixes(u), "market": _property_market(u)}
     for u in _FRESHNESS_PROPERTIES
 ]
 
@@ -5750,6 +5790,7 @@ def _discover_freshness_sites() -> list:
             "limit": default_limit,
             "exclude": default_exclude,
             "exclude_prefixes": _child_prefixes(prop_url),
+            "market": _property_market(prop_url),
         }
 
     with ThreadPoolExecutor(max_workers=8) as ex:
@@ -6014,6 +6055,7 @@ def freshness_projects(current_user=Depends(_decode_token)):
             "site_slug": s.get("site_slug"),
             "prefix": s.get("prefix"),
             "excluded_children": len(s.get("exclude_prefixes") or []),
+            "market": s.get("market") or _property_market(s.get("prefix") or ""),
             "threshold_days": run.get("threshold_days") or int(s.get("threshold_days", 4)),
             "checked": checked,
             "stale_count": stale,

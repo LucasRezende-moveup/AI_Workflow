@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   CalendarClock, RefreshCw, Download, ExternalLink, AlertTriangle, CheckCircle,
-  HelpCircle, ChevronLeft, Search, Globe, Clock,
+  HelpCircle, ChevronLeft, Search, Globe, Clock, MapPin,
 } from 'lucide-react';
 
 const token = () => localStorage.getItem('auth_token');
@@ -42,10 +42,6 @@ function shortSitemap(url) {
     const u = new URL(url);
     return u.hostname.replace(/^www\./, '') + u.pathname;
   } catch { return url || ''; }
-}
-
-function hostOf(url) {
-  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url || ''; }
 }
 
 function StatCard({ label, value, color, hint }) {
@@ -186,6 +182,52 @@ function ProjectCard({ p, onOpen, onRecheck, busy }) {
   );
 }
 
+/* Group properties by market. Markets carrying stale pages sort first so the view
+   opens on what needs attention, then by property count, then by name. */
+function groupByMarket(projects) {
+  const by = new Map();
+  for (const p of projects) {
+    const m = p.market || 'Other';
+    if (!by.has(m)) by.set(m, []);
+    by.get(m).push(p);
+  }
+  return [...by.entries()]
+    .map(([market, items]) => {
+      const checked = items.reduce((n, p) => n + (p.checked || 0), 0);
+      const unknown = items.reduce((n, p) => n + (p.unknown_count || 0), 0);
+      const fresh = items.reduce((n, p) => n + (p.fresh_count || 0), 0);
+      const stale = items.reduce((n, p) => n + (p.stale_count || 0), 0);
+      const known = checked - unknown;
+      return {
+        market, items, checked, stale,
+        freshPct: known > 0 ? Math.round((fresh / known) * 1000) / 10 : null,
+      };
+    })
+    .sort((a, b) => b.stale - a.stale || b.items.length - a.items.length || a.market.localeCompare(b.market));
+}
+
+function MarketHeading({ g }) {
+  return (
+    <div className="flex items-center justify-between"
+      style={{ gap: 10, flexWrap: 'wrap', paddingBottom: 6, borderBottom: '1px solid var(--border-subtle)' }}>
+      <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+        <MapPin size={13} aria-hidden="true" style={{ color: 'var(--text-dim)', flexShrink: 0 }} />
+        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-strong)' }}>{g.market}</span>
+        <span className="badge badge-neutral">{g.items.length}</span>
+      </div>
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+        {g.checked > 0 ? (
+          <>
+            {g.freshPct == null ? '—' : <><span style={{ color: '#15803d', fontWeight: 700 }}>{g.freshPct}%</span> fresh</>}
+            {g.stale > 0 && <> · <span style={{ color: '#dc2626', fontWeight: 700 }}>{g.stale.toLocaleString()}</span> stale</>}
+            {' · '}{g.checked.toLocaleString()} checked
+          </>
+        ) : 'Not checked yet'}
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({ data, loading, error, onOpen, onRecheck, busySite, onRefresh }) {
   const t = data?.totals;
   return (
@@ -193,6 +235,7 @@ function Dashboard({ data, loading, error, onOpen, onRecheck, busySite, onRefres
       <div className="flex gap-3" style={{ flexWrap: 'wrap' }}>
         <StatCard label="Properties" value={t?.properties ?? '—'}
           hint={t?.never_checked ? `${t.never_checked} never checked` : null} />
+        <StatCard label="Markets" value={data?.projects?.length ? new Set(data.projects.map(p => p.market || 'Other')).size : '—'} />
         <StatCard label="Pages checked" value={(t?.checked ?? 0).toLocaleString()} />
         <StatCard label="Stale" value={(t?.stale_count ?? 0).toLocaleString()} color={t?.stale_count ? '#dc2626' : '#15803d'} />
         <StatCard label="Fresh" value={t?.fresh_pct == null ? '—' : `${t.fresh_pct}%`} color="#15803d"
@@ -229,9 +272,16 @@ function Dashboard({ data, loading, error, onOpen, onRecheck, busySite, onRefres
           </div>
         </div>
       ) : (
-        <div className="card-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))' }}>
-          {data.projects.map(p => (
-            <ProjectCard key={p.site} p={p} onOpen={onOpen} onRecheck={onRecheck} busy={busySite === p.site} />
+        <div className="flex-col gap-6">
+          {groupByMarket(data.projects).map(g => (
+            <div key={g.market} className="flex-col gap-3">
+              <MarketHeading g={g} />
+              <div className="card-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))' }}>
+                {g.items.map(p => (
+                  <ProjectCard key={p.site} p={p} onOpen={onOpen} onRecheck={onRecheck} busy={busySite === p.site} />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -303,8 +353,9 @@ function ProjectDetail({ site, project, onBack, onRecheck, busy, reloadKey }) {
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-strong)' }} className="truncate">{site}</div>
             <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+              {project?.market && <>{project.market} · </>}
               Stale after {threshold}d · swept {timeAgo(run?.ran_at || project?.last_run)}
-              {project?.sitemap_url && <> · {hostOf(project.sitemap_url)}</>}
+              {project?.excluded_children > 0 && <> · excludes {project.excluded_children} sub-{project.excluded_children === 1 ? 'property' : 'properties'}</>}
             </div>
           </div>
         </div>
