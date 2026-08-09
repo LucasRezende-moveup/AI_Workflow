@@ -5476,7 +5476,7 @@ class FreshnessRequest(BaseModel):
 
 def _run_freshness(site_slug=None, sitemap_url=None, urls=None, threshold_days=4,
                    limit=80, include=None, exclude=None, auth_user=None, auth_pass=None,
-                   resolve_gsc=True):
+                   resolve_gsc=True, prefix=None):
     """Core freshness check shared by the API endpoint and the daily cron sweep.
     Raises HTTPException on bad input (the endpoint surfaces it; the cron catches it)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -5499,6 +5499,17 @@ def _run_freshness(site_slug=None, sitemap_url=None, urls=None, threshold_days=4
     # Pre-crawl filter: keep only the pages the user wants fetched, so the cap and
     # crawl budget apply to the chosen subset (not the whole sitemap).
     sitemap_total = len(targets)
+    # Property scoping. Several properties share a domain and differ only by folder
+    # (theplayoffs.news/ca/ vs /ca-on/), and one domain's sitemap lists them all, so
+    # scope is a path PREFIX rather than the substring match `include` does -- a
+    # substring of "/ca/" would be ambiguous and the bare domain would match everything.
+    if prefix:
+        pfx = _norm_page(prefix)
+        targets = [(u, lm) for (u, lm) in targets
+                   if _norm_page(u) == pfx or _norm_page(u).startswith(pfx + "/")]
+        if not targets:
+            raise HTTPException(status_code=400,
+                                detail=f"No URLs under {prefix} (out of {sitemap_total} in the sitemap).")
     inc = [p.strip().lower() for p in (include or "").split(",") if p.strip()]
     exc = [p.strip().lower() for p in (exclude or "").split(",") if p.strip()]
     if inc:
@@ -5569,11 +5580,56 @@ def freshness_check(req: FreshnessRequest):
 # `exclude: "palpite"` skips dated match-prediction pages (Netvasco's /palpites/ folder
 # and Netflu's ...-palpites-... slugs) — they're tied to a past event date and never get
 # updated, so the alert focuses on evergreen pages (bonuses, apps, guides) that should stay current.
+_FRESHNESS_PROPERTIES = [
+    "https://theplayoffs.news/",
+    "https://theplayoffs.news/ar/",
+    "https://theplayoffs.news/ca/",
+    "https://theplayoffs.news/ca-on/",
+    "https://theplayoffs.news/ch/",
+    "https://theplayoffs.news/cl/",
+    "https://theplayoffs.news/en/",
+    "https://theplayoffs.news/fr/",
+    "https://theplayoffs.news/int-en/",
+    "https://theplayoffs.news/it/",
+    "https://theplayoffs.news/latam/",
+    "https://theplayoffs.news/mx/",
+    "https://theplayoffs.news/pe/",
+    "https://www.toffeeweb.com/",
+    "https://www.toffeeweb.com/cl/",
+    "https://www.toffeeweb.com/int/",
+    "https://www.toffeeweb.com/it/",
+    "https://www.toffeeweb.com/mx/",
+    "https://www.toffeeweb.com/us/",
+    "https://www.em.com.br/apostas/",
+    "https://www.netflu.com.br/",
+    "https://www.netflu.com.br/apostas/",
+    "https://netvasco.com.br/apostas/",
+    "https://olhardigital.com.br/apostas/",
+    "https://tupi.fm/apostas/",
+    "https://netesportes.com.br/",
+    "https://www.prensafutbol.cl/",
+    "https://thefootballfaithful.com/",
+    "https://criptonizando.com/",
+    "https://criptonizando.com/en/",
+    "https://bitbol.la/cl/",
+]
+
+
+def _property_name(url: str) -> str:
+    """Stable display name and storage key: host + path, e.g. theplayoffs.news/ca-on.
+
+    Keeps www and the folder because those are what make the properties distinct --
+    www.netflu.com.br/ and www.netflu.com.br/apostas/ are two separate properties, and
+    this string is the primary key in freshness_pages / freshness_runs."""
+    return re.sub(r"^https?://", "", (url or "").strip()).rstrip("/") or url
+
+
+# Fallback shape used when the SEO API can't be reached: same properties, sitemap guessed
+# from the prefix (the pattern every site in this portfolio follows).
 _FRESHNESS_SITES_DEFAULT = [
-    {"name": "Estado de Minas", "sitemap_url": "https://www.em.com.br/apostas/sitemap_index.xml", "exclude": "palpite"},
-    {"name": "Olhar Digital",   "sitemap_url": "https://olhardigital.com.br/apostas/sitemap_index.xml", "exclude": "palpite"},
-    {"name": "Netflu",          "sitemap_url": "https://netflu.com.br/apostas/sitemap_index.xml", "exclude": "palpite"},
-    {"name": "Netvasco",        "sitemap_url": "https://www.netvasco.com.br/apostas/sitemap_index.xml", "exclude": "palpite"},
+    {"name": _property_name(u), "prefix": u,
+     "sitemap_url": u.rstrip("/") + "/sitemap_index.xml", "exclude": "palpite"}
+    for u in _FRESHNESS_PROPERTIES
 ]
 
 
@@ -5584,54 +5640,94 @@ _FRESHNESS_SOURCE = {"value": "default"}
 _FRESHNESS_DISCOVERY_TTL = 600
 
 
-def _discover_freshness_sites() -> list:
-    """Build the property list from the SEO API instead of a hardcoded list.
-
-    Takes every GSC property from `dims/gsc-sites` and pairs it with its first sitemap
-    (`gsc/{slug}/sitemaps`), the same resolution `_run_freshness` does for a site_slug.
-    Carrying site_slug through matters: it lets the sweep pull Google's last-crawl map
-    for the whole site in one call, so the dashboard's "Google last crawl" column fills in.
-
-    Returns [] on any upstream failure so the caller can fall back rather than wiping
-    the property list because the SEO API had a bad minute."""
-    from concurrent.futures import ThreadPoolExecutor
-
+def _gsc_site_index():
+    """Normalized GSC property URL -> site_slug, from dims/gsc-sites."""
     try:
         rows = _seo_get("dims/gsc-sites") or []
     except Exception:
-        return []
-    sites = [r for r in rows if isinstance(r, dict) and r.get("site_slug")]
-    if not sites:
+        return {}
+    idx = {}
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("site_slug"):
+            continue
+        site = str(r.get("site") or "")
+        if site.startswith("sc-domain:"):
+            # Domain property: no path, matches anything on that host.
+            idx["https://" + site.split(":", 1)[1].strip().lower()] = r["site_slug"]
+        elif site:
+            idx[_norm_page(site)] = r["site_slug"]
+    return idx
+
+
+def _match_gsc_slug(prop_url: str, idx: dict):
+    """The most specific GSC property covering `prop_url`.
+
+    Folder properties usually exist in GSC in their own right; when one doesn't, the
+    longest covering property (its domain root) still yields a usable sitemap, and the
+    prefix filter keeps the result scoped to the folder."""
+    target = _norm_page(prop_url)
+    best, best_len = None, -1
+    for site, slug in idx.items():
+        host_only = site.count("/") <= 2   # scheme + host, no path
+        if target == site or target.startswith(site + "/") or (host_only and target.startswith(site)):
+            if len(site) > best_len:
+                best, best_len = slug, len(site)
+    return best
+
+
+def _discover_freshness_sites() -> list:
+    """Resolve each configured property to a sitemap using the SEO API.
+
+    The property set is _FRESHNESS_PROPERTIES: several entries share a domain and
+    differ only by folder, and GSC treats those as separate properties, so each one
+    carries a `prefix` and only pages under it are ever counted. Matching a property to
+    its GSC slug also lets the sweep pull Google's last-crawl map for it.
+
+    Returns [] on total upstream failure so the caller falls back rather than emptying
+    the dashboard."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    idx = _gsc_site_index()
+    if not idx:
         return []
 
-    # Applied to every discovered property. Defaults to the exclusion the hardcoded list
-    # carried: dated match-prediction pages are tied to a past event and never updated,
-    # so they'd otherwise dominate the stale count on the betting sections.
     default_exclude = os.getenv("FRESHNESS_EXCLUDE", "palpite") or None
     default_limit = int(os.getenv("FRESHNESS_LIMIT", "200"))
     default_threshold = int(os.getenv("FRESHNESS_THRESHOLD_DAYS", "4"))
 
-    def resolve(r):
-        slug = r["site_slug"]
-        try:
-            sms = _seo_get(f"gsc/{slug}/sitemaps") or []
-            paths = [s.get("path") for s in sms if isinstance(s, dict) and s.get("path")]
-        except Exception:
-            paths = []
-        if not paths:
-            return None          # no sitemap: nothing to sweep for this property
+    sitemap_cache = {}
+
+    def sitemaps_for(slug):
+        if slug not in sitemap_cache:
+            try:
+                sms = _seo_get(f"gsc/{slug}/sitemaps") or []
+                sitemap_cache[slug] = [x.get("path") for x in sms
+                                       if isinstance(x, dict) and x.get("path")]
+            except Exception:
+                sitemap_cache[slug] = []
+        return sitemap_cache[slug]
+
+    def resolve(prop_url):
+        slug = _match_gsc_slug(prop_url, idx)
+        paths = sitemaps_for(slug) if slug else []
+        pfx = _norm_page(prop_url)
+        # Prefer a sitemap that already lives under this property; a folder-scoped
+        # sitemap means far less to fetch and filter than the domain-wide one.
+        scoped = [p for p in paths if _norm_page(p).startswith(pfx)]
+        sitemap = (scoped or paths or [prop_url.rstrip("/") + "/sitemap_index.xml"])[0]
         return {
-            "name": r.get("site") or slug,
+            "name": _property_name(prop_url),
+            "prefix": prop_url,
             "site_slug": slug,
-            "sitemap_url": paths[0],
+            "sitemap_url": sitemap,
             "threshold_days": default_threshold,
             "limit": default_limit,
             "exclude": default_exclude,
         }
 
     with ThreadPoolExecutor(max_workers=8) as ex:
-        resolved = [x for x in ex.map(resolve, sites) if x]
-    resolved.sort(key=lambda s: s["name"].lower())
+        resolved = [x for x in ex.map(resolve, _FRESHNESS_PROPERTIES) if x]
+    resolved.sort(key=lambda x: x["name"])
     return resolved
 
 
@@ -5800,6 +5896,7 @@ def _check_freshness_all(sites: list = None) -> list:
                 site_slug=s.get("site_slug"), sitemap_url=s.get("sitemap_url"),
                 threshold_days=thr, limit=int(s.get("limit", 200)),
                 include=s.get("include"), exclude=s.get("exclude"),
+                prefix=s.get("prefix"),
                 # One upstream call per site fills Google's last-crawl map for every page
                 # at once. The expensive per-URL fallback stays off: _gsc_crawl_map returns
                 # {} rather than None on failure, so gsc_fallback never trips.
@@ -5888,6 +5985,7 @@ def freshness_projects(current_user=Depends(_decode_token)):
             "site": name,
             "sitemap_url": s.get("sitemap_url"),
             "site_slug": s.get("site_slug"),
+            "prefix": s.get("prefix"),
             "threshold_days": run.get("threshold_days") or int(s.get("threshold_days", 4)),
             "checked": checked,
             "stale_count": stale,
@@ -5990,6 +6088,7 @@ def freshness_recheck(req: FreshnessRecheckRequest, current_user=Depends(_decode
             site_slug=match.get("site_slug"), sitemap_url=match.get("sitemap_url"),
             threshold_days=thr, limit=int(match.get("limit", 200)),
             include=match.get("include"), exclude=match.get("exclude"),
+            prefix=match.get("prefix"),
             resolve_gsc=bool(match.get("site_slug")),
         )
     except HTTPException:

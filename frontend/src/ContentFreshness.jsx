@@ -35,6 +35,15 @@ function timeAgo(iso) {
   return `${Math.round(hrs / 24)}d ago`;
 }
 
+function shortSitemap(url) {
+  // Properties are already named host+path, so the useful detail here is which
+  // sitemap feeds them -- domain-wide or scoped to the folder.
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, '') + u.pathname;
+  } catch { return url || ''; }
+}
+
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url || ''; }
 }
@@ -103,9 +112,9 @@ const softBtn = {
    first sitemap; an explicit FRESHNESS_SITES still wins, and the built-in list is the
    fallback so a SEO API outage doesn't empty the dashboard. */
 const SOURCE_NOTE = {
-  discovered: 'Discovered from the SEO API (every GSC property with a sitemap).',
+  discovered: 'Sitemaps resolved per property via the SEO API. Folder properties are scoped to their own path.',
   env: 'From the FRESHNESS_SITES environment variable.',
-  default: 'Built-in default list — SEO API discovery returned nothing.',
+  default: 'Built-in property list — the SEO API returned no sites, so sitemaps are guessed from each path.',
 };
 
 /* ── Properties dashboard ──────────────────────────────────────────────────── */
@@ -121,7 +130,8 @@ function ProjectCard({ p, onOpen, onRecheck, busy }) {
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-strong)' }} className="truncate">{p.site}</div>
           <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-            <Globe size={10} aria-hidden="true" /> <span className="truncate">{hostOf(p.sitemap_url)}</span>
+            <Globe size={10} aria-hidden="true" />
+            <span className="truncate" title={p.sitemap_url}>{shortSitemap(p.sitemap_url)}</span>
           </div>
         </div>
         <span className={`badge ${p.stale_count > 0 ? 'badge-danger' : p.last_run ? 'badge-success' : 'badge-neutral'}`}>
