@@ -173,9 +173,17 @@ function ProjectCard({ p, onOpen, onRecheck, busy }) {
           Excludes {p.excluded_children} sub-{p.excluded_children === 1 ? 'property' : 'properties'} tracked separately.
         </div>
       )}
-      {p.capped && (
-        <div style={{ fontSize: '0.66rem', color: 'var(--text-dim)' }}>
-          Capped at {(p.checked || 0).toLocaleString()} of {(p.total_urls || 0).toLocaleString()} matching URLs.
+      {p.in_scope > 0 && (
+        <div>
+          <div className="flex items-center justify-between" style={{ fontSize: '0.66rem', color: 'var(--text-dim)', marginBottom: 3 }}>
+            <span>Coverage {(p.checked || 0).toLocaleString()} / {p.in_scope.toLocaleString()} URLs</span>
+            <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: p.coverage_pct >= 100 ? '#15803d' : 'var(--text-muted)' }}>
+              {p.coverage_pct == null ? '—' : `${Math.min(100, p.coverage_pct)}%`}
+            </span>
+          </div>
+          <div style={{ height: 3, borderRadius: 2, background: 'rgb(var(--ink) / 0.08)', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${Math.min(100, p.coverage_pct || 0)}%`, background: p.coverage_pct >= 100 ? '#15803d' : 'var(--primary)' }} />
+          </div>
         </div>
       )}
     </div>
@@ -286,11 +294,12 @@ function Dashboard({ data, loading, error, onOpen, onRecheck, busySite, onRefres
         </div>
       )}
 
-      {data?.projects?.length > 8 && (
+      {data?.projects?.length > 0 && (
         <div className="banner banner-info" role="note">
-          The nightly sweep is time-boxed and works through properties least-recently-checked
-          first, so with {data.projects.length} properties it rotates across runs rather than
-          doing every one each night. Use <strong>Re-check</strong> on a card to refresh it now.
+          Each run works through a bounded batch, least-recently-checked first — across
+          properties, and across the URLs within one. A property larger than its batch size
+          fills in over successive runs until coverage reaches 100%, then keeps refreshing
+          its oldest pages. <strong>Re-check</strong> advances one property immediately.
         </div>
       )}
 
@@ -374,7 +383,8 @@ function ProjectDetail({ site, project, onBack, onRecheck, busy, reloadKey }) {
         <StatCard label={`Stale (>${threshold}d)`} value={(run?.stale_count ?? 0).toLocaleString()} color="#dc2626" />
         <StatCard label="Fresh" value={(run?.fresh_count ?? 0).toLocaleString()} color="#15803d" />
         {(run?.unknown_count ?? 0) > 0 && <StatCard label="No date found" value={run.unknown_count.toLocaleString()} color="#b45309" />}
-        <StatCard label="Pages checked" value={(run?.checked ?? meta?.total ?? 0).toLocaleString()} />
+        <StatCard label="Pages checked" value={(run?.checked ?? meta?.total ?? 0).toLocaleString()}
+          hint={project?.in_scope ? `of ${project.in_scope.toLocaleString()} in scope${project.coverage_pct != null ? ` (${Math.min(100, project.coverage_pct)}%)` : ''}` : null} />
         {project?.oldest_age_days != null && <StatCard label="Oldest page" value={`${project.oldest_age_days}d`} color="#b45309" />}
       </div>
 

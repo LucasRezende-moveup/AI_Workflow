@@ -396,6 +396,15 @@ def _ensure_schema():
                         ran_at         TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
+                # Coverage tracking for the rotating sweep: in_scope is how many URLs the
+                # property has, checked is how many now hold a result, batch is how many
+                # this run got through. Added after the table shipped, hence the ALTERs.
+                cur.execute("ALTER TABLE freshness_runs ADD COLUMN IF NOT EXISTS in_scope INTEGER")
+                cur.execute("ALTER TABLE freshness_runs ADD COLUMN IF NOT EXISTS batch INTEGER")
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS freshness_pages_rotation_idx
+                        ON freshness_pages (site, checked_at)
+                """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS serp_cache_created_idx ON serp_cache (created_at)
                 """)
@@ -5476,7 +5485,7 @@ class FreshnessRequest(BaseModel):
 
 def _run_freshness(site_slug=None, sitemap_url=None, urls=None, threshold_days=4,
                    limit=80, include=None, exclude=None, auth_user=None, auth_pass=None,
-                   resolve_gsc=True, prefix=None, exclude_prefixes=None):
+                   resolve_gsc=True, prefix=None, exclude_prefixes=None, rotate_state=None):
     """Core freshness check shared by the API endpoint and the daily cron sweep.
     Raises HTTPException on bad input (the endpoint surfaces it; the cron catches it)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -5534,6 +5543,16 @@ def _run_freshness(site_slug=None, sitemap_url=None, urls=None, threshold_days=4
 
     total_found = matched
     cap = min(max(limit, 1), 500)
+    # Every in-scope URL, before the cap - the caller needs this to prune pages that have
+    # left the sitemap without discarding pages this batch simply didn't reach.
+    in_scope_urls = [u for (u, _lm) in targets]
+    if rotate_state is not None:
+        # Rotate rather than truncate. Taking targets[:cap] in sitemap order meant a
+        # property with more URLs than the cap never checked the tail at all. Ordering by
+        # least-recently-checked (never-checked first) makes successive runs advance
+        # through the whole list and then keep it refreshed oldest-first.
+        _never = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        targets.sort(key=lambda t: rotate_state.get(_norm_page(t[0])) or _never)
     targets = targets[:cap]
     auth = (auth_user, auth_pass) if auth_user else None
 
@@ -5572,6 +5591,8 @@ def _run_freshness(site_slug=None, sitemap_url=None, urls=None, threshold_days=4
         "fresh_count": len(results) - len(stale),
         "unknown_count": sum(1 for r in results if r["age_days"] is None),
         "results": results,
+        "in_scope_urls": in_scope_urls,
+        "total_in_scope": len(in_scope_urls),
     }
 
 
@@ -5838,16 +5859,35 @@ def _freshness_sites(sites: list = None, use_cache: bool = True) -> list:
     return _FRESHNESS_SITES_DEFAULT
 
 
-def _freshness_store(site, out, threshold, error=None):
-    """Replace the stored snapshot for one property with this run's full result set.
-
-    Deletes-then-inserts inside one transaction so a property is never left holding a
-    mix of two sweeps. Best-effort: a DB outage must not fail the sweep or the alert."""
+def _freshness_rotate_state(site):
+    """url -> when it was last checked, for ordering the next batch. Missing keys are
+    never-checked and sort first."""
     try:
         with _db_connect() as conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT url, checked_at FROM freshness_pages WHERE site=%s", (site,))
+                return {_norm_page(r["url"]): r["checked_at"] for r in cur.fetchall()}
+    except Exception:
+        return {}
+
+
+def _freshness_store(site, out, threshold, error=None):
+    """Fold one batch into the property's accumulated snapshot and refresh its rollup.
+
+    Accumulates rather than replaces: a run only covers `limit` URLs, so wiping the
+    property first (as this did originally) would cap the store at one batch forever and
+    make coverage impossible. Pages are pruned only when they leave the sitemap, which is
+    why the caller passes the full in-scope list alongside the batch.
+
+    Counts are recomputed from the table afterwards, so the dashboard reports the whole
+    accumulated picture rather than whatever this batch happened to contain.
+
+    Best-effort: a DB outage must not fail the sweep or the alert."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                totals = {}
                 if out is not None:
-                    cur.execute("DELETE FROM freshness_pages WHERE site=%s", (site,))
                     rows = [
                         (site, r.get("url"), r.get("last_modified"), r.get("age_days"),
                          r.get("source"), bool(r.get("flagged")), r.get("gsc_last_crawl"),
@@ -5870,26 +5910,63 @@ def _freshness_store(site, out, threshold, error=None):
                             rows,
                             template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())",
                         )
+                    # Drop only what has actually left the sitemap.
+                    scope = out.get("in_scope_urls")
+                    if scope:
+                        cur.execute(
+                            "DELETE FROM freshness_pages WHERE site=%s AND NOT (url = ANY(%s))",
+                            (site, list(scope)),
+                        )
+                    cur.execute(
+                        """SELECT COUNT(*) AS checked,
+                                  COUNT(*) FILTER (WHERE flagged AND age_days IS NOT NULL) AS stale,
+                                  COUNT(*) FILTER (WHERE NOT flagged) AS fresh,
+                                  COUNT(*) FILTER (WHERE age_days IS NULL) AS unknown
+                             FROM freshness_pages WHERE site=%s""",
+                        (site,),
+                    )
+                    totals = dict(cur.fetchone() or {})
                 cur.execute(
                     """INSERT INTO freshness_runs
                        (site, threshold_days, checked, stale_count, fresh_count, unknown_count,
-                        total_urls, sitemap_total, capped, error, ran_at)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                        total_urls, sitemap_total, capped, error, in_scope, batch, ran_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
                        ON CONFLICT (site) DO UPDATE SET
                          threshold_days=EXCLUDED.threshold_days, checked=EXCLUDED.checked,
                          stale_count=EXCLUDED.stale_count, fresh_count=EXCLUDED.fresh_count,
                          unknown_count=EXCLUDED.unknown_count, total_urls=EXCLUDED.total_urls,
                          sitemap_total=EXCLUDED.sitemap_total, capped=EXCLUDED.capped,
-                         error=EXCLUDED.error, ran_at=NOW()""",
+                         error=EXCLUDED.error, in_scope=EXCLUDED.in_scope, batch=EXCLUDED.batch,
+                         ran_at=NOW()""",
                     (site, threshold,
-                     (out or {}).get("checked"), (out or {}).get("stale_count"),
-                     (out or {}).get("fresh_count"), (out or {}).get("unknown_count"),
+                     totals.get("checked"), totals.get("stale"),
+                     totals.get("fresh"), totals.get("unknown"),
                      (out or {}).get("total_urls"), (out or {}).get("sitemap_total"),
-                     bool((out or {}).get("capped")), error),
+                     bool((out or {}).get("capped")), error,
+                     (out or {}).get("total_in_scope"), (out or {}).get("checked")),
                 )
             conn.commit()
     except Exception:
         pass
+
+
+def _freshness_stale_map(site, threshold):
+    """The property's whole stale set from the accumulated store, for the Slack alert.
+
+    Taken from the table rather than the batch: with a rotating sweep the batch is only a
+    slice, and feeding that to the dedup would mark every page it didn't visit as healed
+    and re-alert on it next time round."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT url, age_days FROM freshness_pages "
+                    " WHERE site=%s AND age_days IS NOT NULL AND age_days > %s",
+                    (site, threshold),
+                )
+                return {r["url"]: r["age_days"] for r in cur.fetchall()}
+    except Exception:
+        return {}
 
 
 def _freshness_update_state(site, current):
@@ -5965,6 +6042,7 @@ def _check_freshness_all(sites: list = None) -> list:
                 threshold_days=thr, limit=int(s.get("limit", 200)),
                 include=s.get("include"), exclude=s.get("exclude"),
                 prefix=s.get("prefix"), exclude_prefixes=s.get("exclude_prefixes"),
+                rotate_state=_freshness_rotate_state(name),
                 # One upstream call per site fills Google's last-crawl map for every page
                 # at once. The expensive per-URL fallback stays off: _gsc_crawl_map returns
                 # {} rather than None on failure, so gsc_fallback never trips.
@@ -5979,15 +6057,17 @@ def _check_freshness_all(sites: list = None) -> list:
 
         _freshness_store(name, out, thr)
 
-        # Alert only on pages with a KNOWN age over the threshold (not "unknown date").
-        stale = [r for r in out["results"] if r["age_days"] is not None and r["age_days"] > thr]
-        stale.sort(key=lambda r: -(r["age_days"] or 0))
+        # Alert on pages with a KNOWN age over the threshold (not "unknown date"), taken
+        # from the accumulated store so a rotating batch doesn't look like the full picture.
+        current = _freshness_stale_map(name, thr)
+        stale = sorted(({"url": u, "age_days": a} for u, a in current.items()),
+                       key=lambda r: -(r["age_days"] or 0))
         # Dedup against the last run: only ping on pages that became stale since then, and
         # forget pages that are fresh again — so the daily alert stops repeating itself.
-        current = {r["url"]: r["age_days"] for r in stale}
         new_stale = _freshness_update_state(name, current)
-        summary.append({"site": name, "checked": out["checked"], "stale": len(stale),
-                        "new_stale": len(new_stale), "sitemap_total": out["sitemap_total"]})
+        summary.append({"site": name, "batch": out["checked"], "stale": len(stale),
+                        "new_stale": len(new_stale), "in_scope": out.get("total_in_scope"),
+                        "sitemap_total": out["sitemap_total"]})
         if new_stale:
             newly = [r for r in stale if r["url"] in new_stale]
             top = newly[:10]
@@ -6067,6 +6147,10 @@ def freshness_projects(current_user=Depends(_decode_token)):
             "oldest_age_days": ex.get("oldest_age_days"),
             "avg_age_days": int(ex["avg_age_days"]) if ex.get("avg_age_days") is not None else None,
             "rows_stored": ex.get("rows_stored") or 0,
+            "in_scope": run.get("in_scope"),
+            "coverage_pct": (round(checked / run["in_scope"] * 100, 1)
+                             if run.get("in_scope") else None),
+            "last_batch": run.get("batch"),
             "total_urls": run.get("total_urls"),
             "sitemap_total": run.get("sitemap_total"),
             "capped": bool(run.get("capped")),
@@ -6159,6 +6243,7 @@ def freshness_recheck(req: FreshnessRecheckRequest, current_user=Depends(_decode
             threshold_days=thr, limit=int(match.get("limit", 200)),
             include=match.get("include"), exclude=match.get("exclude"),
             prefix=match.get("prefix"), exclude_prefixes=match.get("exclude_prefixes"),
+            rotate_state=_freshness_rotate_state(req.site),
             resolve_gsc=bool(match.get("site_slug")),
         )
     except HTTPException:
@@ -6167,8 +6252,9 @@ def freshness_recheck(req: FreshnessRecheckRequest, current_user=Depends(_decode
         _freshness_store(req.site, None, thr, error=str(e)[:200])
         raise HTTPException(status_code=502, detail=str(e)[:200])
     _freshness_store(req.site, out, thr)
-    return {"site": req.site, "checked": out["checked"], "stale_count": out["stale_count"],
-            "fresh_count": out["fresh_count"], "unknown_count": out["unknown_count"]}
+    return {"site": req.site, "batch": out["checked"], "in_scope": out.get("total_in_scope"),
+            "stale_count": out["stale_count"], "fresh_count": out["fresh_count"],
+            "unknown_count": out["unknown_count"]}
 
 
 @app.get("/api/indexation/alerts")
