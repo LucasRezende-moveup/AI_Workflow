@@ -2451,6 +2451,243 @@ def export_logs(req: ExportRequest):
     )
 
 
+# --- Crawl budget action plan -------------------------------------------------
+#
+# Crawl budget is spent on every request Googlebot makes, not just the useful ones. A log
+# window already tells us where it went: the deterministic signals below are computed from
+# the merged aggregate, and the model only ranks and explains them. The numbers are never
+# left to the model to invent — a plan built on a hallucinated 404 rate is worse than none.
+
+# Path shapes that consume crawl budget without earning rankings.
+_CB_ASSET_RE = re.compile(r"\.(js|css|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|eot|mp4|webm|pdf)(\?|$)", re.I)
+_CB_NOISE_RE = re.compile(r"(/wp-admin|/wp-json|/xmlrpc\.php|/feed/?$|/\?s=|/search|/page/\d+|/tag/|/author/|/cart|/checkout|\?replytocom=|\?utm_)", re.I)
+
+# Third-party crawlers that cost server resources without sending traffic. Googlebot and
+# bingbot are excluded: those earn their keep.
+_CB_THIRD_PARTY = {"AhrefsBot", "SemrushBot", "YandexBot", "dotbot", "mj12bot",
+                   "PetalBot", "DataForSeoBot"}
+
+
+def _crawl_budget_signals(agg: dict) -> dict:
+    """Turn a merged log aggregate into the crawl-budget facts worth acting on."""
+    total = int(agg.get("total_hits") or 0)
+    gb = (agg.get("bot_aggregations") or {}).get("Googlebot") or {}
+    gb_status = {s["name"]: int(s["value"]) for s in (gb.get("status_data") or [])}
+    gb_hits = sum(gb_status.values()) or int(agg.get("googlebot_hits") or 0)
+
+    def _band(prefix):
+        return sum(v for k, v in gb_status.items() if str(k).startswith(prefix))
+
+    ok      = gb_status.get("200", 0)
+    notmod  = gb_status.get("304", 0)
+    redir   = _band("3") - notmod
+    missing = gb_status.get("404", 0) + gb_status.get("410", 0)
+    server  = _band("5")
+    forbid  = gb_status.get("403", 0)
+    # 304s are a *good* outcome — Googlebot revalidated and skipped a full fetch — so they
+    # are not counted as waste. Only redirects, errors and blocks are.
+    wasted  = redir + missing + server + forbid
+
+    gb_paths = gb.get("top_paths") or []
+    path_hits = sum(int(p.get("hits") or 0) for p in gb_paths) or 1
+    param_hits = sum(int(p.get("hits") or 0) for p in gb_paths if "?" in (p.get("path") or ""))
+    asset_hits = sum(int(p.get("hits") or 0) for p in gb_paths if _CB_ASSET_RE.search(p.get("path") or ""))
+    noise_hits = sum(int(p.get("hits") or 0) for p in gb_paths if _CB_NOISE_RE.search(p.get("path") or ""))
+
+    third_party = [
+        {"bot": b["bot"], "hits": int(b["hits"]),
+         "pct_of_total": round(int(b["hits"]) / total * 100, 1) if total else 0}
+        for b in (agg.get("bot_breakdown") or [])
+        if b.get("bot") in _CB_THIRD_PARTY and int(b.get("hits") or 0) > 0
+    ]
+
+    series = gb.get("time_series") or []
+    trend = None
+    if len(series) >= 4:
+        half = len(series) // 2
+        first = sum(int(d.get("hits") or 0) for d in series[:half]) / max(half, 1)
+        last  = sum(int(d.get("hits") or 0) for d in series[half:]) / max(len(series) - half, 1)
+        if first > 0:
+            trend = round((last - first) / first * 100, 1)
+
+    def pct(n, d):
+        return round(n / d * 100, 1) if d else 0.0
+
+    return {
+        "days_covered":        len(series) or len(agg.get("time_series") or []),
+        "total_hits":          total,
+        "googlebot_hits":      gb_hits,
+        "googlebot_share_pct": pct(gb_hits, total),
+        "status": {"200": ok, "304": notmod, "3xx_redirects": redir,
+                   "404_410": missing, "403": forbid, "5xx": server},
+        "wasted_hits":         wasted,
+        "wasted_pct":          pct(wasted, gb_hits),
+        "redirect_pct":        pct(redir, gb_hits),
+        "not_found_pct":       pct(missing, gb_hits),
+        "server_error_pct":    pct(server, gb_hits),
+        "top_googlebot_paths": gb_paths[:10],
+        "parameter_url_pct":   pct(param_hits, path_hits),
+        "static_asset_pct":    pct(asset_hits, path_hits),
+        "low_value_path_pct":  pct(noise_hits, path_hits),
+        "third_party_bots":    third_party,
+        "third_party_pct":     pct(sum(b["hits"] for b in third_party), total),
+        "googlebot_trend_pct": trend,
+    }
+
+
+def _crawl_budget_actions(site: str, sig: dict) -> dict:
+    """Ask Gemini to rank the measured signals into an action plan."""
+    import json as _json
+
+    paths = "\n".join(f"  {p['hits']:>7,} hits - {p['path']}" for p in sig["top_googlebot_paths"]) or "  (none)"
+    bots = ", ".join(f"{b['bot']} {b['hits']:,} ({b['pct_of_total']}%)" for b in sig["third_party_bots"]) or "none significant"
+    trend = f"{sig['googlebot_trend_pct']:+}%" if sig["googlebot_trend_pct"] is not None else "not enough days"
+    st = sig["status"]
+
+    prompt = f"""You are a technical SEO analysing server logs for crawl budget waste on {site}.
+
+MEASURED DATA - {sig['days_covered']} days of logs. Use these numbers exactly; never invent others.
+
+Googlebot: {sig['googlebot_hits']:,} requests ({sig['googlebot_share_pct']}% of {sig['total_hits']:,} total hits)
+Trend across the window: {trend}
+
+Googlebot response codes:
+  200 OK:        {st['200']:,}
+  304 Not Mod.:  {st['304']:,}   (good - a saved fetch, not waste)
+  3xx redirects: {st['3xx_redirects']:,}   ({sig['redirect_pct']}% of Googlebot requests)
+  404/410:       {st['404_410']:,}   ({sig['not_found_pct']}%)
+  403 blocked:   {st['403']:,}
+  5xx errors:    {st['5xx']:,}   ({sig['server_error_pct']}%)
+  WASTED total:  {sig['wasted_hits']:,} ({sig['wasted_pct']}% of Googlebot requests)
+
+Where Googlebot spent its budget (top paths):
+{paths}
+
+Of those top paths: {sig['parameter_url_pct']}% of hits were parameter URLs, {sig['static_asset_pct']}% static assets, {sig['low_value_path_pct']}% low-value paths (search, pagination, feeds, admin, tag archives).
+
+Third-party crawlers consuming server resources: {bots} ({sig['third_party_pct']}% of all hits).
+
+TASK
+Return the highest-impact actions to improve crawl budget, ranked most impactful first.
+Only recommend what this data supports - if redirects are 0.4% do not write a redirect action.
+Between 3 and 7 actions. Be specific to the paths and numbers above.
+
+Return ONLY valid JSON, no markdown fences, no commentary:
+{{
+  "summary": "2-3 sentences on the single biggest crawl budget problem here, with numbers",
+  "actions": [
+    {{
+      "title": "Short imperative action, max 70 chars",
+      "impact": "high|medium|low",
+      "effort": "low|medium|high",
+      "evidence": "The measured numbers that justify this, quoted from the data above",
+      "fix": "Concretely what to change - the robots.txt line, redirect rule, canonical, sitemap edit or server config",
+      "metric": "What should move in the logs afterwards, and roughly by how much"
+    }}
+  ]
+}}"""
+
+    raw = _gemini_generate(prompt)
+    text = (raw or "").strip()
+    # Gemini wraps JSON in fences often enough that stripping them beats retrying.
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+    try:
+        start, stop = text.index("{"), text.rindex("}") + 1
+        data = _json.loads(text[start:stop])
+    except Exception:
+        # Never drop the analysis because the JSON was malformed — hand back the prose so the
+        # run is still worth something, flagged so the UI renders it as plain text.
+        return {"summary": "", "actions": [], "raw": raw, "parse_failed": True}
+
+    def norm(v, allowed):
+        s = str(v or "").strip().lower()
+        return s if s in allowed else "medium"
+
+    actions = []
+    for a in (data.get("actions") or [])[:7]:
+        if not isinstance(a, dict) or not a.get("title"):
+            continue
+        actions.append({
+            "title":    str(a.get("title", ""))[:120],
+            "impact":   norm(a.get("impact"), {"high", "medium", "low"}),
+            "effort":   norm(a.get("effort"), {"high", "medium", "low"}),
+            "evidence": str(a.get("evidence", ""))[:600],
+            "fix":      str(a.get("fix", ""))[:900],
+            "metric":   str(a.get("metric", ""))[:300],
+        })
+    rank = {"high": 0, "medium": 1, "low": 2}
+    actions.sort(key=lambda a: (rank[a["impact"]], rank[a["effort"]]))
+    return {"summary": str(data.get("summary", ""))[:900], "actions": actions, "parse_failed": False}
+
+
+class CrawlBudgetRequest(BaseModel):
+    site_name: str
+    files: List[str]
+
+
+@app.post("/api/logs/crawl-budget")
+def logs_crawl_budget(req: CrawlBudgetRequest, current_user=Depends(_decode_token)):
+    """Analyse the selected log window and return ranked crawl-budget actions.
+
+    Re-merges the same files the analyse step used; every file but the newest comes from the
+    per-file cache, so this costs one Gemini call and almost no parsing."""
+    sites = load_sites()
+    if req.site_name not in sites:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if not req.files:
+        raise HTTPException(status_code=400, detail="Select a period to analyse.")
+
+    site = sites[req.site_name]
+    base = site["url"].rstrip("/") + "/"
+    auth = (site["username"], site["password"])
+    newest = req.files[0]
+
+    partials = []
+    for fname in req.files:
+        cached = None if fname == newest else _get_log_cache(req.site_name, fname)
+        if cached is None:
+            cached = _parse_one_log_file(base, fname, auth)
+            if cached and fname != newest:
+                _put_log_cache(req.site_name, fname, cached)
+        if cached:
+            partials.append(cached)
+
+    agg = _merge_log_aggregates(partials)
+    if not agg.get("total_hits"):
+        raise HTTPException(status_code=404, detail="No log data in the selected period.")
+
+    sig = _crawl_budget_signals(agg)
+    if not sig["googlebot_hits"]:
+        raise HTTPException(
+            status_code=404,
+            detail="No Googlebot requests in this period — nothing to say about crawl budget.")
+
+    try:
+        plan = _crawl_budget_actions(req.site_name, sig)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}")
+
+    out = {
+        "site": req.site_name,
+        "days_covered": sig["days_covered"],
+        "files_analyzed": len(partials),
+        "signals": sig,
+        "summary": plan.get("summary", ""),
+        "actions": plan.get("actions", []),
+        "raw": plan.get("raw"),
+        "parse_failed": plan.get("parse_failed", False),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_run(
+        tool="crawl_budget",
+        result=out,
+        target_url=site.get("url"),
+        summary=f"{len(out['actions'])} actions · {sig['wasted_pct']}% of Googlebot requests wasted",
+    )
+    return out
+
+
 # --- GSC Endpoints ---
 
 # Global GSC Client (Singleton)

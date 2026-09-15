@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, LineChart, Line, CartesianGrid } from 'recharts';
-import { Database, Filter, Download, Activity, Globe, AlertTriangle, Bot, TrendingUp, Eye } from 'lucide-react';
+import { Database, Filter, Download, Activity, Globe, AlertTriangle, Bot, TrendingUp, Eye, Gauge, Sparkles, FileText, Table } from 'lucide-react';
 
 const COLORS = ['#E20071', '#0891b2', '#15803d', '#b45309', '#7c3aed', '#db2777', '#0284c7', '#4d7c0f'];
 
@@ -62,6 +62,11 @@ export default function LogAnalyzer({ onData } = {}) {
   const [ipFilter, setIpFilter] = useState('');
   const [customUa, setCustomUa] = useState('');
 
+  // Crawl budget action plan (AI, on demand — one Gemini call per click)
+  const [plan, setPlan]             = useState(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError]   = useState('');
+
   useEffect(() => { fetchSites(); }, []);
 
   const fetchSites = async () => {
@@ -117,6 +122,9 @@ export default function LogAnalyzer({ onData } = {}) {
     const filesToLoad = availableFiles.slice(0, fileRange);
     setLoading(true);
     setAnalytics(null);
+    // The plan describes the previous window; keeping it on screen next to new numbers
+    // would attribute one period's actions to another.
+    setPlan(null); setPlanError('');
     startProgress(filesToLoad.length);
     try {
       const res = await fetch('/api/logs/analyze', {
@@ -163,6 +171,99 @@ export default function LogAnalyzer({ onData } = {}) {
   const realStatusCount = statusFilter && analytics
     ? (analytics.status_data?.find(s => s.name === statusFilter)?.value ?? null)
     : null;
+
+  // ── Crawl budget action plan ────────────────────────────────────────────────
+  const runCrawlBudget = async () => {
+    if (!selectedSite || !availableFiles.length) return;
+    setPlanLoading(true); setPlanError(''); setPlan(null);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const res = await fetch('/api/logs/crawl-budget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ site_name: selectedSite, files: availableFiles.slice(0, fileRange) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Analysis failed');
+      setPlan(data);
+    } catch (e) {
+      setPlanError(e.message || 'Request failed.');
+    } finally {
+      setPlanLoading(false);
+    }
+  };
+
+  const planPeriod = () =>
+    `${plan?.days_covered || 0} day${plan?.days_covered === 1 ? '' : 's'} of logs`;
+
+  const planMarkdown = () => {
+    if (!plan) return '';
+    const s = plan.signals || {};
+    const L = [
+      `# Crawl Budget Actions — ${plan.site}`,
+      ``,
+      `${planPeriod()} · generated ${new Date(plan.generated_at).toLocaleString()}`,
+      ``,
+      `## Measured`,
+      ``,
+      `| Metric | Value |`,
+      `|--------|-------|`,
+      `| Googlebot requests | ${(s.googlebot_hits || 0).toLocaleString()} (${s.googlebot_share_pct}% of ${(s.total_hits || 0).toLocaleString()} hits) |`,
+      `| Wasted on redirects/errors | ${(s.wasted_hits || 0).toLocaleString()} (${s.wasted_pct}% of Googlebot requests) |`,
+      `| 3xx redirects | ${s.redirect_pct}% |`,
+      `| 404/410 | ${s.not_found_pct}% |`,
+      `| 5xx | ${s.server_error_pct}% |`,
+      `| Parameter URLs (top paths) | ${s.parameter_url_pct}% |`,
+      `| Static assets (top paths) | ${s.static_asset_pct}% |`,
+      `| Low-value paths (top paths) | ${s.low_value_path_pct}% |`,
+      `| Third-party crawlers | ${s.third_party_pct}% of all hits |`,
+      `| Googlebot trend | ${s.googlebot_trend_pct == null ? 'n/a' : `${s.googlebot_trend_pct > 0 ? '+' : ''}${s.googlebot_trend_pct}%`} |`,
+      ``,
+    ];
+    if (plan.summary) L.push(`## Summary`, ``, plan.summary, ``);
+    L.push(`## Top actions`, ``);
+    (plan.actions || []).forEach((a, i) => {
+      L.push(
+        `### ${i + 1}. ${a.title}`,
+        ``,
+        `**Impact:** ${a.impact} · **Effort:** ${a.effort}`,
+        ``,
+        `- **Evidence:** ${a.evidence}`,
+        `- **Fix:** ${a.fix}`,
+        `- **Watch:** ${a.metric}`,
+        ``,
+      );
+    });
+    if (plan.parse_failed && plan.raw) L.push(`## Raw analysis`, ``, plan.raw, ``);
+    return L.join('\n');
+  };
+
+  const planCsv = () => {
+    if (!plan) return '';
+    const cell = v => {
+      const t = v == null ? '' : String(v);
+      return /[",;\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const rows = [['#', 'Action', 'Impact', 'Effort', 'Evidence', 'Fix', 'Metric to watch']];
+    (plan.actions || []).forEach((a, i) =>
+      rows.push([i + 1, a.title, a.impact, a.effort, a.evidence, a.fix, a.metric]));
+    // BOM + CRLF so Excel opens it as UTF-8; cells quote on ';' too for pt-BR locales.
+    return '\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n');
+  };
+
+  const downloadPlan = (kind) => {
+    const isCsv = kind === 'csv';
+    const body = isCsv ? planCsv() : planMarkdown();
+    const blob = new Blob([body], { type: isCsv ? 'text/csv;charset=utf-8;' : 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `crawl-budget-${selectedSite.replace(/ /g, '_')}-${new Date().toISOString().slice(0, 10)}.${isCsv ? 'csv' : 'md'}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
 
   const exportCSV = async () => {
     if (!analytics) return;
@@ -324,6 +425,117 @@ export default function LogAnalyzer({ onData } = {}) {
             <MetricCard icon={Globe}         label="Unique IPs"     value={analytics.unique_ips.toLocaleString()}     color="#0891b2" />
             <MetricCard icon={Eye}           label="Googlebot Hits" value={analytics.googlebot_hits.toLocaleString()} color="#15803d" sub={`${analytics.googlebot_rate}% of total`} />
             <MetricCard icon={TrendingUp}    label="Bot Crawlers"   value={analytics.bot_count}                       color="#7c3aed" sub="distinct bots detected" />
+          </div>
+
+          {/* Crawl budget action plan */}
+          <div className="glass-panel">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <h3 className="flex items-center gap-2" style={{ marginBottom: 4 }}>
+                  <Gauge size={18} color="var(--primary)" /> Crawl Budget Actions
+                </h3>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  Reads the {Math.min(fileRange, availableFiles.length)} selected day{Math.min(fileRange, availableFiles.length) === 1 ? '' : 's'} and ranks what to fix first — based on where Googlebot actually spent its requests.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {plan && !planLoading && (
+                  <>
+                    <button type="button" onClick={() => downloadPlan('md')} className="btn-secondary"
+                      title="Export the action plan as Markdown"
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 13px', fontSize: '0.8rem' }}>
+                      <FileText size={14} aria-hidden="true" /> .md
+                    </button>
+                    <button type="button" onClick={() => downloadPlan('csv')} className="btn-secondary"
+                      title="Export the actions as a spreadsheet"
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 13px', fontSize: '0.8rem' }}>
+                      <Table size={14} aria-hidden="true" /> .csv
+                    </button>
+                  </>
+                )}
+                <button type="button" onClick={runCrawlBudget} disabled={planLoading} className="btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 16px', fontSize: '0.84rem' }}>
+                  <Sparkles size={14} aria-hidden="true" style={{ animation: planLoading ? 'spin 1.4s linear infinite' : 'none' }} />
+                  {planLoading ? 'Analysing…' : plan ? 'Re-analyse' : 'Analyse crawl budget'}
+                </button>
+              </div>
+            </div>
+
+            {planError && (
+              <div role="alert" style={{ marginTop: 14, padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem',
+                background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#dc2626' }}>
+                {planError}
+              </div>
+            )}
+
+            {planLoading && (
+              <div role="status" style={{ marginTop: 16, textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                Reading Googlebot's requests across {Math.min(fileRange, availableFiles.length)} days…
+              </div>
+            )}
+
+            {plan && !planLoading && (
+              <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {/* The measured basis for the plan — shown so no recommendation looks like a guess */}
+                <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', padding: '12px 16px', borderRadius: 10,
+                  background: 'rgb(var(--ink) / 0.03)', border: '1px solid rgb(var(--ink) / 0.08)' }}>
+                  {[
+                    ['Googlebot requests', (plan.signals.googlebot_hits || 0).toLocaleString(), `${plan.signals.googlebot_share_pct}% of all hits`, 'var(--text-strong)'],
+                    ['Wasted', `${plan.signals.wasted_pct}%`, `${(plan.signals.wasted_hits || 0).toLocaleString()} redirects, errors & blocks`, plan.signals.wasted_pct >= 20 ? '#dc2626' : plan.signals.wasted_pct >= 10 ? '#b45309' : '#15803d'],
+                    ['Parameter URLs', `${plan.signals.parameter_url_pct}%`, 'of top crawled paths', 'var(--text-strong)'],
+                    ['Third-party bots', `${plan.signals.third_party_pct}%`, 'of all server hits', 'var(--text-strong)'],
+                  ].map(([label, value, sub, color]) => (
+                    <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span style={{ fontSize: '0.6rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)' }}>{label}</span>
+                      <span style={{ fontSize: '1.05rem', fontWeight: 800, color, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+                      <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{sub}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {plan.summary && (
+                  <p style={{ fontSize: '0.88rem', color: 'var(--text-strong)', lineHeight: 1.6, maxWidth: '72ch' }}>
+                    {plan.summary}
+                  </p>
+                )}
+
+                {plan.parse_failed && plan.raw && (
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.55 }}>{plan.raw}</pre>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {(plan.actions || []).map((a, i) => {
+                    const impactColor = a.impact === 'high' ? '#dc2626' : a.impact === 'medium' ? '#b45309' : '#64748b';
+                    return (
+                      <div key={i} style={{ border: '1px solid rgb(var(--ink) / 0.08)', borderLeft: `3px solid ${impactColor}`,
+                        borderRadius: 8, padding: '13px 16px', background: 'rgb(var(--ink) / 0.02)' }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--text-dim)', fontVariantNumeric: 'tabular-nums' }}>{i + 1}</span>
+                          <span style={{ fontWeight: 650, fontSize: '0.92rem', color: 'var(--text-strong)', flex: 1, minWidth: 200 }}>{a.title}</span>
+                          <span style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                            color: impactColor, background: `${impactColor}1a`, border: `1px solid ${impactColor}55`, padding: '2px 8px', borderRadius: 20 }}>
+                            {a.impact} impact
+                          </span>
+                          <span style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                            color: 'var(--text-muted)', background: 'rgb(var(--ink) / 0.06)', border: '1px solid rgb(var(--ink) / 0.12)', padding: '2px 8px', borderRadius: 20 }}>
+                            {a.effort} effort
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.82rem', lineHeight: 1.55 }}>
+                          {a.evidence && <div style={{ color: 'var(--text-muted)' }}><strong style={{ color: 'var(--text-strong)' }}>Evidence: </strong>{a.evidence}</div>}
+                          {a.fix && <div style={{ color: 'var(--text-muted)' }}><strong style={{ color: 'var(--text-strong)' }}>Fix: </strong>{a.fix}</div>}
+                          {a.metric && <div style={{ color: 'var(--text-muted)' }}><strong style={{ color: 'var(--text-strong)' }}>Watch: </strong>{a.metric}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>
+                  Based on {planPeriod()} · generated {new Date(plan.generated_at).toLocaleString()} · the percentages above are measured from the logs, the ranking and wording are AI.
+                </div>
+              </div>
+            )}
           </div>
 
           {(analytics.cache_hits > 0 || analytics.files_parsed > 0) && (
