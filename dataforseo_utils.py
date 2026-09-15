@@ -266,3 +266,60 @@ def fetch_serp_via_dataforseo(query: str, location_name: str = "Global (No Geolo
     if loc.get("note"):
         out["location_note"] = loc["note"]
     return out
+
+
+# ── Backlinks ─────────────────────────────────────────────────────────────────
+# Live-only endpoints, priced per call. The audit makes exactly two: one profile summary and
+# one page of the worst-scoring referring domains.
+
+def fetch_backlinks_summary(target: str) -> dict:
+    """Whole-profile metrics for a domain: counts, spam score, link types, platforms, TLDs."""
+    task = {
+        "target": target,
+        "internal_list_limit": 10,
+        "backlinks_status_type": "live",
+        "include_subdomains": True,
+    }
+    data, err = _post("/backlinks/summary/live", [task])
+    if err:
+        return {"error": err}
+    t = (data.get("tasks") or [{}])[0]
+    if t.get("status_code") != 20000:
+        return {"error": f"DataForSEO task {t.get('status_code')}: {t.get('status_message')}"}
+    result = (t.get("result") or [{}])[0]
+    result["cost"] = float(data.get("cost") or 0)
+    return result
+
+
+def fetch_backlinks(target: str, limit: int = 200, min_spam_score: int = None) -> dict:
+    """The referring links themselves, worst spam score first, one row per referring domain.
+
+    `one_per_domain` is deliberate: a disavow decision is made per domain (a `domain:` line
+    covers every URL on it), so pulling 50 links from one spam network would spend the row
+    budget without adding a single new decision.
+    """
+    task = {
+        "target": target,
+        "mode": "one_per_domain",
+        "limit": max(1, min(limit, 1000)),
+        "order_by": ["backlink_spam_score,desc", "domain_from_rank,asc"],
+        "backlinks_status_type": "live",
+        "include_subdomains": True,
+        "include_indirect_links": False,
+    }
+    if min_spam_score is not None:
+        task["filters"] = [["backlink_spam_score", ">=", int(min_spam_score)]]
+
+    data, err = _post("/backlinks/backlinks/live", [task])
+    if err:
+        return {"error": err}
+    t = (data.get("tasks") or [{}])[0]
+    if t.get("status_code") != 20000:
+        return {"error": f"DataForSEO task {t.get('status_code')}: {t.get('status_message')}"}
+    result = (t.get("result") or [{}])[0]
+    return {
+        "items": result.get("items") or [],
+        "total_count": result.get("total_count"),
+        "items_count": result.get("items_count"),
+        "cost": float(data.get("cost") or 0),
+    }

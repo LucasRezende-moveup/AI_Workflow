@@ -1562,7 +1562,8 @@ def tracking_delete(tracking_id: str, current_user=Depends(_decode_token)):
 # once tracking moved to DataForSEO the copy was redundant and was removed. The old tables are
 # still in the database, holding the comparison data, but nothing reads them.
 
-from dataforseo_utils import fetch_serp_via_dataforseo, dfs_account_status
+from dataforseo_utils import (fetch_serp_via_dataforseo, dfs_account_status,
+                              fetch_backlinks_summary, fetch_backlinks)
 
 
 def _serp_dfs_cached(keyword: str, location_name: str, force: bool = False) -> dict:
@@ -2684,6 +2685,257 @@ def logs_crawl_budget(req: CrawlBudgetRequest, current_user=Depends(_decode_toke
         result=out,
         target_url=site.get("url"),
         summary=f"{len(out['actions'])} actions · {sig['wasted_pct']}% of Googlebot requests wasted",
+    )
+    return out
+
+
+# --- Backlink audit / disavow candidates --------------------------------------
+#
+# Two layers, deliberately separated:
+#   1. Deterministic risk scoring from the measured link attributes — reproducible, and the
+#      reason strings are facts rather than opinions.
+#   2. A model pass that judges whether each flagged domain is *actually* manipulative.
+#      This matters because spam heuristics misfire constantly on this portfolio: a fan blog
+#      on blogspot linking to a football site scores 100 for spam and is entirely natural.
+#
+# Disavow is destructive and irreversible in effect — Google treats a disavowed domain as if
+# the link never existed, and most sites never need the file at all. Nothing here auto-submits
+# anything; it produces candidates for a human to review.
+
+# TLDs where the overwhelming majority of registrations are throwaway spam.
+_DISAVOW_BAD_TLD = {
+    "xyz", "top", "club", "icu", "tk", "ml", "ga", "cf", "gq", "buzz", "work", "loan",
+    "download", "stream", "bid", "win", "party", "review", "date", "faith", "science",
+    "men", "racing", "accountant", "cricket", "trade", "webcam", "kim", "mom", "surf",
+}
+
+# Anchor text that signals a paid or injected link rather than an editorial one.
+_DISAVOW_BAD_ANCHOR = re.compile(
+    r"(casino|bet\w*\s*(online|site)|poker|bingo|slots?|viagra|cialis|pharmacy|porn|xxx|"
+    r"escort|loan|payday|replica|cheap\s+\w+|buy\s+\w+\s+online|comprar\s+\w+|"
+    r"apostas?\s+(online|esportivas)|cassino|emprestimo|empréstimo)", re.I)
+
+
+def _disavow_score(b: dict) -> dict:
+    """Score one referring domain for disavow risk. Returns {risk, tier, reasons}."""
+    reasons = []
+    risk = 0
+
+    spam = int(b.get("backlink_spam_score") or 0)
+    rank = int(b.get("domain_from_rank") or 0)
+    dofollow = bool(b.get("dofollow"))
+    tld = (b.get("tld_from") or "").split(".")[-1].lower()
+    anchor = (b.get("anchor") or "").strip()
+    platforms = [str(p).lower() for p in (b.get("domain_from_platform_type") or [])]
+
+    if spam >= 85:
+        risk += 45; reasons.append(f"DataForSEO spam score {spam}/100")
+    elif spam >= 60:
+        risk += 28; reasons.append(f"elevated spam score {spam}/100")
+    elif spam >= 40:
+        risk += 12; reasons.append(f"moderate spam score {spam}/100")
+
+    if rank == 0:
+        risk += 20; reasons.append("referring domain has no measurable authority (rank 0)")
+    elif rank < 15:
+        risk += 10; reasons.append(f"very low domain rank ({rank})")
+
+    if tld in _DISAVOW_BAD_TLD:
+        risk += 20; reasons.append(f".{tld} — a TLD dominated by throwaway spam registrations")
+
+    if anchor and _DISAVOW_BAD_ANCHOR.search(anchor):
+        risk += 25; reasons.append(f'commercial/injected anchor text: "{anchor[:60]}"')
+
+    if b.get("domain_from_is_ip"):
+        risk += 15; reasons.append("link comes from a bare IP address, not a domain")
+
+    links_count = int(b.get("links_count") or 0)
+    if links_count >= 50:
+        risk += 12; reasons.append(f"{links_count} links from the same page — sitewide or injected placement")
+
+    if "message-boards" in platforms and spam >= 40:
+        risk += 8; reasons.append("forum/message-board placement with an elevated spam score")
+
+    if int(b.get("page_from_status_code") or 200) >= 400:
+        risk += 5; reasons.append(f"linking page returns HTTP {b.get('page_from_status_code')}")
+
+    # A nofollow link passes no PageRank, so disavowing it changes nothing. Google's own
+    # guidance is not to bother. Score it down hard rather than hiding it.
+    if not dofollow:
+        risk = int(risk * 0.35)
+        reasons.append("nofollow — passes no ranking signal, so disavowing has no effect")
+
+    if b.get("is_lost"):
+        risk = int(risk * 0.3)
+        reasons.append("link is already gone")
+
+    risk = max(0, min(risk, 100))
+    tier = "high" if risk >= 65 else "medium" if risk >= 38 else "low"
+    return {"risk": risk, "tier": tier, "reasons": reasons}
+
+
+def _backlink_review(domain: str, summary: dict, candidates: list) -> dict:
+    """Second opinion on the flagged domains: manipulative, or a false positive?"""
+    import json as _json
+
+    listing = "\n".join(
+        f"  {c['domain_from']} | risk {c['risk']} | spam {c['spam_score']} | rank {c['domain_rank']} | "
+        f"{'dofollow' if c['dofollow'] else 'nofollow'} | anchor: {(c['anchor'] or '(none)')[:45]} | "
+        f"reasons: {'; '.join(c['reasons'][:3])}"
+        for c in candidates[:40]
+    ) or "  (none flagged)"
+
+    prompt = f"""You are auditing the backlink profile of {domain} for disavow candidates.
+
+PROFILE (measured)
+  Referring domains: {summary.get('referring_domains', 0):,}
+  Total backlinks: {summary.get('backlinks', 0):,}
+  Profile spam score: {summary.get('backlinks_spam_score', 0)}/100
+  Broken backlinks: {summary.get('broken_backlinks', 0):,}
+  Domain rank: {summary.get('rank', 0)}
+
+FLAGGED DOMAINS (scored by measured attributes, worst first)
+{listing}
+
+CRITICAL CONTEXT
+This is a sports/news publisher. Fan blogs, forums, aggregators and small local sites linking
+to it are NATURAL and should NOT be disavowed, even when automated spam scores rate them high
+— blogspot/wordpress fan blogs in particular are usually legitimate. Disavow is only for links
+that are manipulative: paid link networks, hacked-site injections, scraped mirrors, PBNs, and
+irrelevant commercial anchors (gambling/pharma/loans) pointing at a site in another niche.
+Google advises most sites never to file a disavow at all. A wrong disavow destroys real equity
+and is slow to undo. Be conservative: when in doubt, say "keep".
+
+TASK
+Judge each flagged domain. Return ONLY valid JSON, no fences, no commentary:
+{{
+  "verdict": "action_needed|monitor|clean",
+  "summary": "2-4 sentences on the real state of this profile and whether a disavow is warranted at all",
+  "judgements": [
+    {{
+      "domain": "exact domain from the list",
+      "call": "disavow|review|keep",
+      "why": "one sentence, specific to this domain and the evidence given"
+    }}
+  ]
+}}
+Include a judgement for every flagged domain listed above."""
+
+    raw = _gemini_generate(prompt)
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+    try:
+        start, stop = text.index("{"), text.rindex("}") + 1
+        data = _json.loads(text[start:stop])
+    except Exception:
+        return {"verdict": "", "summary": "", "judgements": {}, "raw": raw, "parse_failed": True}
+
+    judgements = {}
+    for j in (data.get("judgements") or []):
+        if isinstance(j, dict) and j.get("domain"):
+            call = str(j.get("call", "")).strip().lower()
+            judgements[str(j["domain"]).strip().lower()] = {
+                "call": call if call in {"disavow", "review", "keep"} else "review",
+                "why": str(j.get("why", ""))[:400],
+            }
+    verdict = str(data.get("verdict", "")).strip().lower()
+    return {
+        "verdict": verdict if verdict in {"action_needed", "monitor", "clean"} else "monitor",
+        "summary": str(data.get("summary", ""))[:900],
+        "judgements": judgements,
+        "parse_failed": False,
+    }
+
+
+class BacklinkAuditRequest(BaseModel):
+    domain: str
+    limit: int = 200
+
+
+@app.post("/api/backlinks/audit")
+def backlinks_audit(req: BacklinkAuditRequest, current_user=Depends(_decode_token)):
+    """Pull a domain's referring links, score them for disavow risk, and have the model
+    sanity-check the flagged ones. Two paid DataForSEO calls plus one Gemini call."""
+    domain = _clean_domain(req.domain)
+    if not domain:
+        raise HTTPException(status_code=400, detail="Enter a valid domain (e.g. example.com).")
+
+    summary = fetch_backlinks_summary(domain)
+    if summary.get("error"):
+        raise HTTPException(status_code=502, detail=summary["error"])
+
+    links = fetch_backlinks(domain, limit=max(25, min(req.limit, 1000)))
+    if links.get("error"):
+        raise HTTPException(status_code=502, detail=links["error"])
+
+    scored = []
+    for b in links.get("items") or []:
+        s = _disavow_score(b)
+        scored.append({
+            "domain_from":  b.get("domain_from"),
+            "url_from":     b.get("url_from"),
+            "url_to":       b.get("url_to"),
+            "anchor":       b.get("anchor"),
+            "spam_score":   int(b.get("backlink_spam_score") or 0),
+            "domain_rank":  int(b.get("domain_from_rank") or 0),
+            "dofollow":     bool(b.get("dofollow")),
+            "tld":          b.get("tld_from"),
+            "platform":     b.get("domain_from_platform_type") or [],
+            "first_seen":   b.get("first_seen"),
+            "is_lost":      bool(b.get("is_lost")),
+            "links_count":  int(b.get("links_count") or 0),
+            "risk":         s["risk"],
+            "tier":         s["tier"],
+            "reasons":      s["reasons"],
+        })
+    scored.sort(key=lambda x: -x["risk"])
+    candidates = [c for c in scored if c["tier"] in ("high", "medium")]
+
+    review = {"verdict": "clean", "summary": "", "judgements": {}, "parse_failed": False}
+    if candidates:
+        try:
+            review = _backlink_review(domain, summary, candidates)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"AI review failed: {exc}")
+
+    for c in candidates:
+        j = review.get("judgements", {}).get((c["domain_from"] or "").lower())
+        c["call"] = (j or {}).get("call", "review")
+        c["why"] = (j or {}).get("why", "")
+
+    tally = {"disavow": 0, "review": 0, "keep": 0}
+    for c in candidates:
+        tally[c["call"]] = tally.get(c["call"], 0) + 1
+
+    out = {
+        "domain": domain,
+        "profile": {
+            "rank":              summary.get("rank"),
+            "backlinks":         summary.get("backlinks"),
+            "referring_domains": summary.get("referring_domains"),
+            "referring_main_domains": summary.get("referring_main_domains"),
+            "spam_score":        summary.get("backlinks_spam_score"),
+            "broken_backlinks":  summary.get("broken_backlinks"),
+            "link_types":        summary.get("referring_links_types") or {},
+        },
+        "analysed_links":  len(scored),
+        "total_referring": links.get("total_count"),
+        "candidates":      candidates[:150],
+        "tally":           tally,
+        "verdict":         review.get("verdict"),
+        "summary":         review.get("summary"),
+        "raw":             review.get("raw"),
+        "parse_failed":    review.get("parse_failed", False),
+        "cost":            round(float(summary.get("cost") or 0) + float(links.get("cost") or 0), 4),
+        "generated_at":    datetime.now(timezone.utc).isoformat(),
+    }
+    _save_run(
+        tool="backlink_audit",
+        result=out,
+        target_url=f"https://{domain}/",
+        summary=f"{tally['disavow']} to disavow · {tally['review']} to review · "
+                f"{len(scored)} links scored of {links.get('total_count') or 0:,} referring domains",
     )
     return out
 
