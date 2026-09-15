@@ -163,7 +163,7 @@ def _ensure_schema():
                         id         TEXT PRIMARY KEY,
                         name       TEXT NOT NULL,
                         domain     TEXT NOT NULL UNIQUE,
-                        location   TEXT NOT NULL DEFAULT 'Global (No Geolocation)',
+                        location   TEXT NOT NULL DEFAULT 'Brazil (General)',
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
@@ -172,7 +172,7 @@ def _ensure_schema():
                         id         TEXT PRIMARY KEY,
                         keyword    TEXT NOT NULL,
                         target_url TEXT,
-                        location   TEXT NOT NULL DEFAULT 'Global (No Geolocation)',
+                        location   TEXT NOT NULL DEFAULT 'Brazil (General)',
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
@@ -219,10 +219,38 @@ def _ensure_schema():
                     ALTER TABLE keyword_rankings
                     ADD COLUMN IF NOT EXISTS fs_present BOOLEAN
                 """)
+                # Which SERP provider measured this row. NULL = SerpAPI, the only source until
+                # the switch to DataForSEO. Two providers sample Google differently, so a
+                # position change across a provider boundary is not a real ranking movement —
+                # this column is what lets the alerting tell those two things apart.
+                cur.execute("""
+                    ALTER TABLE keyword_rankings
+                    ADD COLUMN IF NOT EXISTS source TEXT
+                """)
+                # What the snapshot cost. SerpAPI billed per credit off-platform; DataForSEO
+                # bills per request, so per-row cost is now knowable — and worth knowing, since
+                # an exhausted balance stalls the sweep silently.
+                cur.execute("""
+                    ALTER TABLE keyword_rankings
+                    ADD COLUMN IF NOT EXISTS cost NUMERIC DEFAULT 0
+                """)
+                # Retire "Global (No Geolocation)" from tracking. DataForSEO's google/organic
+                # always requires a location, so a "global" keyword had to resolve to *some*
+                # market — and for this portfolio that market is Brazil, not the US default the
+                # mapping started with. Migrating the stored rows keeps what the UI shows and
+                # what the API queries in agreement; leaving them would have every chart
+                # labelled "Global" while the numbers underneath came from Brazil.
+                # Idempotent: once no rows match it is a no-op on every later cold start.
+                for _tbl in ("tracking_projects", "keyword_tracking"):
+                    cur.execute(
+                        f"ALTER TABLE {_tbl} ALTER COLUMN location SET DEFAULT 'Brazil (General)'")
+                    cur.execute(
+                        f"UPDATE {_tbl} SET location = 'Brazil (General)' "
+                        f"WHERE location = 'Global (No Geolocation)'")
                 # Per-invocation log for the tracking cron. 500+ keywords cannot be checked
                 # inside one function timeout, so coverage is spread over several runs — this
                 # is how a day that finished cleanly is told apart from one that ran out of
-                # budget or burned through its SerpAPI quota.
+                # budget or burned through its DataForSEO balance.
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS tracking_cron_runs (
                         id           TEXT PRIMARY KEY,
@@ -719,10 +747,15 @@ def get_history_run(run_id: str, current_user=Depends(_decode_token)):
 
 # ── Keyword Tracking ──────────────────────────────────────────────────────────
 
+# Tracking has no "global" option: DataForSEO always resolves a SERP against a real location,
+# so every tracked keyword is measured in a named market. Brazil is this portfolio's.
+TRACK_DEFAULT_LOCATION = "Brazil (General)"
+
+
 class TrackingAddRequest(BaseModel):
     keyword: str
     target_url: Optional[str] = None
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
     project_id: Optional[str] = None
 
 
@@ -733,14 +766,14 @@ class TrackingBulkItem(BaseModel):
 
 class TrackingBulkRequest(BaseModel):
     items: List[TrackingBulkItem]
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
     project_id: Optional[str] = None
 
 
 class ProjectRequest(BaseModel):
     domain: str
     name: Optional[str] = None
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
 
 
 def _norm_host(netloc: str) -> str:
@@ -787,7 +820,7 @@ def _ensure_project(domain: str, name: str = None, location: str = None) -> Opti
                 cur.execute(
                     "INSERT INTO tracking_projects (id, name, domain, location) VALUES (%s,%s,%s,%s) "
                     "ON CONFLICT (domain) DO UPDATE SET domain = EXCLUDED.domain RETURNING id",
-                    (pid, name or dom, dom, location or "Global (No Geolocation)"),
+                    (pid, name or dom, dom, location or TRACK_DEFAULT_LOCATION),
                 )
                 return cur.fetchone()["id"]
     except Exception:
@@ -819,6 +852,15 @@ def _fire_alerts(tracking_id: str, keyword: str, prev: dict, curr: dict):
     """Compare two ranking snapshots and insert alert rows for significant changes."""
     from urllib.parse import urlparse
     alerts_to_insert = []
+
+    # A provider switch is not a ranking movement. The first DataForSEO snapshot for a keyword
+    # gets compared against a SerpAPI one (source NULL on every row written before the switch),
+    # and two providers sample Google differently enough that most keywords shift a place or
+    # two. Alerting on that would page the team about hundreds of phantom drops on changeover
+    # day and bury any real movement. One comparison per keyword is skipped; the next one,
+    # DataForSEO against DataForSEO, alerts normally.
+    if (prev.get("source") or "serpapi") != (curr.get("source") or "serpapi"):
+        return
 
     prev_pos  = prev.get("position")
     curr_pos  = curr.get("position")
@@ -902,15 +944,19 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
     """
     Fetch live SERP, save a ranking snapshot, fire alerts on changes.
 
-    Pinned to SerpAPI: a rank series is only meaningful if every point comes from the same
-    search engine. When SerpAPI is unavailable this returns {"skipped": True} and writes
-    nothing, leaving a visible gap rather than a fabricated position.
+    Pinned to DataForSEO, with no fallback: a rank series is only meaningful if every point
+    comes from the same source. When DataForSEO is unavailable this returns {"skipped": True}
+    and writes nothing, leaving a visible gap rather than a fabricated position.
+
+    `_serp_dfs_cached` is the strict fetcher — DataForSEO or nothing. It shares its cache
+    namespace with the DataForSEO tracking test copy, so a SERP either one buys is reused
+    rather than paid for twice.
     """
     from urllib.parse import urlparse
-    serp = _serp_cached(keyword, location_name=location, provider="serpapi")
+    serp = _serp_dfs_cached(keyword, location_name=location)
     organic = serp.get("organic", [])
     if not organic:
-        return {"skipped": True, "reason": serp.get("error", "no organic results from SerpAPI")}
+        return {"skipped": True, "reason": serp.get("error", "no organic results from DataForSEO")}
     position = None
     ranking_url = None
     if target_url and organic:
@@ -960,7 +1006,7 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
         with _db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT position, fs_holder_domain, fs_present FROM keyword_rankings
+                    """SELECT position, fs_holder_domain, fs_present, source FROM keyword_rankings
                        WHERE tracking_id = %s ORDER BY checked_at DESC LIMIT 1""",
                     (tracking_id,)
                 )
@@ -972,20 +1018,22 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
 
     # A failed write must not be silent: the cron counts it as a failure so a broken run is
     # visible instead of looking like a day when nothing moved.
+    cost = float(serp.get("cost") or 0)
     row_id = str(uuid.uuid4())
     with _db_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO keyword_rankings
                    (id, tracking_id, position, ranking_url, fs_holder_url, fs_holder_domain,
-                    fs_present, total_results, top_domains)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    fs_present, total_results, top_domains, source, cost)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (row_id, tracking_id, position, ranking_url, fs_url, fs_domain,
-                 fs_present, len(organic), json.dumps(top_domains))
+                 fs_present, len(organic), json.dumps(top_domains), "dataforseo", cost)
             )
         conn.commit()
 
-    curr_snapshot = {"position": position, "fs_holder_domain": fs_domain, "fs_present": fs_present}
+    curr_snapshot = {"position": position, "fs_holder_domain": fs_domain,
+                     "fs_present": fs_present, "source": "dataforseo"}
     if prev_snapshot:
         _fire_alerts(tracking_id, keyword, prev_snapshot, curr_snapshot)
 
@@ -997,6 +1045,8 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
         "fs_present": fs_present,
         "total_results": len(organic),
         "top_domains": top_domains,
+        "source": "dataforseo",
+        "cost": cost,
     }
 
 
@@ -1103,7 +1153,7 @@ class ImportRow(BaseModel):
 
 class TrackingImportRequest(BaseModel):
     domain: str
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
     target_url: Optional[str] = None
     keywords: List[str] = []
     history: List[ImportRow] = []
@@ -1485,7 +1535,7 @@ def tracking_check(tracking_id: str, current_user=Depends(_decode_token)):
         # "not ranking" — nothing was measured and nothing was stored.
         raise HTTPException(
             status_code=503,
-            detail=f"SerpAPI unavailable, no snapshot recorded: {ranking.get('reason', '')}")
+            detail=f"DataForSEO unavailable, no snapshot recorded: {ranking.get('reason', '')}")
     return ranking
 
 
@@ -1502,6 +1552,65 @@ def tracking_delete(tracking_id: str, current_user=Depends(_decode_token)):
     if not gone:
         raise HTTPException(status_code=404, detail="Not found")
     return {"deleted": True}
+
+
+# ── DataForSEO SERP fetcher ───────────────────────────────────────────────────
+#
+# Shared by rank tracking (strict — this fetcher or nothing) and the FS Stealer (which reaches
+# it through _serp_cached with provider="dataforseo", and may fall back). This was once a
+# parallel "test copy" of tracking with its own /api/tracking-dfs endpoints and *_dfs tables;
+# once tracking moved to DataForSEO the copy was redundant and was removed. The old tables are
+# still in the database, holding the comparison data, but nothing reads them.
+
+from dataforseo_utils import fetch_serp_via_dataforseo, dfs_account_status
+
+
+def _serp_dfs_cached(keyword: str, location_name: str, force: bool = False) -> dict:
+    """DataForSEO SERP with the same short-lived DB cache the other tools use, under its own
+    key namespace so a SerpAPI result can never satisfy a DataForSEO lookup — that would put
+    two providers' positions into one rank series."""
+    ttl = float(os.getenv("DATAFORSEO_CACHE_TTL_HOURS", os.getenv("SERP_CACHE_TTL_HOURS", "6")))
+    key = f"dfs|{(keyword or '').strip().lower()}|{location_name}"
+
+    if ttl > 0 and not force:
+        try:
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT result FROM serp_cache WHERE cache_key = %s "
+                        "AND created_at > NOW() - (%s * INTERVAL '1 hour')",
+                        (key, ttl),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        res = row["result"]
+                        if isinstance(res, str):
+                            res = json.loads(res)
+                        if isinstance(res, dict) and res.get("source") == "dataforseo":
+                            res["_cached"] = True
+                            res["cost"] = 0.0        # a cache hit costs nothing; don't re-bill it
+                            return res
+        except Exception:
+            pass
+
+    res = fetch_serp_via_dataforseo(keyword, location_name=location_name)
+    if isinstance(res, dict) and res.get("organic"):
+        try:
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO serp_cache (cache_key, keyword, location, result)
+                           VALUES (%s,%s,%s,%s)
+                           ON CONFLICT (cache_key) DO UPDATE
+                             SET result = EXCLUDED.result, created_at = NOW()""",
+                        (key, (keyword or "").strip(), location_name, json.dumps(res)),
+                    )
+                conn.commit()
+        except Exception:
+            pass
+    if isinstance(res, dict):
+        res["_cached"] = False
+    return res
 
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
@@ -1682,6 +1791,7 @@ def cron_check_all(authorization: str = Header(None)):
     due = due[:TRACK_MAX_PER_RUN]
 
     checked = failed = 0
+    spend = 0.0
     skipped: list = []
     errors: list = []
 
@@ -1709,12 +1819,14 @@ def cron_check_all(authorization: str = Header(None)):
                         skipped.append({"keyword": item["keyword"], "reason": res.get("reason", "")[:200]})
                     else:
                         checked += 1
+                        spend += float(res.get("cost") or 0)
     finally:
         # Always close the row — a run left open would block the next hour's invocation.
         left = len(remaining)
         duration = round(time.monotonic() - started, 1)
         note = "; ".join(filter(None, [
-            f"{len(skipped)} skipped (SerpAPI unavailable)" if skipped else "",
+            f"${round(spend, 4)} spent" if spend else "",
+            f"{len(skipped)} skipped (DataForSEO unavailable)" if skipped else "",
             f"{failed} failed" if failed else "",
             "time budget reached" if left else "",
             "batch cap hit — more still due" if more_than_batch else "",
@@ -1735,6 +1847,7 @@ def cron_check_all(authorization: str = Header(None)):
         "checked": checked,
         "skipped": len(skipped),
         "failed": failed,
+        "cost": round(spend, 4),
         "unprocessed_this_run": left,
         "more_due_beyond_batch": more_than_batch,
         "duration_s": duration,
@@ -1753,12 +1866,15 @@ def tracking_cron_status(current_user=Depends(_decode_token)):
                 cur.execute("SELECT COUNT(*) AS n FROM keyword_tracking")
                 total = int(cur.fetchone()["n"] or 0)
                 cur.execute(
-                    """SELECT COUNT(DISTINCT kr.tracking_id) AS n
+                    """SELECT COUNT(DISTINCT kr.tracking_id) AS n,
+                              COALESCE(SUM(kr.cost), 0)      AS spend
                        FROM keyword_rankings kr
                        WHERE (kr.checked_at AT TIME ZONE 'UTC')::date
                              = (NOW() AT TIME ZONE 'UTC')::date"""
                 )
-                done = int(cur.fetchone()["n"] or 0)
+                _row = cur.fetchone()
+                done = int(_row["n"] or 0)
+                spend_today = float(_row["spend"] or 0)
                 cur.execute(
                     """SELECT started_at, duration_s, due_at_start, checked, skipped,
                               failed, remaining, notes
@@ -1777,8 +1893,18 @@ def tracking_cron_status(current_user=Depends(_decode_token)):
         "checked_today": done,
         "due_today": max(0, total - done),
         "coverage_pct": round(done / total * 100) if total else 0,
+        "source": "dataforseo",
+        "spend_today": round(spend_today, 4),
         "runs_today": runs,
     }
+
+
+@app.get("/api/tracking/account")
+def tracking_account(current_user=Depends(_decode_token)):
+    """DataForSEO credentials and balance. Tracking buys a SERP per keyword per day and stops
+    recording when the balance runs out, so the remaining credit belongs on screen next to the
+    coverage numbers — a drained account and a quiet day look identical otherwise."""
+    return dfs_account_status()
 
 
 class SiteConfig(BaseModel):
@@ -2880,7 +3006,10 @@ def _serp_cached(keyword: str, location_name: str = "Global (No Geolocation)",
     still gets fresh data. Only successful results are cached; errors always re-fetch.
     """
     ttl = float(os.getenv("SERP_CACHE_TTL_HOURS", "6"))
-    key = f"{(keyword or '').strip().lower()}|{location_name}"
+    # DataForSEO callers get their own key namespace, shared with the rank-tracking test copy
+    # (_serp_dfs_cached) so a SERP bought by one is reused by the other instead of paid for twice.
+    ns = "dfs|" if provider == "dataforseo" else ""
+    key = f"{ns}{(keyword or '').strip().lower()}|{location_name}"
 
     if ttl > 0:
         try:
@@ -2896,12 +3025,16 @@ def _serp_cached(keyword: str, location_name: str = "Global (No Geolocation)",
                         res = row["result"]
                         if isinstance(res, str):
                             res = json.loads(res)
-                        # A cached entry from a fallback engine must not satisfy a caller that
-                        # explicitly demanded SerpAPI — that would reintroduce the mixed-source
-                        # data the provider pin exists to prevent.
-                        if isinstance(res, dict) and not (
-                            provider == "serpapi" and res.get("source") != "serpapi"
-                        ):
+                        # A cached entry from the wrong engine must not satisfy a caller that
+                        # pinned a provider — that would reintroduce the mixed-source data the
+                        # pin exists to prevent. SerpAPI demands SerpAPI exactly; DataForSEO
+                        # accepts its own fallback chain but never a SerpAPI result.
+                        src = res.get("source") if isinstance(res, dict) else None
+                        wrong_source = (
+                            (provider == "serpapi" and src != "serpapi") or
+                            (provider == "dataforseo" and src == "serpapi")
+                        )
+                        if isinstance(res, dict) and not wrong_source:
                             res["_cached"] = True
                             return res
         except Exception:
@@ -4177,8 +4310,8 @@ def fs_stealer_analyze(req: FsStealerRequest):
     target_url = req.target_url if req.target_url.startswith("http") else "https://" + req.target_url
     intent = _classify_intent(req.keyword)
 
-    # Step 1 — fetch SERP: SerpAPI (real Google) → DuckDuckGo → Google scraper
-    serp = _serp_cached(req.keyword, location_name=req.location_name)
+    # Step 1 — fetch SERP: DataForSEO (real Google) → DuckDuckGo → Google scraper
+    serp = _serp_cached(req.keyword, location_name=req.location_name, provider="dataforseo")
     if not serp.get("organic"):
         raise HTTPException(status_code=502, detail=serp.get("error", "SERP fetch failed. Please try again."))
 
@@ -4190,7 +4323,7 @@ def fs_stealer_analyze(req: FsStealerRequest):
     # snippet from a result that is not #1 — and plenty of SERPs have no snippet at all — so
     # treating organic[0] as "the FS holder" was a guess presented to the user as fact.
     featured = serp.get("featured_snippet")
-    fs_known = serp.get("source") == "serpapi"      # only SerpAPI can confirm absence
+    fs_known = serp.get("source") == "dataforseo"   # only DataForSEO can confirm absence
     if featured and featured.get("link"):
         fs_link = featured["link"]
         fs_holder = next(

@@ -137,7 +137,9 @@ const MD_COMPONENTS = {
 export default function FsStealer() {
   const [keyword,      setKeyword]      = useState('');
   const [targetUrl,    setTargetUrl]    = useState('');
-  const [location,     setLocation]     = useState('Global (No Geolocation)');
+  // Defaults to the portfolio's market. "Global" stays selectable, but note that DataForSEO
+  // resolves it to Brazil — there is no global Google SERP to query.
+  const [location,     setLocation]     = useState('Brazil (General)');
   const [authUser,     setAuthUser]     = useState('');
   const [authPass,     setAuthPass]     = useState('');
   const [geolocations, setGeolocations] = useState(['Global (No Geolocation)']);

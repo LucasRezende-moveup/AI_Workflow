@@ -2,7 +2,7 @@
 
 Welcome! This guide walks new users through everything the platform does and how to use each tool. No technical background required.
 
-The platform is a suite of SEO tools that pull **real data** from Google Search Console, Google (via SerpAPI), PageSpeed Insights, your Looker Studio spreadsheets, and your server logs — then layer AI analysis on top to turn that data into actionable recommendations.
+The platform is a suite of SEO tools that pull **real data** from Google Search Console, Google (via DataForSEO), PageSpeed Insights, your Looker Studio spreadsheets, and your server logs — then layer AI analysis on top to turn that data into actionable recommendations.
 
 ---
 
@@ -175,7 +175,7 @@ A tabbed workspace for page-level content quality. Enter a URL in each tab.
 2. The platform records your **position**, the **featured-snippet holder**, and total results — and re-checks every keyword **once per day automatically**.
 3. Open a keyword's **history** to see its position trend, and watch the **Alerts** bell for drops, gains, lost/gained rankings, and FS-holder changes.
 
-> Each tracked keyword uses ~1 SerpAPI credit per day (see [Usage Limits](#data-sources--usage-limits)). Delete keywords you no longer need.
+> Each tracked keyword buys one DataForSEO SERP per day (see [Usage Limits](#data-sources--usage-limits)). Delete keywords you no longer need — the daily sweep stops recording once the account balance runs out.
 
 ---
 
@@ -208,15 +208,16 @@ Opening the bell marks alerts as seen.
 
 | Feature | Data source | Cost / limit to know |
 |---|---|---|
-| SERP Analyzer, FS Stealer | SerpAPI (real Google) | **~1 credit per analysis** |
-| Tracking | SerpAPI | **~1 credit per keyword per day** (adds up — prune unused keywords) |
+| SERP Analyzer | SerpAPI (real Google) | **~1 credit per analysis** |
+| FS Stealer | DataForSEO (real Google) | **~$0.002 per analysis** |
+| Tracking | DataForSEO (only source — never falls back) | **~$0.002 per keyword per day** (adds up — prune unused keywords) |
 | GSC Dashboard, Indexation | Google Search Console | Bound by your GSC access |
 | Core Web Vitals | Google PageSpeed Insights | Rate-limited without a dedicated key |
 | SEO Health | Google Sheets (Looker Studio sources) | Sheets must be "anyone with the link can view" |
 | AI insights & chat (all tools) | Google Gemini | — |
 | Log Analysis | Your server's log endpoint | First run downloads logs; later runs use the cache |
 
-If a SERP-based tool fails, the platform automatically falls back from SerpAPI to alternate sources, so occasional hiccups usually self-recover.
+If the SERP Analyzer or FS Stealer fails, the platform automatically falls back to alternate sources, so occasional hiccups usually self-recover. Tracking deliberately does **not** fall back: a rank chart is only meaningful if every point comes from the same source, so a failed check leaves a visible gap in the history instead of a position measured somewhere else.
 
 ---
 
