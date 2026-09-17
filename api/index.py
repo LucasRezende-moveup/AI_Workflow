@@ -13,6 +13,7 @@ import bcrypt
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
 import requests as _http
+from collections import defaultdict
 try:
     import psycopg2
     import psycopg2.extras
@@ -2936,6 +2937,238 @@ def backlinks_audit(req: BacklinkAuditRequest, current_user=Depends(_decode_toke
         target_url=f"https://{domain}/",
         summary=f"{tally['disavow']} to disavow · {tally['review']} to review · "
                 f"{len(scored)} links scored of {links.get('total_count') or 0:,} referring domains",
+    )
+    return out
+
+
+# --- Hreflang checker ---------------------------------------------------------
+
+import hreflang as _hl
+
+
+class HreflangRequest(BaseModel):
+    domain: str
+    locales: List[str] = []          # empty = every locale folder found
+    max_pages: int = 120
+    sitemap_url: Optional[str] = None
+    ai_confirm: bool = True
+
+
+def _hreflang_ai_confirm(pairs: list) -> dict:
+    """Ask the model which borderline pairs are really the same page in another language.
+
+    Best-effort: the structural signals already decided the clear cases, so a quota error or a
+    malformed reply must degrade the result rather than fail the run.
+    """
+    import json as _json
+    listing = "\n".join(
+        f'{i}. A: [{p["locale_a"]}] "{p["title_a"]}" ({p["path_a"]})\n'
+        f'   B: [{p["locale_b"]}] "{p["title_b"]}" ({p["path_b"]})'
+        for i, p in enumerate(pairs, 1))
+
+    prompt = f"""For each numbered pair, decide whether the two pages are the SAME content
+published for a different language or region — the relationship hreflang exists to declare.
+
+Titles are in different languages, so judge by meaning, not by shared words. A translated
+title ("Transfer window" / "Janela de transferências") is the same page. A merely related
+page ("Transfer window" / "Top 10 signings") is NOT — say no.
+
+{listing}
+
+Return ONLY valid JSON, no fences:
+{{"verdicts": [{{"n": 1, "same": true, "why": "one short clause"}}]}}"""
+
+    try:
+        raw = _gemini_generate(prompt)
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+        data = _json.loads(text[text.index("{"):text.rindex("}") + 1])
+        out = {}
+        for v in data.get("verdicts") or []:
+            try:
+                out[int(v["n"])] = {"same": bool(v.get("same")), "why": str(v.get("why", ""))[:200]}
+            except Exception:
+                continue
+        return {"verdicts": out, "error": None}
+    except Exception as exc:
+        return {"verdicts": {}, "error": str(exc)[:200]}
+
+
+@app.post("/api/hreflang/check")
+def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
+    """Crawl a site's locale subfolders and report pages that should be linked by hreflang.
+
+    Path parity and translation-surviving fingerprints (images, numbers, outbound links) do the
+    matching; the model is only consulted on pairs those leave ambiguous.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from urllib.parse import urlparse as _up
+
+    domain = _clean_domain(req.domain)
+    if not domain:
+        raise HTTPException(status_code=400, detail="Enter a valid domain (e.g. example.com).")
+    base = f"https://{domain}/"
+    max_pages = max(20, min(req.max_pages, 400))
+
+    session = http_requests.Session()
+
+    # 1. URL inventory
+    if req.sitemap_url:
+        disc = _hl.discover_sitemap_urls(req.sitemap_url, session)
+        if not disc["urls"]:
+            disc = _hl.discover_sitemap_urls(base, session)
+    else:
+        disc = _hl.discover_sitemap_urls(base, session)
+    all_urls = disc["urls"]
+    if not all_urls:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No sitemap found for {domain}. Tried robots.txt and the usual paths — "
+                   f"pass a sitemap URL explicitly if it lives somewhere else.")
+
+    # 2. Bucket by locale folder
+    by_locale = defaultdict(list)
+    no_locale = 0
+    for u in all_urls:
+        loc, rest = _hl.split_locale_path(_up(u).path)
+        if loc:
+            by_locale[loc].append((rest.rstrip("/") or "/", u))
+        else:
+            no_locale += 1
+
+    wanted = [l for l in req.locales if l] or list(by_locale.keys())
+    by_locale = {l: v for l, v in by_locale.items() if l in wanted}
+    if len(by_locale) < 2:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Found {len(by_locale)} locale subfolder(s) in the sitemap "
+                   f"({', '.join(sorted(by_locale)) or 'none'}). hreflang needs at least two "
+                   f"language or region versions to compare.")
+
+    # 3. Choose what to fetch. Paths that already appear in several locales are the cheapest
+    #    wins, so they come first; the remainder fills the budget so translated slugs — the
+    #    pages most likely to be *missing* hreflang — still get a chance to be matched.
+    path_locales = defaultdict(set)
+    for loc, items in by_locale.items():
+        for rest, _ in items:
+            path_locales[rest].add(loc)
+    shared_paths = {p for p, ls in path_locales.items() if len(ls) > 1}
+
+    picked, seen_urls = [], set()
+    for loc, items in by_locale.items():
+        shared = [(r, u) for r, u in items if r in shared_paths]
+        solo = [(r, u) for r, u in items if r not in shared_paths]
+        quota = max(4, max_pages // max(len(by_locale), 1))
+        for rest, u in (shared[: int(quota * 0.7)] + solo[: quota - int(quota * 0.7)]):
+            if u not in seen_urls and len(picked) < max_pages:
+                seen_urls.add(u); picked.append((loc, rest, u))
+
+    # 4. Fetch
+    def _one(item):
+        loc, rest, u = item
+        page = _hl.fetch_page(u, session)
+        page["locale"], page["rest"] = loc, rest
+        return page
+
+    pages = []
+    with ThreadPoolExecutor(max_workers=int(os.getenv("HREFLANG_WORKERS", "10"))) as ex:
+        for p in ex.map(_one, picked):
+            pages.append(p)
+
+    ok_pages = [p for p in pages if p.get("status") == 200]
+    if not ok_pages:
+        raise HTTPException(status_code=502,
+                            detail="Every sampled page failed to fetch — the site may be blocking us.")
+
+    # 5. Groups that path parity already proves, audited for annotation problems
+    groups = [_hl.audit_group(k, v) for k, v in _hl.group_by_path(ok_pages).items()]
+    groups.sort(key=lambda g: ({"high": 0, "medium": 1, "low": 2, "ok": 3}[g["severity"]], g["path"]))
+
+    # 6. Pages with no path twin: compare across locales on content instead
+    grouped_urls = {p["final_url"] for g in _hl.group_by_path(ok_pages).values() for p in g.values()}
+    orphans = [p for p in ok_pages if p["final_url"] not in grouped_urls]
+
+    candidates, ambiguous = [], []
+    for i, a in enumerate(orphans):
+        for b in orphans[i + 1:]:
+            if a["locale"] == b["locale"]:
+                continue
+            same_lang = a["locale"].split("-")[0] == b["locale"].split("-")[0]
+            s = _hl.score_pair(a, b, same_lang)
+            if s["confidence"] < 0.25:
+                continue
+            row = {
+                "locale_a": a["locale"], "path_a": a["rest"], "url_a": a["final_url"], "title_a": a["title"],
+                "locale_b": b["locale"], "path_b": b["rest"], "url_b": b["final_url"], "title_b": b["title"],
+                "confidence": s["confidence"], "method": s["method"], "signals": s["signals"],
+                "already_linked": any(_hl._norm_url(h) == _hl._norm_url(b["final_url"])
+                                      for h in a["hreflangs"].values()),
+                "suggested_tags": _hl.suggest_tags({a["locale"]: a, b["locale"]: b}),
+            }
+            (candidates if s["confidence"] >= 0.55 else ambiguous).append(row)
+
+    candidates.sort(key=lambda r: -r["confidence"])
+    ambiguous.sort(key=lambda r: -r["confidence"])
+
+    # 7. One model call to adjudicate the middle band
+    ai_note = None
+    if req.ai_confirm and ambiguous:
+        batch = ambiguous[:25]
+        res = _hreflang_ai_confirm(batch)
+        if res["error"]:
+            ai_note = f"AI confirmation unavailable ({res['error']}) — showing structural scores only."
+        else:
+            for n, verdict in res["verdicts"].items():
+                if 1 <= n <= len(batch):
+                    row = batch[n - 1]
+                    row["ai_same"] = verdict["same"]
+                    row["ai_why"] = verdict["why"]
+                    if verdict["same"]:
+                        row["confidence"] = max(row["confidence"], 0.6)
+                        candidates.append(row)
+            ai_note = f"{sum(1 for r in batch if r.get('ai_same'))} of {len(batch)} borderline pairs confirmed by AI."
+        candidates.sort(key=lambda r: -r["confidence"])
+
+    missing_pairs = [c for c in candidates if not c["already_linked"]]
+
+    counts = defaultdict(int)
+    for g in groups:
+        for i in g["issues"]:
+            counts[i["type"]] += 1
+
+    out = {
+        "domain": domain,
+        "locales_found": sorted(
+            [{"locale": l, "urls_in_sitemap": len(v)} for l, v in by_locale.items()],
+            key=lambda x: -x["urls_in_sitemap"]),
+        "sitemap_urls": len(all_urls),
+        "urls_without_locale": no_locale,
+        "pages_fetched": len(ok_pages),
+        "pages_failed": len(pages) - len(ok_pages),
+        "groups": groups[:200],
+        "groups_total": len(groups),
+        "missing_pairs": missing_pairs[:100],
+        "summary": {
+            "groups_with_issues": sum(1 for g in groups if g["severity"] != "ok"),
+            "missing_entirely": counts["missing_entirely"],
+            "not_reciprocal": counts["not_reciprocal"],
+            "missing_alternate": counts["missing_alternate"],
+            "missing_self_reference": counts["missing_self_reference"],
+            "invalid_code": counts["invalid_code"],
+            "canonical_conflict": counts["canonical_conflict"],
+            "lang_mismatch": counts["lang_mismatch"],
+            "content_matches_unlinked": len(missing_pairs),
+        },
+        "ai_note": ai_note,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_run(
+        tool="hreflang",
+        result=out,
+        target_url=base,
+        summary=f"{out['summary']['groups_with_issues']} of {len(groups)} page sets have hreflang "
+                f"issues · {len(missing_pairs)} unlinked content matches",
     )
     return out
 
