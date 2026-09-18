@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Languages, Sparkles, FileText, Table, AlertTriangle, Check } from 'lucide-react';
 
 // Hreflang checker — finds pages that exist in several locale subfolders and reports where the
@@ -43,11 +43,14 @@ export default function HreflangCheck() {
   const [selectedSite, setSelectedSite] = useState('');
   const [domain, setDomain]           = useState('');
   const [sitemapUrl, setSitemapUrl]   = useState('');
-  const [maxPages, setMaxPages]       = useState(120);
+  const [maxPages, setMaxPages]       = useState(1000);
   const [result, setResult]           = useState(null);
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState('');
   const [copied, setCopied]           = useState(null);
+  const [phase, setPhase]             = useState('');
+  const [progress, setProgress]       = useState(null);
+  const stopRef                       = useRef(false);
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
@@ -75,24 +78,62 @@ export default function HreflangCheck() {
     if (h && !domain.trim()) { setDomain(h); setSelectedSite(''); }
   };
 
+  // start -> step until drained -> result.
+  //
+  // One request can only ever do ~300s of work before Vercel kills it, so the crawl is driven
+  // from here in short steps. Each step is bounded by wall clock on the server and persists
+  // what it fetched, which means a slow site costs more steps rather than the whole result,
+  // and a refresh mid-crawl loses nothing — the pages are already in Postgres.
+  const api = (path, opts = {}) => {
+    const token = localStorage.getItem('auth_token');
+    return fetch(path, { ...opts, headers: { 'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`, ...(opts.headers || {}) } });
+  };
+
   const run = async () => {
     if (!domain.trim()) return;
-    setLoading(true); setError(''); setResult(null);
+    stopRef.current = false;
+    setLoading(true); setError(''); setResult(null); setProgress(null);
+    setPhase('Reading the sitemap and detecting locales…');
     try {
-      const token = localStorage.getItem('auth_token');
-      const res = await fetch('/api/hreflang/check', {
+      const sres = await api('/api/hreflang/crawl/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ domain: domain.trim(), max_pages: maxPages,
-                               sitemap_url: sitemapUrl.trim() || null }),
+        body: JSON.stringify({ domain: domain.trim(), sitemap_url: sitemapUrl.trim() || null,
+                               max_pages: maxPages }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Check failed');
-      setResult(data);
+      const start = await sres.json();
+      if (!sres.ok) throw new Error(start.detail || 'Could not start the crawl');
+
+      setPhase(`${(start.locales_found || []).length} locales · ${start.pages_queued} pages queued`);
+      let last = null;
+      // Guard the loop: a step that fetches nothing and reports nothing pending would
+      // otherwise spin forever against a site that refuses every request.
+      for (let i = 0; i < 400 && !stopRef.current; i++) {
+        const stres = await api('/api/hreflang/crawl/step', {
+          method: 'POST',
+          body: JSON.stringify({ crawl_id: start.crawl_id, budget_s: 45 }),
+        });
+        const step = await stres.json();
+        if (!stres.ok) throw new Error(step.detail || 'A crawl step failed');
+        last = step;
+        setProgress(step);
+        setPhase(`Fetched ${step.pages_done} of ${step.pages_queued} pages` +
+                 (step.pages_failed ? ` · ${step.pages_failed} failed` : ''));
+        if (step.complete) break;
+        if (step.fetched_this_step === 0 && step.failed_this_step === 0) break;
+      }
+
+      setPhase('Matching equivalent pages across locales…');
+      const rres = await api(`/api/hreflang/crawl/${start.crawl_id}?ai_confirm=true`);
+      const report = await rres.json();
+      if (!rres.ok) throw new Error(report.detail || 'Could not build the report');
+      // start carries the locale discovery detail the report does not repeat.
+      setResult({ ...start, ...report,
+                  stopped_early: !!(last && !last.complete) });
     } catch (e) {
       setError(e.message || 'Request failed.');
     } finally {
-      setLoading(false);
+      setLoading(false); setPhase('');
     }
   };
 
@@ -214,7 +255,7 @@ export default function HreflangCheck() {
           <label className="metric-label mb-2 block" htmlFor="hl-max">Pages to crawl</label>
           <select id="hl-max" className="glass-input glass-select" value={maxPages}
             onChange={e => setMaxPages(Number(e.target.value))}>
-            {[60, 120, 240, 400].map(n => <option key={n} value={n}>{n} pages</option>)}
+            {[120, 400, 1000, 2500, 5000].map(n => <option key={n} value={n}>{n} pages</option>)}
           </select>
         </div>
       </div>
@@ -239,8 +280,27 @@ export default function HreflangCheck() {
       )}
 
       {loading && (
-        <div role="status" style={{ marginTop: 16, textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
-          Reading {domain}'s sitemap, then fetching up to {maxPages} pages across its locale folders…
+        <div role="status" style={{ marginTop: 16, padding: '18px 16px', borderRadius: 10,
+          background: 'rgb(var(--ink) / 0.03)', border: '1px solid rgb(var(--ink) / 0.08)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-strong)' }}>{phase || 'Working…'}</span>
+            <button type="button" onClick={() => { stopRef.current = true; }} className="btn-secondary"
+              style={{ fontSize: '0.76rem', padding: '5px 12px' }}>
+              Stop and report on what's crawled
+            </button>
+          </div>
+          {progress && progress.pages_queued > 0 && (
+            <>
+              <div style={{ height: 6, borderRadius: 4, background: 'rgb(var(--ink) / 0.08)', marginTop: 12, overflow: 'hidden' }}>
+                <div style={{ height: '100%', borderRadius: 4, background: 'var(--primary)',
+                  width: `${Math.min(100, Math.round((progress.pages_done + progress.pages_failed) / progress.pages_queued * 100))}%`,
+                  transition: 'width 0.3s' }} />
+              </div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: 6 }}>
+                {progress.pages_pending} still queued · each step runs ~45s server-side, so a slow site simply takes more steps
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -390,6 +450,7 @@ export default function HreflangCheck() {
           )}
 
           <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', lineHeight: 1.5 }}>
+            {result.stopped_early || result.pages_pending ? 'Stopped before the queue was drained — ' : ''}
             Crawled {result.pages_fetched} of {result.sitemap_urls} sitemap URLs
             {result.urls_without_locale ? ` · ${result.urls_without_locale} URLs sit outside any locale folder` : ''}
             {result.pages_failed ? ` · ${result.pages_failed} failed to fetch` : ''}.

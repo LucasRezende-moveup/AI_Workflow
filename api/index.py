@@ -437,6 +437,88 @@ def _ensure_schema():
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS serp_cache_created_idx ON serp_cache (created_at)
                 """)
+                # ── Hreflang crawler ──────────────────────────────────────────────────
+                # A crawl is resumable: the client starts one, then calls step() until it is
+                # drained. Page fingerprints are persisted because equivalence is decided
+                # *across* invocations — a page fetched in the first step has to be comparable
+                # with one fetched in the tenth, and nothing survives in memory between calls.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS hreflang_crawls (
+                        id            TEXT PRIMARY KEY,
+                        domain        TEXT NOT NULL,
+                        status        TEXT NOT NULL DEFAULT 'crawling',
+                        root_locale   TEXT,
+                        sitemap_urls  INTEGER NOT NULL DEFAULT 0,
+                        locales       JSONB,
+                        unsitemapped  JSONB,
+                        pages_queued  INTEGER NOT NULL DEFAULT 0,
+                        pages_done    INTEGER NOT NULL DEFAULT 0,
+                        pages_failed  INTEGER NOT NULL DEFAULT 0,
+                        notes         TEXT,
+                        error         TEXT,
+                        created_at    TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at    TIMESTAMPTZ DEFAULT NOW(),
+                        finished_at   TIMESTAMPTZ
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS hreflang_crawls_domain_idx
+                    ON hreflang_crawls (domain, created_at DESC)
+                """)
+                # The work list. One row per sitemap URL selected for fetching; a step claims
+                # pending rows, so a killed invocation loses at most what it had in flight.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS hreflang_queue (
+                        id         BIGSERIAL PRIMARY KEY,
+                        crawl_id   TEXT REFERENCES hreflang_crawls(id) ON DELETE CASCADE,
+                        url        TEXT NOT NULL,
+                        locale     TEXT NOT NULL,
+                        path_key   TEXT NOT NULL,
+                        state      TEXT NOT NULL DEFAULT 'pending',
+                        UNIQUE (crawl_id, url)
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS hreflang_queue_pick_idx
+                    ON hreflang_queue (crawl_id, state, id)
+                """)
+                # Fetched pages. images/numbers/outbound/words are the translation-surviving
+                # fingerprints the matcher compares; they are capped on write so a wide crawl
+                # cannot bloat a row.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS hreflang_pages (
+                        id              BIGSERIAL PRIMARY KEY,
+                        crawl_id        TEXT REFERENCES hreflang_crawls(id) ON DELETE CASCADE,
+                        url             TEXT NOT NULL,
+                        final_url       TEXT,
+                        locale          TEXT,
+                        locale_folder   TEXT,
+                        locale_source   TEXT,
+                        locale_mismatch TEXT,
+                        path_key        TEXT,
+                        status          INTEGER,
+                        html_lang       TEXT,
+                        canonical       TEXT,
+                        title           TEXT,
+                        h1              TEXT,
+                        hreflangs       JSONB,
+                        images          JSONB,
+                        numbers         JSONB,
+                        outbound        JSONB,
+                        words           JSONB,
+                        error           TEXT,
+                        fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE (crawl_id, url)
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS hreflang_pages_group_idx
+                    ON hreflang_pages (crawl_id, path_key)
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS hreflang_pages_locale_idx
+                    ON hreflang_pages (crawl_id, locale)
+                """)
                 cur.execute("SELECT COUNT(*) AS cnt FROM users")
                 row = cur.fetchone()
                 if row["cnt"] == 0:
@@ -2943,18 +3025,6 @@ def backlinks_audit(req: BacklinkAuditRequest, current_user=Depends(_decode_toke
 
 # --- Hreflang checker ---------------------------------------------------------
 
-import hreflang as _hl
-
-
-class HreflangRequest(BaseModel):
-    domain: str
-    locales: List[str] = []          # empty = every locale folder found
-    max_pages: int = 120
-    sitemap_url: Optional[str] = None
-    ai_confirm: bool = True
-    probe_locales: bool = True
-
-
 def _hreflang_ai_confirm(pairs: list) -> dict:
     """Ask the model which borderline pairs are really the same page in another language.
 
@@ -2996,41 +3066,130 @@ Return ONLY valid JSON, no fences:
         return {"verdicts": {}, "error": str(exc)[:200]}
 
 
-@app.post("/api/hreflang/check")
-def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
-    """Crawl a site's locale subfolders and report pages that should be linked by hreflang.
+# --- Hreflang crawler (resumable) ---------------------------------------------
+#
+# Three calls instead of one: start() discovers locales and seeds the queue, step() drains it
+# under a wall-clock budget, and result() decides equivalence over everything stored so far.
+#
+# Why it is split: a Vercel function dies at 300s. A single-shot crawl either has to cap pages
+# low enough to survive a slow site — in which case it covers almost nothing — or risks being
+# killed and returning nothing at all. Stepping keeps every call comfortably inside the limit
+# and makes a slow site cost more calls rather than the whole result.
+#
+# Why pages are persisted: equivalence is decided *across* calls. A page fetched in the first
+# step has to be comparable with one fetched in the tenth, so the fingerprints that survive
+# translation are stored per page rather than held in memory.
 
-    Path parity and translation-surviving fingerprints (images, numbers, outbound links) do the
-    matching; the model is only consulted on pairs those leave ambiguous.
-    """
-    from concurrent.futures import ThreadPoolExecutor
+import hreflang as _hl
+
+_HL_WORD_CAP = 300      # words kept per page, for same-language lexical comparison
+_HL_SET_CAP  = 60       # images / numbers / outbound hosts kept per page
+
+
+def _hl_default_workers():
+    return int(os.getenv("HREFLANG_WORKERS", "6"))
+
+
+def _hl_store_page(cur, crawl_id: str, p: dict, path_key: str):
+    """Persist one fetched page, capping the fingerprint sets."""
+    cap = lambda s: sorted(list(s))[:_HL_SET_CAP] if s else []
+    cur.execute(
+        """INSERT INTO hreflang_pages
+           (crawl_id, url, final_url, locale, locale_folder, locale_source, locale_mismatch,
+            path_key, status, html_lang, canonical, title, h1, hreflangs, images, numbers,
+            outbound, words, error)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (crawl_id, url) DO UPDATE SET
+             final_url = EXCLUDED.final_url, locale = EXCLUDED.locale,
+             status = EXCLUDED.status, hreflangs = EXCLUDED.hreflangs,
+             fetched_at = NOW()""",
+        (crawl_id, p["url"], p.get("final_url"), p.get("locale"), p.get("locale_folder"),
+         p.get("locale_source"), p.get("locale_mismatch"), path_key, p.get("status"),
+         p.get("lang"), p.get("canonical"), (p.get("title") or "")[:400],
+         (p.get("h1") or "")[:400], json.dumps(p.get("hreflangs") or {}),
+         json.dumps(cap(p.get("images"))), json.dumps(cap(p.get("numbers"))),
+         json.dumps(cap(p.get("outbound"))),
+         json.dumps(sorted(list(p.get("words") or []))[:_HL_WORD_CAP]),
+         (p.get("error") or None)),
+    )
+
+
+def _hl_load_pages(crawl_id: str) -> list:
+    """Read stored pages back into the shape the matcher and auditor expect."""
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT url, final_url, locale, locale_folder, locale_mismatch, path_key,
+                          status, html_lang, canonical, title, h1, hreflangs, images, numbers,
+                          outbound, words
+                   FROM hreflang_pages WHERE crawl_id = %s AND status = 200""",
+                (crawl_id,))
+            rows = [dict(r) for r in cur.fetchall()]
+    out = []
+    for r in rows:
+        jset = lambda v: set(v if isinstance(v, list) else json.loads(v or "[]"))
+        out.append({
+            "url": r["url"], "final_url": r["final_url"] or r["url"],
+            "locale": r["locale"], "locale_folder": r["locale_folder"],
+            "locale_mismatch": r["locale_mismatch"], "rest": r["path_key"],
+            "status": r["status"], "lang": r["html_lang"], "canonical": r["canonical"],
+            "title": r["title"] or "", "h1": r["h1"] or "",
+            "hreflangs": r["hreflangs"] if isinstance(r["hreflangs"], dict)
+                         else json.loads(r["hreflangs"] or "{}"),
+            "images": jset(r["images"]), "numbers": jset(r["numbers"]),
+            "outbound": jset(r["outbound"]), "words": jset(r["words"]),
+        })
+    return out
+
+
+def _hl_crawl_row(crawl_id: str) -> dict:
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM hreflang_crawls WHERE id = %s", (crawl_id,))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Crawl not found.")
+    return dict(row)
+
+
+def _hl_progress(crawl_id: str) -> dict:
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT state, COUNT(*) AS n FROM hreflang_queue
+                   WHERE crawl_id = %s GROUP BY state""", (crawl_id,))
+            counts = {r["state"]: int(r["n"]) for r in cur.fetchall()}
+    return {"pending": counts.get("pending", 0), "done": counts.get("done", 0),
+            "failed": counts.get("failed", 0)}
+
+
+class HreflangStartRequest(BaseModel):
+    domain: str
+    sitemap_url: Optional[str] = None
+    locales: List[str] = []
+    max_pages: int = 1000
+    probe_locales: bool = True
+
+
+@app.post("/api/hreflang/crawl/start")
+def hreflang_crawl_start(req: HreflangStartRequest, current_user=Depends(_decode_token)):
+    """Discover the site's locales and seed the crawl queue. Fetches no content pages beyond
+    the root and one landing page per probed locale, so it stays fast regardless of site size."""
     from urllib.parse import urlparse as _up
 
     domain = _clean_domain(req.domain)
     if not domain:
         raise HTTPException(status_code=400, detail="Enter a valid domain (e.g. example.com).")
     base = f"https://{domain}/"
-    max_pages = max(20, min(req.max_pages, 400))
-
+    max_pages = max(20, min(req.max_pages, 5000))
     session = http_requests.Session()
 
-    # 1. URL inventory
-    if req.sitemap_url:
-        disc = _hl.discover_sitemap_urls(req.sitemap_url, session)
-        if not disc["urls"]:
-            disc = _hl.discover_sitemap_urls(base, session)
-    else:
-        disc = _hl.discover_sitemap_urls(base, session)
+    disc = (_hl.discover_sitemap_urls(req.sitemap_url, session, cap=8000)
+            if req.sitemap_url else _hl.discover_sitemap_urls(base, session, cap=8000))
+    if not disc["urls"] and req.sitemap_url:
+        disc = _hl.discover_sitemap_urls(base, session, cap=8000)
     all_urls = disc["urls"]
-    if not all_urls:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No sitemap found for {domain}. Tried robots.txt and the usual paths — "
-                   f"pass a sitemap URL explicitly if it lives somewhere else.")
 
-    # 2. The site root is itself a locale on most multilingual sites — the default language
-    #    lives at / with no prefix. Its html lang is how we label it, and without this the
-    #    default-language pages are invisible and can never be paired with a translation.
     root_page = _hl.fetch_page(base, session)
     root_locale = ((root_page.get("lang") or "").strip().replace("_", "-") or None)
 
@@ -3045,10 +3204,6 @@ def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
         else:
             no_locale += 1
 
-    # 3. Locale sections can exist and simply never be sitemapped — Toffeweb publishes six
-    #    regional editions none of which appear in its sitemap. A short probe of likely
-    #    folders catches them; a folder only counts when it declares a different html lang
-    #    than the root, otherwise /us/ is just a page about the United States.
     probed = []
     if req.probe_locales:
         try:
@@ -3058,7 +3213,7 @@ def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
     for hit in probed:
         try:
             extra = _hl.urls_for_locale_root(base, hit["segment"], session,
-                                             cap=max(10, max_pages // 6))
+                                             cap=max(20, max_pages // 8))
         except Exception:
             extra = []
         seg = f"/{hit['segment']}"
@@ -3075,85 +3230,231 @@ def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
             status_code=404,
             detail=f"Found {len(by_locale)} locale version(s) of this site "
                    f"({', '.join(sorted(by_locale)) or 'none'}). hreflang needs at least two "
-                   f"language or region versions to compare. Checked the sitemap"
-                   f"{' and probed common locale folders' if req.probe_locales else ''}.")
+                   f"language or region versions to compare.")
 
-    # 3. Choose what to fetch. Paths that already appear in several locales are the cheapest
-    #    wins, so they come first; the remainder fills the budget so translated slugs — the
-    #    pages most likely to be *missing* hreflang — still get a chance to be matched.
+    # Paths that already exist in several locales are the cheapest equivalence wins, so they
+    # are queued first; the rest follow, because a translated slug is exactly the case most
+    # likely to be *missing* its hreflang.
     path_locales = defaultdict(set)
     for loc, items in by_locale.items():
-        for rest, _ in items:
+        for rest, _u in items:
             path_locales[rest].add(loc)
-    shared_paths = {p for p, ls in path_locales.items() if len(ls) > 1}
+    shared = {p for p, ls in path_locales.items() if len(ls) > 1}
 
-    picked, seen_urls = [], set()
+    queued, seen = [], set()
+    per_locale = max(6, max_pages // max(len(by_locale), 1))
     for loc, items in by_locale.items():
-        shared = [(r, u) for r, u in items if r in shared_paths]
-        solo = [(r, u) for r, u in items if r not in shared_paths]
-        quota = max(4, max_pages // max(len(by_locale), 1))
-        for rest, u in (shared[: int(quota * 0.7)] + solo[: quota - int(quota * 0.7)]):
-            if u not in seen_urls and len(picked) < max_pages:
-                seen_urls.add(u); picked.append((loc, rest, u))
+        head = [(r, u) for r, u in items if r in shared][: int(per_locale * 0.75)]
+        tail = [(r, u) for r, u in items if r not in shared][: per_locale - len(head)]
+        for rest, u in head + tail:
+            if u not in seen and len(queued) < max_pages:
+                seen.add(u); queued.append((u, loc, rest))
 
-    # 4. Fetch
+    crawl_id = str(uuid.uuid4())
+    locales_summary = sorted(
+        [{"locale": l, "urls_in_sitemap": len(v)} for l, v in by_locale.items()],
+        key=lambda x: -x["urls_in_sitemap"])
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO hreflang_crawls
+                       (id, domain, status, root_locale, sitemap_urls, locales, unsitemapped,
+                        pages_queued, notes)
+                       VALUES (%s,%s,'crawling',%s,%s,%s,%s,%s,%s)""",
+                    (crawl_id, domain, root_locale, len(all_urls),
+                     json.dumps(locales_summary), json.dumps(probed), len(queued),
+                     "; ".join(disc.get("notes") or [])[:300]))
+                if queued:
+                    psycopg2.extras.execute_values(
+                        cur,
+                        "INSERT INTO hreflang_queue (crawl_id, url, locale, path_key) VALUES %s "
+                        "ON CONFLICT (crawl_id, url) DO NOTHING",
+                        [(crawl_id, u, loc, rest) for u, loc, rest in queued])
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not start the crawl: {exc}")
+
+    return {
+        "crawl_id": crawl_id,
+        "domain": domain,
+        "root_locale": root_locale,
+        "sitemap_urls": len(all_urls),
+        "urls_without_locale": no_locale,
+        "locales_found": locales_summary,
+        "unsitemapped_locales": [
+            {"segment": h["segment"], "locale": h["label"], "html_lang": h["html_lang"],
+             "url": h["url"], "urls_sampled": h.get("urls_sampled", 0)} for h in probed],
+        "pages_queued": len(queued),
+        "notes": disc.get("notes") or [],
+    }
+
+
+class HreflangStepRequest(BaseModel):
+    crawl_id: str
+    budget_s: float = 45.0
+    workers: Optional[int] = None
+
+
+@app.post("/api/hreflang/crawl/step")
+def hreflang_crawl_step(req: HreflangStepRequest, current_user=Depends(_decode_token)):
+    """Fetch the next slice of the queue, bounded by wall clock rather than page count.
+
+    The clock is re-checked between slices so the call always returns a truthful report instead
+    of being killed by the platform mid-write. A slow site therefore costs more steps, never a
+    lost result."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    crawl = _hl_crawl_row(req.crawl_id)
+    started = time.monotonic()
+    budget = max(5.0, min(req.budget_s, 120.0))
+    deadline = started + budget
+    workers = max(1, min(req.workers or _hl_default_workers(), 12))
+    # A small pause per request keeps us from looking like an attack; bot protection on these
+    # sites has already 403'd us once.
+    delay = float(os.getenv("HREFLANG_DELAY_MS", "120")) / 1000.0
+
+    session = http_requests.Session()
+    done = failed = 0
+
     def _one(item):
-        loc, rest, u = item
-        page = _hl.fetch_page(u, session)
-        page["locale"], page["rest"] = loc, rest
-        return page
+        url, loc, rest = item
+        if delay:
+            time.sleep(delay)
+        p = _hl.fetch_page(url, session, timeout=15)
+        p["url"] = url
+        rec = _hl.reconcile_locale(loc, p.get("lang"))
+        p["locale_folder"] = loc
+        p["locale"] = rec["label"]
+        p["locale_source"] = rec["source"]
+        p["locale_mismatch"] = rec["mismatch"]
+        return p, rest
 
-    pages = []
-    with ThreadPoolExecutor(max_workers=int(os.getenv("HREFLANG_WORKERS", "10"))) as ex:
-        for p in ex.map(_one, picked):
-            # The folder is only a hint. A page under /cl/ declaring es-CL is es-CL, and one
-            # under /ca-on/ declaring en-CA is en-CA — the page is authoritative, so the label
-            # is settled here before anything is grouped or audited.
-            rec = _hl.reconcile_locale(p["locale"], p.get("lang"))
-            p["locale_folder"] = p["locale"]
-            p["locale"] = rec["label"]
-            p["locale_source"] = rec["source"]
-            p["locale_mismatch"] = rec["mismatch"]
-            pages.append(p)
+    while time.monotonic() < deadline:
+        # Claim a slice so two concurrent steps cannot fetch the same URLs twice.
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE hreflang_queue SET state = 'in_flight'
+                       WHERE id IN (
+                           SELECT id FROM hreflang_queue
+                           WHERE crawl_id = %s AND state = 'pending'
+                           ORDER BY id LIMIT %s
+                           FOR UPDATE SKIP LOCKED
+                       ) RETURNING url, locale, path_key""",
+                    (req.crawl_id, workers * 2))
+                slice_ = [(r["url"], r["locale"], r["path_key"]) for r in cur.fetchall()]
+            conn.commit()
+        if not slice_:
+            break
 
-    ok_pages = [p for p in pages if p.get("status") == 200]
-    if not ok_pages:
-        raise HTTPException(status_code=502,
-                            detail="Every sampled page failed to fetch — the site may be blocking us.")
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            results = list(ex.map(_one, slice_))
 
-    # 5. Groups that path parity already proves, audited for annotation problems
-    groups = [_hl.audit_group(k, v) for k, v in _hl.group_by_path(ok_pages).items()]
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                for p, rest in results:
+                    ok = p.get("status") == 200
+                    try:
+                        _hl_store_page(cur, req.crawl_id, p, rest)
+                    except Exception:
+                        ok = False
+                    cur.execute(
+                        "UPDATE hreflang_queue SET state = %s WHERE crawl_id = %s AND url = %s",
+                        ("done" if ok else "failed", req.crawl_id, p["url"]))
+                    if ok:
+                        done += 1
+                    else:
+                        failed += 1
+            conn.commit()
+
+    prog = _hl_progress(req.crawl_id)
+    complete = prog["pending"] == 0
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE hreflang_crawls
+                       SET pages_done = %s, pages_failed = %s, updated_at = NOW(),
+                           status = %s, finished_at = CASE WHEN %s THEN NOW() ELSE finished_at END
+                       WHERE id = %s""",
+                    (prog["done"], prog["failed"], "complete" if complete else "crawling",
+                     complete, req.crawl_id))
+            conn.commit()
+    except Exception:
+        pass
+
+    return {
+        "crawl_id": req.crawl_id,
+        "fetched_this_step": done,
+        "failed_this_step": failed,
+        "pages_done": prog["done"],
+        "pages_failed": prog["failed"],
+        "pages_pending": prog["pending"],
+        "pages_queued": crawl["pages_queued"],
+        "complete": complete,
+        "duration_s": round(time.monotonic() - started, 1),
+    }
+
+
+@app.get("/api/hreflang/crawl/{crawl_id}")
+def hreflang_crawl_result(crawl_id: str, ai_confirm: bool = True,
+                          current_user=Depends(_decode_token)):
+    """Decide equivalence over every page stored for this crawl, and audit the annotations.
+
+    Safe to call mid-crawl: it reports on whatever has been fetched so far."""
+    crawl = _hl_crawl_row(crawl_id)
+    pages = _hl_load_pages(crawl_id)
+    prog = _hl_progress(crawl_id)
+
+    groups = [_hl.audit_group(k, v) for k, v in _hl.group_by_path(pages).items()]
     groups.sort(key=lambda g: ({"high": 0, "medium": 1, "low": 2, "ok": 3}[g["severity"]], g["path"]))
 
-    # 6. Pages with no path twin: compare across locales on content instead
-    grouped_urls = {p["final_url"] for g in _hl.group_by_path(ok_pages).values() for p in g.values()}
-    orphans = [p for p in ok_pages if p["final_url"] not in grouped_urls]
+    grouped = {p["final_url"] for g in _hl.group_by_path(pages).values() for p in g.values()}
+    orphans = [p for p in pages if p["final_url"] not in grouped]
+
+    # Blocking. Comparing every orphan against every other is O(n^2): at the 5,000-page
+    # setting that is twelve million comparisons inside one request. A real translation pair
+    # always shares at least one fingerprint token, so only pages sharing one are scored.
+    # Tokens carried by nearly every page (a logo, a footer year) are dropped — they are
+    # noise, and they would rebuild the full pairwise set on their own.
+    token_index = defaultdict(set)
+    for i, p in enumerate(orphans):
+        for tok in list(p["images"])[:25] + list(p["numbers"])[:25]:
+            token_index[tok].add(i)
+    pair_ids = set()
+    for idxs in token_index.values():
+        if len(idxs) < 2 or len(idxs) > 60:
+            continue
+        ordered = sorted(idxs)
+        for a_i in range(len(ordered)):
+            for b_i in range(a_i + 1, len(ordered)):
+                pair_ids.add((ordered[a_i], ordered[b_i]))
 
     candidates, ambiguous = [], []
-    for i, a in enumerate(orphans):
-        for b in orphans[i + 1:]:
-            if a["locale"] == b["locale"]:
-                continue
-            same_lang = a["locale"].split("-")[0] == b["locale"].split("-")[0]
-            s = _hl.score_pair(a, b, same_lang)
-            if s["confidence"] < 0.25:
-                continue
-            row = {
-                "locale_a": a["locale"], "path_a": a["rest"], "url_a": a["final_url"], "title_a": a["title"],
-                "locale_b": b["locale"], "path_b": b["rest"], "url_b": b["final_url"], "title_b": b["title"],
-                "confidence": s["confidence"], "method": s["method"], "signals": s["signals"],
-                "already_linked": any(_hl._norm_url(h) == _hl._norm_url(b["final_url"])
-                                      for h in a["hreflangs"].values()),
-                "suggested_tags": _hl.suggest_tags({a["locale"]: a, b["locale"]: b}),
-            }
-            (candidates if s["confidence"] >= 0.55 else ambiguous).append(row)
+    for i, j in pair_ids:
+        a, b = orphans[i], orphans[j]
+        if a["locale"] == b["locale"]:
+            continue
+        same_lang = (a["locale"] or "").split("-")[0] == (b["locale"] or "").split("-")[0]
+        sc = _hl.score_pair(a, b, same_lang)
+        if sc["confidence"] < 0.25:
+            continue
+        row = {
+            "locale_a": a["locale"], "path_a": a["rest"], "url_a": a["final_url"], "title_a": a["title"],
+            "locale_b": b["locale"], "path_b": b["rest"], "url_b": b["final_url"], "title_b": b["title"],
+            "confidence": sc["confidence"], "method": sc["method"], "signals": sc["signals"],
+            "already_linked": any(_hl._norm_url(h) == _hl._norm_url(b["final_url"])
+                                  for h in a["hreflangs"].values()),
+            "suggested_tags": _hl.suggest_tags({a["locale"]: a, b["locale"]: b}),
+        }
+        (candidates if sc["confidence"] >= 0.55 else ambiguous).append(row)
 
     candidates.sort(key=lambda r: -r["confidence"])
     ambiguous.sort(key=lambda r: -r["confidence"])
 
-    # 7. One model call to adjudicate the middle band
     ai_note = None
-    if req.ai_confirm and ambiguous:
+    if ai_confirm and ambiguous:
         batch = ambiguous[:25]
         res = _hreflang_ai_confirm(batch)
         if res["error"]:
@@ -3178,22 +3479,19 @@ def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
             counts[i["type"]] += 1
 
     out = {
-        "domain": domain,
-        "locales_found": sorted(
-            [{"locale": l, "urls_in_sitemap": len(v)} for l, v in by_locale.items()],
-            key=lambda x: -x["urls_in_sitemap"]),
-        "sitemap_urls": len(all_urls),
-        "urls_without_locale": no_locale,
-        "root_locale": root_locale,
-        "unsitemapped_locales": [
-            {"segment": h["segment"], "locale": h["label"], "html_lang": h["html_lang"],
-             "url": h["url"], "urls_sampled": h.get("urls_sampled", 0)}
-            for h in probed],
-        "pages_fetched": len(ok_pages),
-        "pages_failed": len(pages) - len(ok_pages),
-        "groups": groups[:200],
+        "crawl_id": crawl_id,
+        "domain": crawl["domain"],
+        "status": crawl["status"],
+        "root_locale": crawl["root_locale"],
+        "sitemap_urls": crawl["sitemap_urls"],
+        "locales_found": crawl["locales"] or [],
+        "unsitemapped_locales": crawl["unsitemapped"] or [],
+        "pages_fetched": len(pages),
+        "pages_failed": prog["failed"],
+        "pages_pending": prog["pending"],
+        "groups": groups[:300],
         "groups_total": len(groups),
-        "missing_pairs": missing_pairs[:100],
+        "missing_pairs": missing_pairs[:150],
         "summary": {
             "groups_with_issues": sum(1 for g in groups if g["severity"] != "ok"),
             "missing_entirely": counts["missing_entirely"],
@@ -3208,14 +3506,42 @@ def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
         "ai_note": ai_note,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-    _save_run(
-        tool="hreflang",
-        result=out,
-        target_url=base,
-        summary=f"{out['summary']['groups_with_issues']} of {len(groups)} page sets have hreflang "
-                f"issues · {len(missing_pairs)} unlinked content matches",
-    )
+    if crawl["status"] == "complete":
+        _save_run(tool="hreflang", result=out, target_url=f"https://{crawl['domain']}/",
+                  summary=f"{out['summary']['groups_with_issues']} of {len(groups)} page sets "
+                          f"have hreflang issues · {len(missing_pairs)} unlinked content matches")
     return out
+
+
+@app.get("/api/hreflang/crawls")
+def hreflang_crawls(domain: Optional[str] = None, limit: int = 20,
+                    current_user=Depends(_decode_token)):
+    """Recent crawls, so a finished report can be reopened instead of re-crawled."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                if domain:
+                    cur.execute(
+                        """SELECT id, domain, status, root_locale, locales, pages_queued,
+                                  pages_done, pages_failed, created_at, finished_at
+                           FROM hreflang_crawls WHERE domain = %s
+                           ORDER BY created_at DESC LIMIT %s""",
+                        (_clean_domain(domain), min(limit, 100)))
+                else:
+                    cur.execute(
+                        """SELECT id, domain, status, root_locale, locales, pages_queued,
+                                  pages_done, pages_failed, created_at, finished_at
+                           FROM hreflang_crawls ORDER BY created_at DESC LIMIT %s""",
+                        (min(limit, 100),))
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        for k in ("created_at", "finished_at"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+        r["locales"] = [l.get("locale") for l in (r["locales"] or [])]
+    return {"crawls": rows}
 
 
 # --- GSC Endpoints ---
