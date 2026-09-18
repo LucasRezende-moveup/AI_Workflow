@@ -13,6 +13,7 @@ import bcrypt
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
 import requests as _http
+from collections import defaultdict
 try:
     import psycopg2
     import psycopg2.extras
@@ -163,7 +164,7 @@ def _ensure_schema():
                         id         TEXT PRIMARY KEY,
                         name       TEXT NOT NULL,
                         domain     TEXT NOT NULL UNIQUE,
-                        location   TEXT NOT NULL DEFAULT 'Global (No Geolocation)',
+                        location   TEXT NOT NULL DEFAULT 'Brazil (General)',
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
@@ -172,7 +173,7 @@ def _ensure_schema():
                         id         TEXT PRIMARY KEY,
                         keyword    TEXT NOT NULL,
                         target_url TEXT,
-                        location   TEXT NOT NULL DEFAULT 'Global (No Geolocation)',
+                        location   TEXT NOT NULL DEFAULT 'Brazil (General)',
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
@@ -219,10 +220,38 @@ def _ensure_schema():
                     ALTER TABLE keyword_rankings
                     ADD COLUMN IF NOT EXISTS fs_present BOOLEAN
                 """)
+                # Which SERP provider measured this row. NULL = SerpAPI, the only source until
+                # the switch to DataForSEO. Two providers sample Google differently, so a
+                # position change across a provider boundary is not a real ranking movement —
+                # this column is what lets the alerting tell those two things apart.
+                cur.execute("""
+                    ALTER TABLE keyword_rankings
+                    ADD COLUMN IF NOT EXISTS source TEXT
+                """)
+                # What the snapshot cost. SerpAPI billed per credit off-platform; DataForSEO
+                # bills per request, so per-row cost is now knowable — and worth knowing, since
+                # an exhausted balance stalls the sweep silently.
+                cur.execute("""
+                    ALTER TABLE keyword_rankings
+                    ADD COLUMN IF NOT EXISTS cost NUMERIC DEFAULT 0
+                """)
+                # Retire "Global (No Geolocation)" from tracking. DataForSEO's google/organic
+                # always requires a location, so a "global" keyword had to resolve to *some*
+                # market — and for this portfolio that market is Brazil, not the US default the
+                # mapping started with. Migrating the stored rows keeps what the UI shows and
+                # what the API queries in agreement; leaving them would have every chart
+                # labelled "Global" while the numbers underneath came from Brazil.
+                # Idempotent: once no rows match it is a no-op on every later cold start.
+                for _tbl in ("tracking_projects", "keyword_tracking"):
+                    cur.execute(
+                        f"ALTER TABLE {_tbl} ALTER COLUMN location SET DEFAULT 'Brazil (General)'")
+                    cur.execute(
+                        f"UPDATE {_tbl} SET location = 'Brazil (General)' "
+                        f"WHERE location = 'Global (No Geolocation)'")
                 # Per-invocation log for the tracking cron. 500+ keywords cannot be checked
                 # inside one function timeout, so coverage is spread over several runs — this
                 # is how a day that finished cleanly is told apart from one that ran out of
-                # budget or burned through its SerpAPI quota.
+                # budget or burned through its DataForSEO balance.
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS tracking_cron_runs (
                         id           TEXT PRIMARY KEY,
@@ -719,10 +748,15 @@ def get_history_run(run_id: str, current_user=Depends(_decode_token)):
 
 # ── Keyword Tracking ──────────────────────────────────────────────────────────
 
+# Tracking has no "global" option: DataForSEO always resolves a SERP against a real location,
+# so every tracked keyword is measured in a named market. Brazil is this portfolio's.
+TRACK_DEFAULT_LOCATION = "Brazil (General)"
+
+
 class TrackingAddRequest(BaseModel):
     keyword: str
     target_url: Optional[str] = None
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
     project_id: Optional[str] = None
 
 
@@ -733,14 +767,14 @@ class TrackingBulkItem(BaseModel):
 
 class TrackingBulkRequest(BaseModel):
     items: List[TrackingBulkItem]
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
     project_id: Optional[str] = None
 
 
 class ProjectRequest(BaseModel):
     domain: str
     name: Optional[str] = None
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
 
 
 def _norm_host(netloc: str) -> str:
@@ -787,7 +821,7 @@ def _ensure_project(domain: str, name: str = None, location: str = None) -> Opti
                 cur.execute(
                     "INSERT INTO tracking_projects (id, name, domain, location) VALUES (%s,%s,%s,%s) "
                     "ON CONFLICT (domain) DO UPDATE SET domain = EXCLUDED.domain RETURNING id",
-                    (pid, name or dom, dom, location or "Global (No Geolocation)"),
+                    (pid, name or dom, dom, location or TRACK_DEFAULT_LOCATION),
                 )
                 return cur.fetchone()["id"]
     except Exception:
@@ -819,6 +853,15 @@ def _fire_alerts(tracking_id: str, keyword: str, prev: dict, curr: dict):
     """Compare two ranking snapshots and insert alert rows for significant changes."""
     from urllib.parse import urlparse
     alerts_to_insert = []
+
+    # A provider switch is not a ranking movement. The first DataForSEO snapshot for a keyword
+    # gets compared against a SerpAPI one (source NULL on every row written before the switch),
+    # and two providers sample Google differently enough that most keywords shift a place or
+    # two. Alerting on that would page the team about hundreds of phantom drops on changeover
+    # day and bury any real movement. One comparison per keyword is skipped; the next one,
+    # DataForSEO against DataForSEO, alerts normally.
+    if (prev.get("source") or "serpapi") != (curr.get("source") or "serpapi"):
+        return
 
     prev_pos  = prev.get("position")
     curr_pos  = curr.get("position")
@@ -902,15 +945,19 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
     """
     Fetch live SERP, save a ranking snapshot, fire alerts on changes.
 
-    Pinned to SerpAPI: a rank series is only meaningful if every point comes from the same
-    search engine. When SerpAPI is unavailable this returns {"skipped": True} and writes
-    nothing, leaving a visible gap rather than a fabricated position.
+    Pinned to DataForSEO, with no fallback: a rank series is only meaningful if every point
+    comes from the same source. When DataForSEO is unavailable this returns {"skipped": True}
+    and writes nothing, leaving a visible gap rather than a fabricated position.
+
+    `_serp_dfs_cached` is the strict fetcher — DataForSEO or nothing. It shares its cache
+    namespace with the DataForSEO tracking test copy, so a SERP either one buys is reused
+    rather than paid for twice.
     """
     from urllib.parse import urlparse
-    serp = _serp_cached(keyword, location_name=location, provider="serpapi")
+    serp = _serp_dfs_cached(keyword, location_name=location)
     organic = serp.get("organic", [])
     if not organic:
-        return {"skipped": True, "reason": serp.get("error", "no organic results from SerpAPI")}
+        return {"skipped": True, "reason": serp.get("error", "no organic results from DataForSEO")}
     position = None
     ranking_url = None
     if target_url and organic:
@@ -960,7 +1007,7 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
         with _db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT position, fs_holder_domain, fs_present FROM keyword_rankings
+                    """SELECT position, fs_holder_domain, fs_present, source FROM keyword_rankings
                        WHERE tracking_id = %s ORDER BY checked_at DESC LIMIT 1""",
                     (tracking_id,)
                 )
@@ -972,20 +1019,22 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
 
     # A failed write must not be silent: the cron counts it as a failure so a broken run is
     # visible instead of looking like a day when nothing moved.
+    cost = float(serp.get("cost") or 0)
     row_id = str(uuid.uuid4())
     with _db_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO keyword_rankings
                    (id, tracking_id, position, ranking_url, fs_holder_url, fs_holder_domain,
-                    fs_present, total_results, top_domains)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    fs_present, total_results, top_domains, source, cost)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (row_id, tracking_id, position, ranking_url, fs_url, fs_domain,
-                 fs_present, len(organic), json.dumps(top_domains))
+                 fs_present, len(organic), json.dumps(top_domains), "dataforseo", cost)
             )
         conn.commit()
 
-    curr_snapshot = {"position": position, "fs_holder_domain": fs_domain, "fs_present": fs_present}
+    curr_snapshot = {"position": position, "fs_holder_domain": fs_domain,
+                     "fs_present": fs_present, "source": "dataforseo"}
     if prev_snapshot:
         _fire_alerts(tracking_id, keyword, prev_snapshot, curr_snapshot)
 
@@ -997,6 +1046,8 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
         "fs_present": fs_present,
         "total_results": len(organic),
         "top_domains": top_domains,
+        "source": "dataforseo",
+        "cost": cost,
     }
 
 
@@ -1103,7 +1154,7 @@ class ImportRow(BaseModel):
 
 class TrackingImportRequest(BaseModel):
     domain: str
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
     target_url: Optional[str] = None
     keywords: List[str] = []
     history: List[ImportRow] = []
@@ -1485,7 +1536,7 @@ def tracking_check(tracking_id: str, current_user=Depends(_decode_token)):
         # "not ranking" — nothing was measured and nothing was stored.
         raise HTTPException(
             status_code=503,
-            detail=f"SerpAPI unavailable, no snapshot recorded: {ranking.get('reason', '')}")
+            detail=f"DataForSEO unavailable, no snapshot recorded: {ranking.get('reason', '')}")
     return ranking
 
 
@@ -1502,6 +1553,66 @@ def tracking_delete(tracking_id: str, current_user=Depends(_decode_token)):
     if not gone:
         raise HTTPException(status_code=404, detail="Not found")
     return {"deleted": True}
+
+
+# ── DataForSEO SERP fetcher ───────────────────────────────────────────────────
+#
+# Shared by rank tracking (strict — this fetcher or nothing) and the FS Stealer (which reaches
+# it through _serp_cached with provider="dataforseo", and may fall back). This was once a
+# parallel "test copy" of tracking with its own /api/tracking-dfs endpoints and *_dfs tables;
+# once tracking moved to DataForSEO the copy was redundant and was removed. The old tables are
+# still in the database, holding the comparison data, but nothing reads them.
+
+from dataforseo_utils import (fetch_serp_via_dataforseo, dfs_account_status,
+                              fetch_backlinks_summary, fetch_backlinks)
+
+
+def _serp_dfs_cached(keyword: str, location_name: str, force: bool = False) -> dict:
+    """DataForSEO SERP with the same short-lived DB cache the other tools use, under its own
+    key namespace so a SerpAPI result can never satisfy a DataForSEO lookup — that would put
+    two providers' positions into one rank series."""
+    ttl = float(os.getenv("DATAFORSEO_CACHE_TTL_HOURS", os.getenv("SERP_CACHE_TTL_HOURS", "6")))
+    key = f"dfs|{(keyword or '').strip().lower()}|{location_name}"
+
+    if ttl > 0 and not force:
+        try:
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT result FROM serp_cache WHERE cache_key = %s "
+                        "AND created_at > NOW() - (%s * INTERVAL '1 hour')",
+                        (key, ttl),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        res = row["result"]
+                        if isinstance(res, str):
+                            res = json.loads(res)
+                        if isinstance(res, dict) and res.get("source") == "dataforseo":
+                            res["_cached"] = True
+                            res["cost"] = 0.0        # a cache hit costs nothing; don't re-bill it
+                            return res
+        except Exception:
+            pass
+
+    res = fetch_serp_via_dataforseo(keyword, location_name=location_name)
+    if isinstance(res, dict) and res.get("organic"):
+        try:
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO serp_cache (cache_key, keyword, location, result)
+                           VALUES (%s,%s,%s,%s)
+                           ON CONFLICT (cache_key) DO UPDATE
+                             SET result = EXCLUDED.result, created_at = NOW()""",
+                        (key, (keyword or "").strip(), location_name, json.dumps(res)),
+                    )
+                conn.commit()
+        except Exception:
+            pass
+    if isinstance(res, dict):
+        res["_cached"] = False
+    return res
 
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
@@ -1682,6 +1793,7 @@ def cron_check_all(authorization: str = Header(None)):
     due = due[:TRACK_MAX_PER_RUN]
 
     checked = failed = 0
+    spend = 0.0
     skipped: list = []
     errors: list = []
 
@@ -1709,12 +1821,14 @@ def cron_check_all(authorization: str = Header(None)):
                         skipped.append({"keyword": item["keyword"], "reason": res.get("reason", "")[:200]})
                     else:
                         checked += 1
+                        spend += float(res.get("cost") or 0)
     finally:
         # Always close the row — a run left open would block the next hour's invocation.
         left = len(remaining)
         duration = round(time.monotonic() - started, 1)
         note = "; ".join(filter(None, [
-            f"{len(skipped)} skipped (SerpAPI unavailable)" if skipped else "",
+            f"${round(spend, 4)} spent" if spend else "",
+            f"{len(skipped)} skipped (DataForSEO unavailable)" if skipped else "",
             f"{failed} failed" if failed else "",
             "time budget reached" if left else "",
             "batch cap hit — more still due" if more_than_batch else "",
@@ -1735,6 +1849,7 @@ def cron_check_all(authorization: str = Header(None)):
         "checked": checked,
         "skipped": len(skipped),
         "failed": failed,
+        "cost": round(spend, 4),
         "unprocessed_this_run": left,
         "more_due_beyond_batch": more_than_batch,
         "duration_s": duration,
@@ -1753,12 +1868,15 @@ def tracking_cron_status(current_user=Depends(_decode_token)):
                 cur.execute("SELECT COUNT(*) AS n FROM keyword_tracking")
                 total = int(cur.fetchone()["n"] or 0)
                 cur.execute(
-                    """SELECT COUNT(DISTINCT kr.tracking_id) AS n
+                    """SELECT COUNT(DISTINCT kr.tracking_id) AS n,
+                              COALESCE(SUM(kr.cost), 0)      AS spend
                        FROM keyword_rankings kr
                        WHERE (kr.checked_at AT TIME ZONE 'UTC')::date
                              = (NOW() AT TIME ZONE 'UTC')::date"""
                 )
-                done = int(cur.fetchone()["n"] or 0)
+                _row = cur.fetchone()
+                done = int(_row["n"] or 0)
+                spend_today = float(_row["spend"] or 0)
                 cur.execute(
                     """SELECT started_at, duration_s, due_at_start, checked, skipped,
                               failed, remaining, notes
@@ -1777,8 +1895,18 @@ def tracking_cron_status(current_user=Depends(_decode_token)):
         "checked_today": done,
         "due_today": max(0, total - done),
         "coverage_pct": round(done / total * 100) if total else 0,
+        "source": "dataforseo",
+        "spend_today": round(spend_today, 4),
         "runs_today": runs,
     }
+
+
+@app.get("/api/tracking/account")
+def tracking_account(current_user=Depends(_decode_token)):
+    """DataForSEO credentials and balance. Tracking buys a SERP per keyword per day and stops
+    recording when the balance runs out, so the remaining credit belongs on screen next to the
+    coverage numbers — a drained account and a quiet day look identical otherwise."""
+    return dfs_account_status()
 
 
 class SiteConfig(BaseModel):
@@ -2323,6 +2451,726 @@ def export_logs(req: ExportRequest):
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+# --- Crawl budget action plan -------------------------------------------------
+#
+# Crawl budget is spent on every request Googlebot makes, not just the useful ones. A log
+# window already tells us where it went: the deterministic signals below are computed from
+# the merged aggregate, and the model only ranks and explains them. The numbers are never
+# left to the model to invent — a plan built on a hallucinated 404 rate is worse than none.
+
+# Path shapes that consume crawl budget without earning rankings.
+_CB_ASSET_RE = re.compile(r"\.(js|css|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|eot|mp4|webm|pdf)(\?|$)", re.I)
+_CB_NOISE_RE = re.compile(r"(/wp-admin|/wp-json|/xmlrpc\.php|/feed/?$|/\?s=|/search|/page/\d+|/tag/|/author/|/cart|/checkout|\?replytocom=|\?utm_)", re.I)
+
+# Third-party crawlers that cost server resources without sending traffic. Googlebot and
+# bingbot are excluded: those earn their keep.
+_CB_THIRD_PARTY = {"AhrefsBot", "SemrushBot", "YandexBot", "dotbot", "mj12bot",
+                   "PetalBot", "DataForSeoBot"}
+
+
+def _crawl_budget_signals(agg: dict) -> dict:
+    """Turn a merged log aggregate into the crawl-budget facts worth acting on."""
+    total = int(agg.get("total_hits") or 0)
+    gb = (agg.get("bot_aggregations") or {}).get("Googlebot") or {}
+    gb_status = {s["name"]: int(s["value"]) for s in (gb.get("status_data") or [])}
+    gb_hits = sum(gb_status.values()) or int(agg.get("googlebot_hits") or 0)
+
+    def _band(prefix):
+        return sum(v for k, v in gb_status.items() if str(k).startswith(prefix))
+
+    ok      = gb_status.get("200", 0)
+    notmod  = gb_status.get("304", 0)
+    redir   = _band("3") - notmod
+    missing = gb_status.get("404", 0) + gb_status.get("410", 0)
+    server  = _band("5")
+    forbid  = gb_status.get("403", 0)
+    # 304s are a *good* outcome — Googlebot revalidated and skipped a full fetch — so they
+    # are not counted as waste. Only redirects, errors and blocks are.
+    wasted  = redir + missing + server + forbid
+
+    gb_paths = gb.get("top_paths") or []
+    path_hits = sum(int(p.get("hits") or 0) for p in gb_paths) or 1
+    param_hits = sum(int(p.get("hits") or 0) for p in gb_paths if "?" in (p.get("path") or ""))
+    asset_hits = sum(int(p.get("hits") or 0) for p in gb_paths if _CB_ASSET_RE.search(p.get("path") or ""))
+    noise_hits = sum(int(p.get("hits") or 0) for p in gb_paths if _CB_NOISE_RE.search(p.get("path") or ""))
+
+    third_party = [
+        {"bot": b["bot"], "hits": int(b["hits"]),
+         "pct_of_total": round(int(b["hits"]) / total * 100, 1) if total else 0}
+        for b in (agg.get("bot_breakdown") or [])
+        if b.get("bot") in _CB_THIRD_PARTY and int(b.get("hits") or 0) > 0
+    ]
+
+    series = gb.get("time_series") or []
+    trend = None
+    if len(series) >= 4:
+        half = len(series) // 2
+        first = sum(int(d.get("hits") or 0) for d in series[:half]) / max(half, 1)
+        last  = sum(int(d.get("hits") or 0) for d in series[half:]) / max(len(series) - half, 1)
+        if first > 0:
+            trend = round((last - first) / first * 100, 1)
+
+    def pct(n, d):
+        return round(n / d * 100, 1) if d else 0.0
+
+    return {
+        "days_covered":        len(series) or len(agg.get("time_series") or []),
+        "total_hits":          total,
+        "googlebot_hits":      gb_hits,
+        "googlebot_share_pct": pct(gb_hits, total),
+        "status": {"200": ok, "304": notmod, "3xx_redirects": redir,
+                   "404_410": missing, "403": forbid, "5xx": server},
+        "wasted_hits":         wasted,
+        "wasted_pct":          pct(wasted, gb_hits),
+        "redirect_pct":        pct(redir, gb_hits),
+        "not_found_pct":       pct(missing, gb_hits),
+        "server_error_pct":    pct(server, gb_hits),
+        "top_googlebot_paths": gb_paths[:10],
+        "parameter_url_pct":   pct(param_hits, path_hits),
+        "static_asset_pct":    pct(asset_hits, path_hits),
+        "low_value_path_pct":  pct(noise_hits, path_hits),
+        "third_party_bots":    third_party,
+        "third_party_pct":     pct(sum(b["hits"] for b in third_party), total),
+        "googlebot_trend_pct": trend,
+    }
+
+
+def _crawl_budget_actions(site: str, sig: dict) -> dict:
+    """Ask Gemini to rank the measured signals into an action plan."""
+    import json as _json
+
+    paths = "\n".join(f"  {p['hits']:>7,} hits - {p['path']}" for p in sig["top_googlebot_paths"]) or "  (none)"
+    bots = ", ".join(f"{b['bot']} {b['hits']:,} ({b['pct_of_total']}%)" for b in sig["third_party_bots"]) or "none significant"
+    trend = f"{sig['googlebot_trend_pct']:+}%" if sig["googlebot_trend_pct"] is not None else "not enough days"
+    st = sig["status"]
+
+    prompt = f"""You are a technical SEO analysing server logs for crawl budget waste on {site}.
+
+MEASURED DATA - {sig['days_covered']} days of logs. Use these numbers exactly; never invent others.
+
+Googlebot: {sig['googlebot_hits']:,} requests ({sig['googlebot_share_pct']}% of {sig['total_hits']:,} total hits)
+Trend across the window: {trend}
+
+Googlebot response codes:
+  200 OK:        {st['200']:,}
+  304 Not Mod.:  {st['304']:,}   (good - a saved fetch, not waste)
+  3xx redirects: {st['3xx_redirects']:,}   ({sig['redirect_pct']}% of Googlebot requests)
+  404/410:       {st['404_410']:,}   ({sig['not_found_pct']}%)
+  403 blocked:   {st['403']:,}
+  5xx errors:    {st['5xx']:,}   ({sig['server_error_pct']}%)
+  WASTED total:  {sig['wasted_hits']:,} ({sig['wasted_pct']}% of Googlebot requests)
+
+Where Googlebot spent its budget (top paths):
+{paths}
+
+Of those top paths: {sig['parameter_url_pct']}% of hits were parameter URLs, {sig['static_asset_pct']}% static assets, {sig['low_value_path_pct']}% low-value paths (search, pagination, feeds, admin, tag archives).
+
+Third-party crawlers consuming server resources: {bots} ({sig['third_party_pct']}% of all hits).
+
+TASK
+Return the highest-impact actions to improve crawl budget, ranked most impactful first.
+Only recommend what this data supports - if redirects are 0.4% do not write a redirect action.
+Between 3 and 7 actions. Be specific to the paths and numbers above.
+
+Return ONLY valid JSON, no markdown fences, no commentary:
+{{
+  "summary": "2-3 sentences on the single biggest crawl budget problem here, with numbers",
+  "actions": [
+    {{
+      "title": "Short imperative action, max 70 chars",
+      "impact": "high|medium|low",
+      "effort": "low|medium|high",
+      "evidence": "The measured numbers that justify this, quoted from the data above",
+      "fix": "Concretely what to change - the robots.txt line, redirect rule, canonical, sitemap edit or server config",
+      "metric": "What should move in the logs afterwards, and roughly by how much"
+    }}
+  ]
+}}"""
+
+    raw = _gemini_generate(prompt)
+    text = (raw or "").strip()
+    # Gemini wraps JSON in fences often enough that stripping them beats retrying.
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+    try:
+        start, stop = text.index("{"), text.rindex("}") + 1
+        data = _json.loads(text[start:stop])
+    except Exception:
+        # Never drop the analysis because the JSON was malformed — hand back the prose so the
+        # run is still worth something, flagged so the UI renders it as plain text.
+        return {"summary": "", "actions": [], "raw": raw, "parse_failed": True}
+
+    def norm(v, allowed):
+        s = str(v or "").strip().lower()
+        return s if s in allowed else "medium"
+
+    actions = []
+    for a in (data.get("actions") or [])[:7]:
+        if not isinstance(a, dict) or not a.get("title"):
+            continue
+        actions.append({
+            "title":    str(a.get("title", ""))[:120],
+            "impact":   norm(a.get("impact"), {"high", "medium", "low"}),
+            "effort":   norm(a.get("effort"), {"high", "medium", "low"}),
+            "evidence": str(a.get("evidence", ""))[:600],
+            "fix":      str(a.get("fix", ""))[:900],
+            "metric":   str(a.get("metric", ""))[:300],
+        })
+    rank = {"high": 0, "medium": 1, "low": 2}
+    actions.sort(key=lambda a: (rank[a["impact"]], rank[a["effort"]]))
+    return {"summary": str(data.get("summary", ""))[:900], "actions": actions, "parse_failed": False}
+
+
+class CrawlBudgetRequest(BaseModel):
+    site_name: str
+    files: List[str]
+
+
+@app.post("/api/logs/crawl-budget")
+def logs_crawl_budget(req: CrawlBudgetRequest, current_user=Depends(_decode_token)):
+    """Analyse the selected log window and return ranked crawl-budget actions.
+
+    Re-merges the same files the analyse step used; every file but the newest comes from the
+    per-file cache, so this costs one Gemini call and almost no parsing."""
+    sites = load_sites()
+    if req.site_name not in sites:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if not req.files:
+        raise HTTPException(status_code=400, detail="Select a period to analyse.")
+
+    site = sites[req.site_name]
+    base = site["url"].rstrip("/") + "/"
+    auth = (site["username"], site["password"])
+    newest = req.files[0]
+
+    partials = []
+    for fname in req.files:
+        cached = None if fname == newest else _get_log_cache(req.site_name, fname)
+        if cached is None:
+            cached = _parse_one_log_file(base, fname, auth)
+            if cached and fname != newest:
+                _put_log_cache(req.site_name, fname, cached)
+        if cached:
+            partials.append(cached)
+
+    agg = _merge_log_aggregates(partials)
+    if not agg.get("total_hits"):
+        raise HTTPException(status_code=404, detail="No log data in the selected period.")
+
+    sig = _crawl_budget_signals(agg)
+    if not sig["googlebot_hits"]:
+        raise HTTPException(
+            status_code=404,
+            detail="No Googlebot requests in this period — nothing to say about crawl budget.")
+
+    try:
+        plan = _crawl_budget_actions(req.site_name, sig)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}")
+
+    out = {
+        "site": req.site_name,
+        "days_covered": sig["days_covered"],
+        "files_analyzed": len(partials),
+        "signals": sig,
+        "summary": plan.get("summary", ""),
+        "actions": plan.get("actions", []),
+        "raw": plan.get("raw"),
+        "parse_failed": plan.get("parse_failed", False),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_run(
+        tool="crawl_budget",
+        result=out,
+        target_url=site.get("url"),
+        summary=f"{len(out['actions'])} actions · {sig['wasted_pct']}% of Googlebot requests wasted",
+    )
+    return out
+
+
+# --- Backlink audit / disavow candidates --------------------------------------
+#
+# Two layers, deliberately separated:
+#   1. Deterministic risk scoring from the measured link attributes — reproducible, and the
+#      reason strings are facts rather than opinions.
+#   2. A model pass that judges whether each flagged domain is *actually* manipulative.
+#      This matters because spam heuristics misfire constantly on this portfolio: a fan blog
+#      on blogspot linking to a football site scores 100 for spam and is entirely natural.
+#
+# Disavow is destructive and irreversible in effect — Google treats a disavowed domain as if
+# the link never existed, and most sites never need the file at all. Nothing here auto-submits
+# anything; it produces candidates for a human to review.
+
+# TLDs where the overwhelming majority of registrations are throwaway spam.
+_DISAVOW_BAD_TLD = {
+    "xyz", "top", "club", "icu", "tk", "ml", "ga", "cf", "gq", "buzz", "work", "loan",
+    "download", "stream", "bid", "win", "party", "review", "date", "faith", "science",
+    "men", "racing", "accountant", "cricket", "trade", "webcam", "kim", "mom", "surf",
+}
+
+# Anchor text that signals a paid or injected link rather than an editorial one.
+_DISAVOW_BAD_ANCHOR = re.compile(
+    r"(casino|bet\w*\s*(online|site)|poker|bingo|slots?|viagra|cialis|pharmacy|porn|xxx|"
+    r"escort|loan|payday|replica|cheap\s+\w+|buy\s+\w+\s+online|comprar\s+\w+|"
+    r"apostas?\s+(online|esportivas)|cassino|emprestimo|empréstimo)", re.I)
+
+
+def _disavow_score(b: dict) -> dict:
+    """Score one referring domain for disavow risk. Returns {risk, tier, reasons}."""
+    reasons = []
+    risk = 0
+
+    spam = int(b.get("backlink_spam_score") or 0)
+    rank = int(b.get("domain_from_rank") or 0)
+    dofollow = bool(b.get("dofollow"))
+    tld = (b.get("tld_from") or "").split(".")[-1].lower()
+    anchor = (b.get("anchor") or "").strip()
+    platforms = [str(p).lower() for p in (b.get("domain_from_platform_type") or [])]
+
+    if spam >= 85:
+        risk += 45; reasons.append(f"DataForSEO spam score {spam}/100")
+    elif spam >= 60:
+        risk += 28; reasons.append(f"elevated spam score {spam}/100")
+    elif spam >= 40:
+        risk += 12; reasons.append(f"moderate spam score {spam}/100")
+
+    if rank == 0:
+        risk += 20; reasons.append("referring domain has no measurable authority (rank 0)")
+    elif rank < 15:
+        risk += 10; reasons.append(f"very low domain rank ({rank})")
+
+    if tld in _DISAVOW_BAD_TLD:
+        risk += 20; reasons.append(f".{tld} — a TLD dominated by throwaway spam registrations")
+
+    if anchor and _DISAVOW_BAD_ANCHOR.search(anchor):
+        risk += 25; reasons.append(f'commercial/injected anchor text: "{anchor[:60]}"')
+
+    if b.get("domain_from_is_ip"):
+        risk += 15; reasons.append("link comes from a bare IP address, not a domain")
+
+    links_count = int(b.get("links_count") or 0)
+    if links_count >= 50:
+        risk += 12; reasons.append(f"{links_count} links from the same page — sitewide or injected placement")
+
+    if "message-boards" in platforms and spam >= 40:
+        risk += 8; reasons.append("forum/message-board placement with an elevated spam score")
+
+    if int(b.get("page_from_status_code") or 200) >= 400:
+        risk += 5; reasons.append(f"linking page returns HTTP {b.get('page_from_status_code')}")
+
+    # A nofollow link passes no PageRank, so disavowing it changes nothing. Google's own
+    # guidance is not to bother. Score it down hard rather than hiding it.
+    if not dofollow:
+        risk = int(risk * 0.35)
+        reasons.append("nofollow — passes no ranking signal, so disavowing has no effect")
+
+    if b.get("is_lost"):
+        risk = int(risk * 0.3)
+        reasons.append("link is already gone")
+
+    risk = max(0, min(risk, 100))
+    tier = "high" if risk >= 65 else "medium" if risk >= 38 else "low"
+    return {"risk": risk, "tier": tier, "reasons": reasons}
+
+
+def _backlink_review(domain: str, summary: dict, candidates: list) -> dict:
+    """Second opinion on the flagged domains: manipulative, or a false positive?"""
+    import json as _json
+
+    listing = "\n".join(
+        f"  {c['domain_from']} | risk {c['risk']} | spam {c['spam_score']} | rank {c['domain_rank']} | "
+        f"{'dofollow' if c['dofollow'] else 'nofollow'} | anchor: {(c['anchor'] or '(none)')[:45]} | "
+        f"reasons: {'; '.join(c['reasons'][:3])}"
+        for c in candidates[:40]
+    ) or "  (none flagged)"
+
+    prompt = f"""You are auditing the backlink profile of {domain} for disavow candidates.
+
+PROFILE (measured)
+  Referring domains: {summary.get('referring_domains', 0):,}
+  Total backlinks: {summary.get('backlinks', 0):,}
+  Profile spam score: {summary.get('backlinks_spam_score', 0)}/100
+  Broken backlinks: {summary.get('broken_backlinks', 0):,}
+  Domain rank: {summary.get('rank', 0)}
+
+FLAGGED DOMAINS (scored by measured attributes, worst first)
+{listing}
+
+CRITICAL CONTEXT
+This is a sports/news publisher. Fan blogs, forums, aggregators and small local sites linking
+to it are NATURAL and should NOT be disavowed, even when automated spam scores rate them high
+— blogspot/wordpress fan blogs in particular are usually legitimate. Disavow is only for links
+that are manipulative: paid link networks, hacked-site injections, scraped mirrors, PBNs, and
+irrelevant commercial anchors (gambling/pharma/loans) pointing at a site in another niche.
+Google advises most sites never to file a disavow at all. A wrong disavow destroys real equity
+and is slow to undo. Be conservative: when in doubt, say "keep".
+
+TASK
+Judge each flagged domain. Return ONLY valid JSON, no fences, no commentary:
+{{
+  "verdict": "action_needed|monitor|clean",
+  "summary": "2-4 sentences on the real state of this profile and whether a disavow is warranted at all",
+  "judgements": [
+    {{
+      "domain": "exact domain from the list",
+      "call": "disavow|review|keep",
+      "why": "one sentence, specific to this domain and the evidence given"
+    }}
+  ]
+}}
+Include a judgement for every flagged domain listed above."""
+
+    raw = _gemini_generate(prompt)
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+    try:
+        start, stop = text.index("{"), text.rindex("}") + 1
+        data = _json.loads(text[start:stop])
+    except Exception:
+        return {"verdict": "", "summary": "", "judgements": {}, "raw": raw, "parse_failed": True}
+
+    judgements = {}
+    for j in (data.get("judgements") or []):
+        if isinstance(j, dict) and j.get("domain"):
+            call = str(j.get("call", "")).strip().lower()
+            judgements[str(j["domain"]).strip().lower()] = {
+                "call": call if call in {"disavow", "review", "keep"} else "review",
+                "why": str(j.get("why", ""))[:400],
+            }
+    verdict = str(data.get("verdict", "")).strip().lower()
+    return {
+        "verdict": verdict if verdict in {"action_needed", "monitor", "clean"} else "monitor",
+        "summary": str(data.get("summary", ""))[:900],
+        "judgements": judgements,
+        "parse_failed": False,
+    }
+
+
+class BacklinkAuditRequest(BaseModel):
+    domain: str
+    limit: int = 200
+
+
+@app.post("/api/backlinks/audit")
+def backlinks_audit(req: BacklinkAuditRequest, current_user=Depends(_decode_token)):
+    """Pull a domain's referring links, score them for disavow risk, and have the model
+    sanity-check the flagged ones. Two paid DataForSEO calls plus one Gemini call."""
+    domain = _clean_domain(req.domain)
+    if not domain:
+        raise HTTPException(status_code=400, detail="Enter a valid domain (e.g. example.com).")
+
+    summary = fetch_backlinks_summary(domain)
+    if summary.get("error"):
+        raise HTTPException(status_code=502, detail=summary["error"])
+
+    links = fetch_backlinks(domain, limit=max(25, min(req.limit, 1000)))
+    if links.get("error"):
+        raise HTTPException(status_code=502, detail=links["error"])
+
+    scored = []
+    for b in links.get("items") or []:
+        s = _disavow_score(b)
+        scored.append({
+            "domain_from":  b.get("domain_from"),
+            "url_from":     b.get("url_from"),
+            "url_to":       b.get("url_to"),
+            "anchor":       b.get("anchor"),
+            "spam_score":   int(b.get("backlink_spam_score") or 0),
+            "domain_rank":  int(b.get("domain_from_rank") or 0),
+            "dofollow":     bool(b.get("dofollow")),
+            "tld":          b.get("tld_from"),
+            "platform":     b.get("domain_from_platform_type") or [],
+            "first_seen":   b.get("first_seen"),
+            "is_lost":      bool(b.get("is_lost")),
+            "links_count":  int(b.get("links_count") or 0),
+            "risk":         s["risk"],
+            "tier":         s["tier"],
+            "reasons":      s["reasons"],
+        })
+    scored.sort(key=lambda x: -x["risk"])
+    candidates = [c for c in scored if c["tier"] in ("high", "medium")]
+
+    review = {"verdict": "clean", "summary": "", "judgements": {}, "parse_failed": False}
+    if candidates:
+        try:
+            review = _backlink_review(domain, summary, candidates)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"AI review failed: {exc}")
+
+    for c in candidates:
+        j = review.get("judgements", {}).get((c["domain_from"] or "").lower())
+        c["call"] = (j or {}).get("call", "review")
+        c["why"] = (j or {}).get("why", "")
+
+    tally = {"disavow": 0, "review": 0, "keep": 0}
+    for c in candidates:
+        tally[c["call"]] = tally.get(c["call"], 0) + 1
+
+    out = {
+        "domain": domain,
+        "profile": {
+            "rank":              summary.get("rank"),
+            "backlinks":         summary.get("backlinks"),
+            "referring_domains": summary.get("referring_domains"),
+            "referring_main_domains": summary.get("referring_main_domains"),
+            "spam_score":        summary.get("backlinks_spam_score"),
+            "broken_backlinks":  summary.get("broken_backlinks"),
+            "link_types":        summary.get("referring_links_types") or {},
+        },
+        "analysed_links":  len(scored),
+        "total_referring": links.get("total_count"),
+        "candidates":      candidates[:150],
+        "tally":           tally,
+        "verdict":         review.get("verdict"),
+        "summary":         review.get("summary"),
+        "raw":             review.get("raw"),
+        "parse_failed":    review.get("parse_failed", False),
+        "cost":            round(float(summary.get("cost") or 0) + float(links.get("cost") or 0), 4),
+        "generated_at":    datetime.now(timezone.utc).isoformat(),
+    }
+    _save_run(
+        tool="backlink_audit",
+        result=out,
+        target_url=f"https://{domain}/",
+        summary=f"{tally['disavow']} to disavow · {tally['review']} to review · "
+                f"{len(scored)} links scored of {links.get('total_count') or 0:,} referring domains",
+    )
+    return out
+
+
+# --- Hreflang checker ---------------------------------------------------------
+
+import hreflang as _hl
+
+
+class HreflangRequest(BaseModel):
+    domain: str
+    locales: List[str] = []          # empty = every locale folder found
+    max_pages: int = 120
+    sitemap_url: Optional[str] = None
+    ai_confirm: bool = True
+
+
+def _hreflang_ai_confirm(pairs: list) -> dict:
+    """Ask the model which borderline pairs are really the same page in another language.
+
+    Best-effort: the structural signals already decided the clear cases, so a quota error or a
+    malformed reply must degrade the result rather than fail the run.
+    """
+    import json as _json
+    listing = "\n".join(
+        f'{i}. A: [{p["locale_a"]}] "{p["title_a"]}" ({p["path_a"]})\n'
+        f'   B: [{p["locale_b"]}] "{p["title_b"]}" ({p["path_b"]})'
+        for i, p in enumerate(pairs, 1))
+
+    prompt = f"""For each numbered pair, decide whether the two pages are the SAME content
+published for a different language or region — the relationship hreflang exists to declare.
+
+Titles are in different languages, so judge by meaning, not by shared words. A translated
+title ("Transfer window" / "Janela de transferências") is the same page. A merely related
+page ("Transfer window" / "Top 10 signings") is NOT — say no.
+
+{listing}
+
+Return ONLY valid JSON, no fences:
+{{"verdicts": [{{"n": 1, "same": true, "why": "one short clause"}}]}}"""
+
+    try:
+        raw = _gemini_generate(prompt)
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+        data = _json.loads(text[text.index("{"):text.rindex("}") + 1])
+        out = {}
+        for v in data.get("verdicts") or []:
+            try:
+                out[int(v["n"])] = {"same": bool(v.get("same")), "why": str(v.get("why", ""))[:200]}
+            except Exception:
+                continue
+        return {"verdicts": out, "error": None}
+    except Exception as exc:
+        return {"verdicts": {}, "error": str(exc)[:200]}
+
+
+@app.post("/api/hreflang/check")
+def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
+    """Crawl a site's locale subfolders and report pages that should be linked by hreflang.
+
+    Path parity and translation-surviving fingerprints (images, numbers, outbound links) do the
+    matching; the model is only consulted on pairs those leave ambiguous.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from urllib.parse import urlparse as _up
+
+    domain = _clean_domain(req.domain)
+    if not domain:
+        raise HTTPException(status_code=400, detail="Enter a valid domain (e.g. example.com).")
+    base = f"https://{domain}/"
+    max_pages = max(20, min(req.max_pages, 400))
+
+    session = http_requests.Session()
+
+    # 1. URL inventory
+    if req.sitemap_url:
+        disc = _hl.discover_sitemap_urls(req.sitemap_url, session)
+        if not disc["urls"]:
+            disc = _hl.discover_sitemap_urls(base, session)
+    else:
+        disc = _hl.discover_sitemap_urls(base, session)
+    all_urls = disc["urls"]
+    if not all_urls:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No sitemap found for {domain}. Tried robots.txt and the usual paths — "
+                   f"pass a sitemap URL explicitly if it lives somewhere else.")
+
+    # 2. Bucket by locale folder
+    by_locale = defaultdict(list)
+    no_locale = 0
+    for u in all_urls:
+        loc, rest = _hl.split_locale_path(_up(u).path)
+        if loc:
+            by_locale[loc].append((rest.rstrip("/") or "/", u))
+        else:
+            no_locale += 1
+
+    wanted = [l for l in req.locales if l] or list(by_locale.keys())
+    by_locale = {l: v for l, v in by_locale.items() if l in wanted}
+    if len(by_locale) < 2:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Found {len(by_locale)} locale subfolder(s) in the sitemap "
+                   f"({', '.join(sorted(by_locale)) or 'none'}). hreflang needs at least two "
+                   f"language or region versions to compare.")
+
+    # 3. Choose what to fetch. Paths that already appear in several locales are the cheapest
+    #    wins, so they come first; the remainder fills the budget so translated slugs — the
+    #    pages most likely to be *missing* hreflang — still get a chance to be matched.
+    path_locales = defaultdict(set)
+    for loc, items in by_locale.items():
+        for rest, _ in items:
+            path_locales[rest].add(loc)
+    shared_paths = {p for p, ls in path_locales.items() if len(ls) > 1}
+
+    picked, seen_urls = [], set()
+    for loc, items in by_locale.items():
+        shared = [(r, u) for r, u in items if r in shared_paths]
+        solo = [(r, u) for r, u in items if r not in shared_paths]
+        quota = max(4, max_pages // max(len(by_locale), 1))
+        for rest, u in (shared[: int(quota * 0.7)] + solo[: quota - int(quota * 0.7)]):
+            if u not in seen_urls and len(picked) < max_pages:
+                seen_urls.add(u); picked.append((loc, rest, u))
+
+    # 4. Fetch
+    def _one(item):
+        loc, rest, u = item
+        page = _hl.fetch_page(u, session)
+        page["locale"], page["rest"] = loc, rest
+        return page
+
+    pages = []
+    with ThreadPoolExecutor(max_workers=int(os.getenv("HREFLANG_WORKERS", "10"))) as ex:
+        for p in ex.map(_one, picked):
+            pages.append(p)
+
+    ok_pages = [p for p in pages if p.get("status") == 200]
+    if not ok_pages:
+        raise HTTPException(status_code=502,
+                            detail="Every sampled page failed to fetch — the site may be blocking us.")
+
+    # 5. Groups that path parity already proves, audited for annotation problems
+    groups = [_hl.audit_group(k, v) for k, v in _hl.group_by_path(ok_pages).items()]
+    groups.sort(key=lambda g: ({"high": 0, "medium": 1, "low": 2, "ok": 3}[g["severity"]], g["path"]))
+
+    # 6. Pages with no path twin: compare across locales on content instead
+    grouped_urls = {p["final_url"] for g in _hl.group_by_path(ok_pages).values() for p in g.values()}
+    orphans = [p for p in ok_pages if p["final_url"] not in grouped_urls]
+
+    candidates, ambiguous = [], []
+    for i, a in enumerate(orphans):
+        for b in orphans[i + 1:]:
+            if a["locale"] == b["locale"]:
+                continue
+            same_lang = a["locale"].split("-")[0] == b["locale"].split("-")[0]
+            s = _hl.score_pair(a, b, same_lang)
+            if s["confidence"] < 0.25:
+                continue
+            row = {
+                "locale_a": a["locale"], "path_a": a["rest"], "url_a": a["final_url"], "title_a": a["title"],
+                "locale_b": b["locale"], "path_b": b["rest"], "url_b": b["final_url"], "title_b": b["title"],
+                "confidence": s["confidence"], "method": s["method"], "signals": s["signals"],
+                "already_linked": any(_hl._norm_url(h) == _hl._norm_url(b["final_url"])
+                                      for h in a["hreflangs"].values()),
+                "suggested_tags": _hl.suggest_tags({a["locale"]: a, b["locale"]: b}),
+            }
+            (candidates if s["confidence"] >= 0.55 else ambiguous).append(row)
+
+    candidates.sort(key=lambda r: -r["confidence"])
+    ambiguous.sort(key=lambda r: -r["confidence"])
+
+    # 7. One model call to adjudicate the middle band
+    ai_note = None
+    if req.ai_confirm and ambiguous:
+        batch = ambiguous[:25]
+        res = _hreflang_ai_confirm(batch)
+        if res["error"]:
+            ai_note = f"AI confirmation unavailable ({res['error']}) — showing structural scores only."
+        else:
+            for n, verdict in res["verdicts"].items():
+                if 1 <= n <= len(batch):
+                    row = batch[n - 1]
+                    row["ai_same"] = verdict["same"]
+                    row["ai_why"] = verdict["why"]
+                    if verdict["same"]:
+                        row["confidence"] = max(row["confidence"], 0.6)
+                        candidates.append(row)
+            ai_note = f"{sum(1 for r in batch if r.get('ai_same'))} of {len(batch)} borderline pairs confirmed by AI."
+        candidates.sort(key=lambda r: -r["confidence"])
+
+    missing_pairs = [c for c in candidates if not c["already_linked"]]
+
+    counts = defaultdict(int)
+    for g in groups:
+        for i in g["issues"]:
+            counts[i["type"]] += 1
+
+    out = {
+        "domain": domain,
+        "locales_found": sorted(
+            [{"locale": l, "urls_in_sitemap": len(v)} for l, v in by_locale.items()],
+            key=lambda x: -x["urls_in_sitemap"]),
+        "sitemap_urls": len(all_urls),
+        "urls_without_locale": no_locale,
+        "pages_fetched": len(ok_pages),
+        "pages_failed": len(pages) - len(ok_pages),
+        "groups": groups[:200],
+        "groups_total": len(groups),
+        "missing_pairs": missing_pairs[:100],
+        "summary": {
+            "groups_with_issues": sum(1 for g in groups if g["severity"] != "ok"),
+            "missing_entirely": counts["missing_entirely"],
+            "not_reciprocal": counts["not_reciprocal"],
+            "missing_alternate": counts["missing_alternate"],
+            "missing_self_reference": counts["missing_self_reference"],
+            "invalid_code": counts["invalid_code"],
+            "canonical_conflict": counts["canonical_conflict"],
+            "lang_mismatch": counts["lang_mismatch"],
+            "content_matches_unlinked": len(missing_pairs),
+        },
+        "ai_note": ai_note,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_run(
+        tool="hreflang",
+        result=out,
+        target_url=base,
+        summary=f"{out['summary']['groups_with_issues']} of {len(groups)} page sets have hreflang "
+                f"issues · {len(missing_pairs)} unlinked content matches",
+    )
+    return out
 
 
 # --- GSC Endpoints ---
@@ -2880,7 +3728,10 @@ def _serp_cached(keyword: str, location_name: str = "Global (No Geolocation)",
     still gets fresh data. Only successful results are cached; errors always re-fetch.
     """
     ttl = float(os.getenv("SERP_CACHE_TTL_HOURS", "6"))
-    key = f"{(keyword or '').strip().lower()}|{location_name}"
+    # DataForSEO callers get their own key namespace, shared with the rank-tracking test copy
+    # (_serp_dfs_cached) so a SERP bought by one is reused by the other instead of paid for twice.
+    ns = "dfs|" if provider == "dataforseo" else ""
+    key = f"{ns}{(keyword or '').strip().lower()}|{location_name}"
 
     if ttl > 0:
         try:
@@ -2896,12 +3747,16 @@ def _serp_cached(keyword: str, location_name: str = "Global (No Geolocation)",
                         res = row["result"]
                         if isinstance(res, str):
                             res = json.loads(res)
-                        # A cached entry from a fallback engine must not satisfy a caller that
-                        # explicitly demanded SerpAPI — that would reintroduce the mixed-source
-                        # data the provider pin exists to prevent.
-                        if isinstance(res, dict) and not (
-                            provider == "serpapi" and res.get("source") != "serpapi"
-                        ):
+                        # A cached entry from the wrong engine must not satisfy a caller that
+                        # pinned a provider — that would reintroduce the mixed-source data the
+                        # pin exists to prevent. SerpAPI demands SerpAPI exactly; DataForSEO
+                        # accepts its own fallback chain but never a SerpAPI result.
+                        src = res.get("source") if isinstance(res, dict) else None
+                        wrong_source = (
+                            (provider == "serpapi" and src != "serpapi") or
+                            (provider == "dataforseo" and src == "serpapi")
+                        )
+                        if isinstance(res, dict) and not wrong_source:
                             res["_cached"] = True
                             return res
         except Exception:
@@ -4177,8 +5032,8 @@ def fs_stealer_analyze(req: FsStealerRequest):
     target_url = req.target_url if req.target_url.startswith("http") else "https://" + req.target_url
     intent = _classify_intent(req.keyword)
 
-    # Step 1 — fetch SERP: SerpAPI (real Google) → DuckDuckGo → Google scraper
-    serp = _serp_cached(req.keyword, location_name=req.location_name)
+    # Step 1 — fetch SERP: DataForSEO (real Google) → DuckDuckGo → Google scraper
+    serp = _serp_cached(req.keyword, location_name=req.location_name, provider="dataforseo")
     if not serp.get("organic"):
         raise HTTPException(status_code=502, detail=serp.get("error", "SERP fetch failed. Please try again."))
 
@@ -4190,7 +5045,7 @@ def fs_stealer_analyze(req: FsStealerRequest):
     # snippet from a result that is not #1 — and plenty of SERPs have no snippet at all — so
     # treating organic[0] as "the FS holder" was a guess presented to the user as fact.
     featured = serp.get("featured_snippet")
-    fs_known = serp.get("source") == "serpapi"      # only SerpAPI can confirm absence
+    fs_known = serp.get("source") == "dataforseo"   # only DataForSEO can confirm absence
     if featured and featured.get("link"):
         fs_link = featured["link"]
         fs_holder = next(

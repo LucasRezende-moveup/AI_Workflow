@@ -20,7 +20,7 @@ const NAV_GROUPS = [
   { label: 'Monitor', items: [
     { name: 'GSC Dashboard',      icon: <Activity size={17} /> },
     { name: 'SEO Health',         icon: <BarChart2 size={17} /> },
-    { name: 'Tracking',           icon: <TrendingUp size={17} /> },
+    { name: 'Tracking - Keywords', icon: <TrendingUp size={17} /> },
     { name: 'Indexation Control', icon: <Globe size={17} /> },
   ]},
   { label: 'Audit', items: [
@@ -50,7 +50,7 @@ function renderPage(page, user) {
     case 'Internal Linking':   return <InternalLinking />;
     case 'SERP Analyzer':      return <SerpAnalyzer />;
     case 'FS Stealer':         return <FsStealer />;
-    case 'Tracking':           return <Tracking />;
+    case 'Tracking - Keywords': return <Tracking />;
     case 'Content Freshness':  return <ContentFreshness />;
     case 'History':            return <History />;
     case 'Users':
@@ -334,11 +334,11 @@ export default function App() {
                         const colors = { critical: '#dc2626', warning: '#c2410c', info: '#0284c7' };
                         const dot = colors[a.severity] || '#64748b';
                         const SRC = {
-                          tracking:   { label: 'Tracking',          page: 'Tracking' },
+                          tracking:   { label: 'Tracking',          page: 'Tracking - Keywords' },
                           indexation: { label: 'Indexation',        page: 'Indexation Control' },
                           log:        { label: 'Log health',        page: 'Technical Auditor' },
                         };
-                        const src = SRC[a.source] || { label: a.source || 'Alert', page: 'Tracking' };
+                        const src = SRC[a.source] || { label: a.source || 'Alert', page: 'Tracking - Keywords' };
                         return (
                           <button key={a.id} type="button" onClick={() => { setActivePage(src.page); setBellOpen(false); }}
                             style={{ width: '100%', textAlign: 'left', font: 'inherit', color: 'inherit', background: 'transparent', padding: '10px 14px', border: 'none', borderBottom: '1px solid rgb(var(--ink) / 0.05)', cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'flex-start' }}

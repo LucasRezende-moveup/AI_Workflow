@@ -10,14 +10,22 @@ import os
 _FLASH_MODEL_CACHE = None
 _CONFIGURED = False
 
-# Preference order — newest/cheapest flash first, then graceful fallbacks
+# Preference order — newest/cheapest flash first, then graceful fallbacks.
+#
+# Retired models stay *listed* by list_models() long after they stop generating: on
+# 2026-09-15 every AI feature was returning 404 "no longer available to new users" because
+# gemini-2.5-flash was still advertised and still first in this list. So the last entry is
+# the moving alias rather than a pinned version — when the named models age out, the alias
+# keeps working instead of taking the whole platform down. GEMINI_MODEL overrides everything
+# if a specific model ever has to be forced without a deploy.
 _PREFERRED = [
-    'models/gemini-2.5-flash',
-    'models/gemini-2.0-flash',
-    'models/gemini-1.5-flash',
+    'models/gemini-3.8-flash',
+    'models/gemini-3.7-flash',
+    'models/gemini-3.6-flash',
+    'models/gemini-3.5-flash',
     'models/gemini-flash-latest',
 ]
-_DEFAULT = 'models/gemini-2.5-flash'
+_DEFAULT = 'models/gemini-flash-latest'
 
 
 def ensure_configured():
@@ -36,6 +44,10 @@ def get_flash_model():
     """Return a cached preferred Gemini flash model name (lists models at most once per process)."""
     global _FLASH_MODEL_CACHE
     if _FLASH_MODEL_CACHE:
+        return _FLASH_MODEL_CACHE
+    override = os.getenv("GEMINI_MODEL", "").strip()
+    if override:
+        _FLASH_MODEL_CACHE = override if override.startswith("models/") else f"models/{override}"
         return _FLASH_MODEL_CACHE
     ensure_configured()
     try:
