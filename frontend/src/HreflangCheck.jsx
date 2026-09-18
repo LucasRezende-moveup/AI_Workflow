@@ -266,6 +266,24 @@ export default function HreflangCheck() {
             </span>
           </div>
 
+          {/* Locale editions that exist but are absent from the sitemap — a finding in itself */}
+          {(result.unsitemapped_locales || []).length > 0 && (
+            <div style={{ padding: '11px 14px', borderRadius: 9, fontSize: '0.79rem',
+              background: 'rgba(180,83,9,0.08)', border: '1px solid rgba(180,83,9,0.28)', color: 'var(--text-strong)' }}>
+              <strong>{result.unsitemapped_locales.length} locale edition{result.unsitemapped_locales.length !== 1 ? 's' : ''} missing from the sitemap.</strong>{' '}
+              Found by probing, not by crawling — Google is far less likely to discover them either.
+              <div style={{ marginTop: 5, color: 'var(--text-muted)', fontSize: '0.74rem' }}>
+                {result.unsitemapped_locales.map(u => `/${u.segment}/ → ${u.locale} (lang="${u.html_lang}")`).join(' · ')}
+              </div>
+            </div>
+          )}
+
+          {result.root_locale && (
+            <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>
+              Site root treated as <strong style={{ color: 'var(--text-strong)' }}>{result.root_locale}</strong>, from its html lang — the default language usually lives at / with no prefix.
+            </div>
+          )}
+
           {result.ai_note && (
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{result.ai_note}</div>
           )}

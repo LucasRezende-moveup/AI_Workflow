@@ -2952,6 +2952,7 @@ class HreflangRequest(BaseModel):
     max_pages: int = 120
     sitemap_url: Optional[str] = None
     ai_confirm: bool = True
+    probe_locales: bool = True
 
 
 def _hreflang_ai_confirm(pairs: list) -> dict:
@@ -3027,24 +3028,55 @@ def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
             detail=f"No sitemap found for {domain}. Tried robots.txt and the usual paths — "
                    f"pass a sitemap URL explicitly if it lives somewhere else.")
 
-    # 2. Bucket by locale folder
+    # 2. The site root is itself a locale on most multilingual sites — the default language
+    #    lives at / with no prefix. Its html lang is how we label it, and without this the
+    #    default-language pages are invisible and can never be paired with a translation.
+    root_page = _hl.fetch_page(base, session)
+    root_locale = ((root_page.get("lang") or "").strip().replace("_", "-") or None)
+
     by_locale = defaultdict(list)
     no_locale = 0
     for u in all_urls:
         loc, rest = _hl.split_locale_path(_up(u).path)
         if loc:
             by_locale[loc].append((rest.rstrip("/") or "/", u))
+        elif root_locale:
+            by_locale[root_locale].append((rest.rstrip("/") or "/", u))
         else:
             no_locale += 1
 
+    # 3. Locale sections can exist and simply never be sitemapped — Toffeweb publishes six
+    #    regional editions none of which appear in its sitemap. A short probe of likely
+    #    folders catches them; a folder only counts when it declares a different html lang
+    #    than the root, otherwise /us/ is just a page about the United States.
+    probed = []
+    if req.probe_locales:
+        try:
+            probed = _hl.probe_locale_roots(base, session, set(by_locale.keys()), root_locale)
+        except Exception:
+            probed = []
+    for hit in probed:
+        try:
+            extra = _hl.urls_for_locale_root(base, hit["segment"], session,
+                                             cap=max(10, max_pages // 6))
+        except Exception:
+            extra = []
+        seg = f"/{hit['segment']}"
+        for u in extra:
+            path = _up(u).path
+            rest = path[len(seg):] if path.lower().startswith(seg.lower()) else path
+            by_locale[hit["label"]].append((rest.rstrip("/") or "/", u))
+        hit["urls_sampled"] = len(extra)
+
     wanted = [l for l in req.locales if l] or list(by_locale.keys())
-    by_locale = {l: v for l, v in by_locale.items() if l in wanted}
+    by_locale = {l: v for l, v in by_locale.items() if l in wanted and v}
     if len(by_locale) < 2:
         raise HTTPException(
             status_code=404,
-            detail=f"Found {len(by_locale)} locale subfolder(s) in the sitemap "
+            detail=f"Found {len(by_locale)} locale version(s) of this site "
                    f"({', '.join(sorted(by_locale)) or 'none'}). hreflang needs at least two "
-                   f"language or region versions to compare.")
+                   f"language or region versions to compare. Checked the sitemap"
+                   f"{' and probed common locale folders' if req.probe_locales else ''}.")
 
     # 3. Choose what to fetch. Paths that already appear in several locales are the cheapest
     #    wins, so they come first; the remainder fills the budget so translated slugs — the
@@ -3074,6 +3106,14 @@ def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
     pages = []
     with ThreadPoolExecutor(max_workers=int(os.getenv("HREFLANG_WORKERS", "10"))) as ex:
         for p in ex.map(_one, picked):
+            # The folder is only a hint. A page under /cl/ declaring es-CL is es-CL, and one
+            # under /ca-on/ declaring en-CA is en-CA — the page is authoritative, so the label
+            # is settled here before anything is grouped or audited.
+            rec = _hl.reconcile_locale(p["locale"], p.get("lang"))
+            p["locale_folder"] = p["locale"]
+            p["locale"] = rec["label"]
+            p["locale_source"] = rec["source"]
+            p["locale_mismatch"] = rec["mismatch"]
             pages.append(p)
 
     ok_pages = [p for p in pages if p.get("status") == 200]
@@ -3144,6 +3184,11 @@ def hreflang_check(req: HreflangRequest, current_user=Depends(_decode_token)):
             key=lambda x: -x["urls_in_sitemap"]),
         "sitemap_urls": len(all_urls),
         "urls_without_locale": no_locale,
+        "root_locale": root_locale,
+        "unsitemapped_locales": [
+            {"segment": h["segment"], "locale": h["label"], "html_lang": h["html_lang"],
+             "url": h["url"], "urls_sampled": h.get("urls_sampled", 0)}
+            for h in probed],
         "pages_fetched": len(ok_pages),
         "pages_failed": len(pages) - len(ok_pages),
         "groups": groups[:200],
