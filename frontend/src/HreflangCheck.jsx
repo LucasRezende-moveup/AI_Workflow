@@ -36,9 +36,13 @@ function tagsToHtml(tags) {
 }
 
 export default function HreflangCheck() {
-  const [sites, setSites]             = useState({});
+  // Domains come from the tracking projects — the registered-domain list — not from the log
+  // sites. hreflang is read from sitemaps, so requiring log credentials would have limited the
+  // tool to the handful of sites that happen to ship us their access logs.
+  const [projects, setProjects]       = useState([]);
   const [selectedSite, setSelectedSite] = useState('');
   const [domain, setDomain]           = useState('');
+  const [sitemapUrl, setSitemapUrl]   = useState('');
   const [maxPages, setMaxPages]       = useState(120);
   const [result, setResult]           = useState(null);
   const [loading, setLoading]         = useState(false);
@@ -46,17 +50,29 @@ export default function HreflangCheck() {
   const [copied, setCopied]           = useState(null);
 
   useEffect(() => {
-    fetch('/api/sites').then(r => r.json()).then(data => {
-      setSites(data || {});
-      const first = Object.keys(data || {})[0];
-      if (first) { setSelectedSite(first); setDomain(hostOf(data[first]?.url)); }
-    }).catch(() => {});
+    const token = localStorage.getItem('auth_token');
+    fetch('/api/tracking/projects', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => {
+        const list = (d.projects || []).filter(p => p.domain);
+        setProjects(list);
+        if (list.length) { setSelectedSite(list[0].domain); setDomain(list[0].domain); }
+      })
+      .catch(() => {});
   }, []);
 
-  const pickSite = (name) => {
-    setSelectedSite(name);
-    if (sites[name]?.url) setDomain(hostOf(sites[name].url));
+  const pickSite = (dom) => {
+    setSelectedSite(dom);
+    if (dom) setDomain(dom);
     setResult(null); setError('');
+  };
+
+  // Pasting a sitemap URL is enough on its own — the domain the report is about is derivable
+  // from it, so it fills in rather than being asked for twice.
+  const onSitemapChange = (v) => {
+    setSitemapUrl(v);
+    const h = hostOf(v);
+    if (h && !domain.trim()) { setDomain(h); setSelectedSite(''); }
   };
 
   const run = async () => {
@@ -67,7 +83,8 @@ export default function HreflangCheck() {
       const res = await fetch('/api/hreflang/check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ domain: domain.trim(), max_pages: maxPages }),
+        body: JSON.stringify({ domain: domain.trim(), max_pages: maxPages,
+                               sitemap_url: sitemapUrl.trim() || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Check failed');
@@ -181,10 +198,10 @@ export default function HreflangCheck() {
 
       <div className="grid grid-cols-3 gap-4" style={{ marginTop: 16 }}>
         <div>
-          <label className="metric-label mb-2 block" htmlFor="hl-site">Site</label>
+          <label className="metric-label mb-2 block" htmlFor="hl-site">Registered domain</label>
           <select id="hl-site" className="glass-input glass-select" value={selectedSite}
             onChange={e => pickSite(e.target.value)}>
-            {Object.keys(sites).map(x => <option key={x} value={x}>{x}</option>)}
+            {projects.map(p => <option key={p.id} value={p.domain}>{p.domain}</option>)}
             <option value="">Custom domain…</option>
           </select>
         </div>
@@ -199,6 +216,18 @@ export default function HreflangCheck() {
             onChange={e => setMaxPages(Number(e.target.value))}>
             {[60, 120, 240, 400].map(n => <option key={n} value={n}>{n} pages</option>)}
           </select>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12 }}>
+        <label className="metric-label mb-2 block" htmlFor="hl-sitemap">
+          Sitemap URL <span style={{ textTransform: 'none', letterSpacing: 0 }}>— optional, and the way to fix “no sitemap found”</span>
+        </label>
+        <input id="hl-sitemap" className="glass-input" value={sitemapUrl} style={{ width: '100%' }}
+          placeholder="https://example.com/sitemap_index.xml — leave blank to read robots.txt and the usual paths"
+          onChange={e => onSitemapChange(e.target.value)} />
+        <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', marginTop: 4 }}>
+          Sitemap indexes and gzipped (.xml.gz) sitemaps are both followed.
         </div>
       </div>
 
