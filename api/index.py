@@ -3625,6 +3625,71 @@ def get_gsc_chat(req: GscChatRequest):
 
 # --- Screaming Frog Endpoints ---
 
+def _json_safe_records(df) -> list:
+    """DataFrame -> JSON-safe dicts.
+
+    `df.where(pd.notnull(df), None)` looks like it handles this but does not: on a float
+    column None is cast straight back to NaN, so the NaN survives and json.dumps() dies with
+    "Out of range float values are not JSON compliant" — a 500 the browser only ever sees as a
+    network error. numpy scalars need unwrapping for the same reason.
+    """
+    import math
+    import numpy as _np
+
+    def clean(v):
+        if v is None:
+            return None
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        if isinstance(v, _np.generic):
+            v = v.item()
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                return None
+            return v
+        if v is pd.NaT:
+            return None
+        if isinstance(v, (pd.Timestamp,)):
+            return v.isoformat()
+        if isinstance(v, (bytes, bytearray)):
+            return v.decode("utf-8", "replace")[:500]
+        return v
+
+    return [{str(k): clean(v) for k, v in row.items()}
+            for row in df.to_dict(orient="records")]
+
+
+class SfParsedRequest(BaseModel):
+    """A crawl already parsed in the browser.
+
+    Screaming Frog database-mode files run to hundreds of megabytes and a Vercel function
+    rejects any body over 4.5 MB, so the file never reached this code at all. The browser now
+    opens the SQLite itself and sends only what the report needs: four counts and a sample.
+    """
+    filename: str
+    metrics: dict
+    columns: List[str] = []
+    data: List[dict] = []
+    cols_used: List[Optional[str]] = []
+
+
+@app.post("/api/sf/analyze-parsed")
+def analyze_sf_parsed(req: SfParsedRequest, current_user=Depends(_decode_token)):
+    m = req.metrics or {}
+    return {
+        "metrics": {
+            "total_urls": int(m.get("total_urls") or 0),
+            "status_200": int(m.get("status_200") or 0),
+            "missing_titles": int(m.get("missing_titles") or 0),
+            "missing_desc": int(m.get("missing_desc") or 0),
+        },
+        "data": (req.data or [])[:500],
+        "columns": req.columns,
+        "cols_used": req.cols_used,
+        "source": "client-parsed",
+        "filename": req.filename,
+    }
+
+
 class SfFileWrapper:
     def __init__(self, filename, content):
         self.name = filename
@@ -3690,17 +3755,16 @@ async def analyze_sf(file: UploadFile = File(...)):
 
         # Truncate for UI
         df = df.head(500)
-        df = df.where(pd.notnull(df), None)
 
         return {
             "metrics": {
-                "total_urls": total_urls,
-                "status_200": status_200,
-                "missing_titles": missing_titles,
-                "missing_desc": missing_desc
+                "total_urls": int(total_urls),
+                "status_200": int(status_200),
+                "missing_titles": int(missing_titles),
+                "missing_desc": int(missing_desc)
             },
-            "data": df.to_dict(orient="records"),
-            "columns": list(df.columns),
+            "data": _json_safe_records(df),
+            "columns": [str(c) for c in df.columns],
             "cols_used": [addr_col, status_col, title_col, desc_col]
         }
     else:

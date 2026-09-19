@@ -1,11 +1,33 @@
 import { useState } from 'react';
+import { parseCrawlFile } from './sfParse';
 import { Upload, FileDown, Terminal, ChevronDown, ChevronUp, Link, CheckCircle, AlertTriangle, FileMinus, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+
+
+// A 413 from the platform, or a 500 page, is not JSON — calling res.json() on it throws and
+// the only thing the user ever saw was "Network Error". Read the body as text first and turn
+// the common cases into something actionable.
+async function readJson(res) {
+  const text = await res.text();
+  let body = null;
+  try { body = JSON.parse(text); } catch { /* not JSON — handled below */ }
+  if (res.ok) {
+    if (body) return body;
+    throw new Error('The server returned an unreadable response.');
+  }
+  if (res.status === 413 || /too large|PAYLOAD_TOO_LARGE/i.test(text)) {
+    throw new Error('That file is too large to upload (the limit is 4.5 MB). ' +
+                    'Save the crawl as .dbseospider or .seospider and it will be read here in the browser instead.');
+  }
+  throw new Error((body && (body.detail || body.error)) || `Request failed (${res.status}).`);
+}
 
 export default function ScreamingFrog({ onData } = {}) {
   const [file, setFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [stage, setStage] = useState('');
+  const [error, setError] = useState('');
   const [result, setResult] = useState(null);
   const [cliOpen, setCliOpen] = useState(false);
   const [cliTarget, setCliTarget] = useState('https://example.com');
@@ -34,33 +56,50 @@ export default function ScreamingFrog({ onData } = {}) {
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
       setFile(e.target.files[0]);
+      setError('');
     }
   };
 
   const handleAnalyze = async () => {
     if (!file) return;
     setLoading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-    
+    setError('');
     try {
-      const res = await fetch('/api/sf/analyze', {
-        method: 'POST',
-        body: formData
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setResult(data);
-        setInsights('');
-        onData?.(data);
+      const name = (file.name || '').toLowerCase();
+      let data;
+
+      if (/\.(dbseospider|seospider|csv)$/.test(name)) {
+        // Parsed in the browser. A database-mode crawl is far larger than the 4.5 MB a Vercel
+        // function will accept, so the file itself never leaves the machine — only the counts
+        // and a 500-row sample do.
+        setStage('Reading the crawl file…');
+        const payload = await parseCrawlFile(file);
+        setStage(`Parsed ${payload.metrics.total_urls.toLocaleString()} URLs — building the report…`);
+        const token = localStorage.getItem('auth_token');
+        const res = await fetch('/api/sf/analyze-parsed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+        data = await readJson(res);
       } else {
-        alert("Error parsing file: " + data.detail);
+        // .xlsx still goes to the server, which has the reader for it.
+        setStage('Uploading…');
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/sf/analyze', { method: 'POST', body: formData });
+        data = await readJson(res);
       }
+
+      setResult(data);
+      setInsights('');
+      onData?.(data);
     } catch (e) {
       console.error(e);
-      alert("Network Error");
+      setError(e.message || 'Could not analyse that file.');
     } finally {
       setLoading(false);
+      setStage('');
     }
   };
 
@@ -115,9 +154,10 @@ export default function ScreamingFrog({ onData } = {}) {
             <h3 className="mb-2">Upload Crawl Data</h3>
             <p className="text-center mb-6" style={{color: 'var(--text-muted)'}}>
               Drag and drop your .seospider, .dbseospider, or CSV/XLSX file here.<br/>
-              Maximum performance parsing via backend streaming.
+              .dbseospider, .seospider and .csv are read in your browser, so crawl size is not limited.
             </p>
-            <input type="file" id="file-upload" className="hidden" onChange={handleFileChange} />
+            <input type="file" id="file-upload" className="hidden" onChange={handleFileChange}
+              accept=".dbseospider,.seospider,.csv,.xlsx" />
             <label htmlFor="file-upload" className="btn-primary" style={{cursor: 'pointer'}}>
               Select File
             </label>
@@ -126,6 +166,15 @@ export default function ScreamingFrog({ onData } = {}) {
               <button className="btn-primary mt-4" style={{width: '100%', padding: '16px', fontSize: '1.1rem'}} onClick={handleAnalyze} disabled={loading}>
                 {loading ? <div className="loader" role="status"/> : "🚀 Start Analysis"}
               </button>
+            )}
+            {loading && stage && (
+              <div role="status" style={{ marginTop: 10, fontSize: '0.8rem', color: 'var(--text-muted)' }}>{stage}</div>
+            )}
+            {error && (
+              <div role="alert" style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem',
+                background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#dc2626', maxWidth: 460 }}>
+                {error}
+              </div>
             )}
           </div>
 
