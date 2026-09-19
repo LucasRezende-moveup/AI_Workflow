@@ -130,9 +130,14 @@ export default function ScreamingFrog({ onData } = {}) {
     }
   };
 
+  // Exports CSV rather than a saved crawl. A .dbseospider is a Derby database that only
+  // Screaming Frog can open, so telling people to produce one gave them a file this tool
+  // cannot read — which is how the "not a database" dead end started.
   const getCmd = () => {
-    let cmd = `screamingfrogseospider --crawl ${cliTarget} --headless --save-crawl --output-type dbseospider`;
+    let cmd = `screamingfrogseospider --crawl ${cliTarget} --headless`;
     if (cliStorage === 'Database') cmd += ' --db-storage';
+    cmd += ' --output-folder ./crawl-export --overwrite --export-format csv';
+    cmd += ' --export-tabs "Internal:All"';
     return cmd;
   };
 
@@ -154,7 +159,8 @@ export default function ScreamingFrog({ onData } = {}) {
             <h3 className="mb-2">Upload Crawl Data</h3>
             <p className="text-center mb-6" style={{color: 'var(--text-muted)'}}>
               Drag and drop your .seospider, .dbseospider, or CSV/XLSX file here.<br/>
-              .dbseospider, .seospider and .csv are read in your browser, so crawl size is not limited.
+              CSV is read in your browser, so crawl size is not limited. Saved .dbseospider crawls are
+              an Apache Derby database only Screaming Frog can open — export Internal:All as CSV instead.
             </p>
             <input type="file" id="file-upload" className="hidden" onChange={handleFileChange}
               accept=".dbseospider,.seospider,.csv,.xlsx" />
