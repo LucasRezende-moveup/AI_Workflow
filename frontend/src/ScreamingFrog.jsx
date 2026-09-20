@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { parseCrawlFile } from './sfParse';
+import { auditCrawl } from './sfAudit';
+import CrawlAuditReport from './CrawlAuditReport';
 import { Upload, FileDown, Terminal, ChevronDown, ChevronUp, Link, CheckCircle, AlertTriangle, FileMinus, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
@@ -27,6 +29,8 @@ export default function ScreamingFrog({ onData } = {}) {
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [stage, setStage] = useState('');
+  const [audit, setAudit] = useState(null);
+  const [narrative, setNarrative] = useState(null);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
   const [cliOpen, setCliOpen] = useState(false);
@@ -57,6 +61,7 @@ export default function ScreamingFrog({ onData } = {}) {
     if (e.target.files && e.target.files[0]) {
       setFile(e.target.files[0]);
       setError('');
+      setAudit(null); setNarrative(null);
     }
   };
 
@@ -64,6 +69,7 @@ export default function ScreamingFrog({ onData } = {}) {
     if (!file) return;
     setLoading(true);
     setError('');
+    setAudit(null); setNarrative(null);
     try {
       const name = (file.name || '').toLowerCase();
       let data;
@@ -74,14 +80,34 @@ export default function ScreamingFrog({ onData } = {}) {
         // and a 500-row sample do.
         setStage('Reading the crawl file…');
         const payload = await parseCrawlFile(file);
-        setStage(`Parsed ${payload.metrics.total_urls.toLocaleString()} URLs — building the report…`);
+        setStage(`Parsed ${payload.metrics.total_urls.toLocaleString()} URLs — auditing…`);
+
+        // The audit runs over every row; only the findings leave the browser.
+        const found = auditCrawl(payload.full);
+        setAudit(found);
+
         const token = localStorage.getItem('auth_token');
+        const { full, ...toSend } = payload;
         const res = await fetch('/api/sf/analyze-parsed', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(toSend),
         });
         data = await readJson(res);
+
+        // The narrative is a bonus on top of measured findings, so a quota error must not
+        // cost the report. Failures are swallowed deliberately.
+        setStage('Writing the brief…');
+        try {
+          const host = (payload.data?.[0]?.Address || '').replace(/^https?:\/\//, '').split('/')[0];
+          const nres = await fetch('/api/sf/audit-narrative', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ domain: host || file.name, stats: found.stats,
+                                   issues: found.issues.map(({ samples, ...rest }) => rest) }),
+          });
+          if (nres.ok) setNarrative(await nres.json());
+        } catch { /* report stands without it */ }
       } else {
         // .xlsx still goes to the server, which has the reader for it.
         setStage('Uploading…');
@@ -144,6 +170,12 @@ export default function ScreamingFrog({ onData } = {}) {
   return (
     <div className="flex-col gap-6">
       
+      {audit && (
+        <CrawlAuditReport audit={audit} narrative={narrative}
+          domain={(result?.data?.[0]?.Address || '').replace(/^https?:\/\//, '').split('/')[0]}
+          filename={file?.name} />
+      )}
+
       {!result ? (
         <>
           <div 

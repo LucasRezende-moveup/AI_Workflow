@@ -3770,6 +3770,72 @@ async def analyze_sf(file: UploadFile = File(...)):
     else:
         raise HTTPException(status_code=400, detail="Failed to load DataFrame.")
 
+class SfAuditNarrativeRequest(BaseModel):
+    """Findings from the browser-side crawl audit, for a narrative pass."""
+    domain: Optional[str] = None
+    stats: dict = {}
+    issues: List[dict] = []
+
+
+@app.post("/api/sf/audit-narrative")
+def sf_audit_narrative(req: SfAuditNarrativeRequest, current_user=Depends(_decode_token)):
+    """Turn the measured findings into a short brief: what to do first, and what it buys.
+
+    The counts and priorities are decided by the rule engine, not here — the model orders the
+    work and explains the trade-offs. Best-effort: a quota error returns the findings unchanged
+    rather than failing the report, because the audit is useful without it."""
+    st = req.stats or {}
+    lines = []
+    for i in (req.issues or [])[:30]:
+        lines.append(f"[{i.get('priority')}] {i.get('title')} — {i.get('count')} URLs "
+                     f"({i.get('pct')}% of pages), category {i.get('category')}")
+    listing = "\n".join(lines) or "(no issues found)"
+
+    prompt = f"""You are a technical SEO writing the opening brief for a crawl audit of {req.domain or 'this site'}.
+
+MEASURED — {st.get('total_urls', 0)} URLs crawled, {st.get('html_pages', 0)} HTML pages,
+{st.get('indexable_pct')}% indexable, median word count {st.get('median_word_count')}.
+Status codes: {st.get('status_buckets')}
+Issues found: {st.get('counts', {}).get('P0', 0)} P0, {st.get('counts', {}).get('P1', 0)} P1, {st.get('counts', {}).get('P2', 0)} P2.
+
+{listing}
+
+Write for the person who has to do the work. Use these numbers, invent none.
+
+Return ONLY valid JSON, no fences:
+{{
+  "headline": "one sentence on the state of this site",
+  "summary": "3-5 sentences: the pattern behind these numbers, what it is costing, what to do first",
+  "sequence": [
+    {{"step": "what to do", "covers": "which issues this clears", "why_now": "what it unblocks or why it must come first"}}
+  ],
+  "watch_out": "one specific trap in this particular dataset — a fix that would make something worse, or a count that likely has a benign explanation"
+}}
+Between 3 and 5 sequence steps, ordered so earlier steps unblock later ones."""
+
+    try:
+        raw = _gemini_generate(prompt)
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+        import json as _json
+        data = _json.loads(text[text.index("{"):text.rindex("}") + 1])
+        return {
+            "headline": str(data.get("headline", ""))[:300],
+            "summary": str(data.get("summary", ""))[:1200],
+            "sequence": [
+                {"step": str(s_.get("step", ""))[:200],
+                 "covers": str(s_.get("covers", ""))[:200],
+                 "why_now": str(s_.get("why_now", ""))[:300]}
+                for s_ in (data.get("sequence") or [])[:5] if isinstance(s_, dict)],
+            "watch_out": str(data.get("watch_out", ""))[:500],
+            "available": True,
+        }
+    except Exception as exc:
+        return {"available": False, "error": str(exc)[:200],
+                "headline": "", "summary": "", "sequence": [], "watch_out": ""}
+
+
 class SfInsightsRequest(BaseModel):
     summary_text: str
     sample_data: List[dict]
