@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertOctagon, AlertTriangle, Info, ChevronDown, ChevronUp, FileText, Table, Check } from 'lucide-react';
+import { AlertOctagon, AlertTriangle, Info, ChevronDown, ChevronUp, FileText, Table, Check, MessageSquare, Eye } from 'lucide-react';
 
 // The prioritised half of the crawl audit. Counts and priorities come from the rule engine in
 // sfAudit.js; this renders them so the list can be worked top-down, and exports them in the two
@@ -74,6 +74,8 @@ function IssueCard({ issue, color }) {
 }
 
 export default function CrawlAuditReport({ audit, narrative, domain, filename }) {
+  const [copied, setCopied] = useState(false);
+  const [showSlack, setShowSlack] = useState(false);
   if (!audit) return null;
   const { issues, stats, skipped } = audit;
 
@@ -137,6 +139,65 @@ export default function CrawlAuditReport({ audit, narrative, domain, filename })
     return '﻿' + rows.map((r) => r.map(cell).join(',')).join('\r\n');
   };
 
+  // Slack's mrkdwn is not Markdown: bold is *single* asterisks, there are no headings and no
+  // tables, and bullets have to be literal characters. A pasted # heading or **bold** shows up
+  // as punctuation, so the report is rebuilt rather than reformatted.
+  //
+  // It is also a digest, not the whole thing. The Markdown export runs to ~12 KB; Slack
+  // collapses a message that long behind "show more", which buries the P0 list — the one part
+  // someone reading it in a channel needs to see.
+  const slackText = ({ perBand = 6 } = {}) => {
+    const n = (v) => Number(v || 0).toLocaleString();
+    const EMOJI = { P0: ':red_circle:', P1: ':large_orange_circle:', P2: ':white_circle:' };
+    const L = [];
+
+    L.push(`*Crawl audit — ${domain || filename || 'site'}*`);
+    L.push([`${n(stats.total_urls)} URLs`,
+            `${n(stats.html_pages)} HTML`,
+            stats.indexable_pct !== null ? `${stats.indexable_pct}% indexable` : null,
+            stats.median_word_count !== null ? `median ${stats.median_word_count} words` : null,
+           ].filter(Boolean).join(' · '));
+
+    if (narrative?.available && narrative.headline) L.push('', `_${narrative.headline}_`);
+
+    for (const band of ['P0', 'P1', 'P2']) {
+      const list = issues.filter((i) => i.priority === band);
+      if (!list.length) continue;
+      L.push('', `${EMOJI[band]} *${BANDS[band].label}* — ${list.length} issue${list.length !== 1 ? 's' : ''}, ${n(stats.urls_affected[band])} URLs`);
+      for (const i of list.slice(0, perBand)) {
+        L.push(`• ${i.title} — *${n(i.count)}* (${i.pct}%)`);
+      }
+      if (list.length > perBand) L.push(`• _+${list.length - perBand} more_`);
+    }
+
+    if (narrative?.available && narrative.sequence?.length) {
+      L.push('', '*Do first*');
+      narrative.sequence.forEach((st, i) => {
+        L.push(`${i + 1}. ${st.step}${st.why_now ? ` — _${st.why_now}_` : ''}`);
+      });
+    }
+    if (narrative?.available && narrative.watch_out) {
+      L.push('', `:warning: ${narrative.watch_out}`);
+    }
+    if (skipped?.length) {
+      L.push('', `_${skipped.length} check${skipped.length !== 1 ? 's' : ''} could not run — the export is missing columns they need._`);
+    }
+    return L.join('\n');
+  };
+
+  const copySlack = async () => {
+    const text = slackText();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2200);
+    } catch {
+      // Clipboard can be blocked by permissions policy — show the text so it can be
+      // selected by hand rather than silently doing nothing.
+      setShowSlack(true);
+    }
+  };
+
   const download = (kind) => {
     const isCsv = kind === 'csv';
     const blob = new Blob([isCsv ? csv() : markdown()],
@@ -167,8 +228,40 @@ export default function CrawlAuditReport({ audit, narrative, domain, filename })
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 13px', fontSize: '0.8rem' }}>
             <Table size={14} aria-hidden="true" /> .csv
           </button>
+          <button type="button" onClick={copySlack} className="btn-secondary"
+            title="Copy a condensed digest formatted for Slack"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 13px', fontSize: '0.8rem',
+              ...(copied ? { color: '#15803d', borderColor: '#15803d' } : {}) }}>
+            {copied ? <Check size={14} aria-hidden="true" /> : <MessageSquare size={14} aria-hidden="true" />}
+            {copied ? 'Copied' : 'Copy for Slack'}
+          </button>
+          <button type="button" onClick={() => setShowSlack((v) => !v)} className="btn-secondary"
+            title="Preview exactly what will be pasted" aria-expanded={showSlack}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px', fontSize: '0.8rem' }}>
+            <Eye size={14} aria-hidden="true" />
+          </button>
         </div>
       </div>
+
+      {showSlack && (() => {
+        const text = slackText();
+        return (
+          <div style={{ border: '1px solid rgb(var(--ink) / 0.1)', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+              padding: '8px 12px', background: 'rgb(var(--ink) / 0.04)', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+              <span>Slack preview — {text.length.toLocaleString()} characters{text.length > 3000 ? ' (Slack will collapse this behind “show more”)' : ''}</span>
+              <button type="button" onClick={copySlack}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)',
+                  fontWeight: 600, fontSize: '0.74rem' }}>
+                {copied ? 'copied' : 'copy'}
+              </button>
+            </div>
+            <pre style={{ margin: 0, padding: '12px', fontSize: '0.74rem', lineHeight: 1.55,
+              whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto', color: 'var(--text-strong)',
+              userSelect: 'all' }}>{text}</pre>
+          </div>
+        );
+      })()}
 
       {/* Headline counts */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
