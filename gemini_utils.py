@@ -71,3 +71,24 @@ def gemini_generate(prompt):
     ensure_configured()
     model = genai.GenerativeModel(get_flash_model())
     return model.generate_content(prompt).text
+
+def get_model_candidates():
+    """Models to try in order when one is rate-limited.
+
+    Gemini's free tier counts requests per *model*, so a 429 on one model says nothing about
+    the next — switching is instant where waiting out the quota costs the caller 30-60s. The
+    order runs newest first for quality, then down to the lite models, which carry noticeably
+    larger free-tier allowances (measured: 10+ rapid calls against lite where 3.8-flash refused
+    the fourth).
+    """
+    primary = get_flash_model()
+    ordered = [primary] + [m for m in _PREFERRED if m != primary] + [
+        'models/gemini-flash-lite-latest',
+        'models/gemini-3.1-flash-lite',
+    ]
+    seen, out = set(), []
+    for m in ordered:
+        if m not in seen:
+            seen.add(m)
+            out.append(m)
+    return out

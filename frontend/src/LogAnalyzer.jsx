@@ -493,6 +493,15 @@ export default function LogAnalyzer({ onData } = {}) {
                   ))}
                 </div>
 
+                {plan.ai_error && (
+                  <div role="status" style={{ padding: '10px 14px', borderRadius: 8, fontSize: '0.8rem',
+                    background: 'rgba(180,83,9,0.09)', border: '1px solid rgba(180,83,9,0.3)', color: 'var(--text-strong)' }}>
+                    <strong>The measured numbers below are complete; the ranked actions are not.</strong>{' '}
+                    Gemini was unavailable for this run — {plan.ai_error.slice(0, 160)}
+                    {plan.ai_error.length > 160 ? '…' : ''}. Re-run in a minute and the plan will fill in.
+                  </div>
+                )}
+
                 {plan.summary && (
                   <p style={{ fontSize: '0.88rem', color: 'var(--text-strong)', lineHeight: 1.6, maxWidth: '72ch' }}>
                     {plan.summary}

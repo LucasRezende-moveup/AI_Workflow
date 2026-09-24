@@ -2750,7 +2750,11 @@ def logs_crawl_budget(req: CrawlBudgetRequest, current_user=Depends(_decode_toke
     try:
         plan = _crawl_budget_actions(req.site_name, sig)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}")
+        # The signals are measured from the logs and are the expensive part of this endpoint.
+        # Throwing them away because the model was rate-limited turned a degraded result into
+        # no result at all, so the run is returned with the failure attached instead.
+        plan = {"summary": "", "actions": [], "parse_failed": False,
+                "ai_error": str(exc)[:300]}
 
     out = {
         "site": req.site_name,
@@ -2761,6 +2765,7 @@ def logs_crawl_budget(req: CrawlBudgetRequest, current_user=Depends(_decode_toke
         "actions": plan.get("actions", []),
         "raw": plan.get("raw"),
         "parse_failed": plan.get("parse_failed", False),
+        "ai_error": plan.get("ai_error"),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     _save_run(
@@ -3860,6 +3865,7 @@ if _google_api_key:
 
 # Cached model selection lives in gemini_utils so every module shares one list_models() call
 from gemini_utils import get_flash_model as _get_flash_model
+from gemini_utils import get_model_candidates as _gemini_candidates
 
 def _fetch_page_text(url, auth=None):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/91.0 Safari/537.36"}
@@ -4043,15 +4049,81 @@ def _normalize_markdown_tables(md: str) -> str:
     return "\n".join(out)
 
 
+# model name -> monotonic time it is usable again. Per-process, so a cold start simply
+# rediscovers it; the cost of being wrong is one extra round-trip.
+_GEMINI_COOLDOWN = {}
+
+
+def _is_quota_error(exc) -> bool:
+    text = str(exc)
+    return "429" in text or "quota" in text.lower() or "rate limit" in text.lower()
+
+
+def _quota_retry_delay(exc, default: float = 20.0) -> float:
+    """Google states how long to wait in the error itself — use it rather than guessing."""
+    m = re.search(r"retry_delay\s*{\s*seconds:\s*(\d+)", str(exc))
+    if m:
+        return float(m.group(1))
+    m = re.search(r"[Pp]lease retry in ([\d.]+)s", str(exc))
+    return float(m.group(1)) if m else default
+
+
 def _gemini_generate(prompt: str, max_output_tokens: int = None) -> str:
-    model_name = _get_flash_model()
-    model = genai.GenerativeModel(model_name)
-    if max_output_tokens:
-        response = model.generate_content(
-            prompt, generation_config={"max_output_tokens": max_output_tokens})
-    else:
-        response = model.generate_content(prompt)
-    return response.text
+    """Generate, surviving a rate-limited model.
+
+    The free tier allows 5 requests per minute *per model*, which two analyses in a row will
+    exhaust — and the whole report was being thrown away for it. Quota is counted separately
+    for each model, so a 429 is answered by moving to the next candidate rather than waiting;
+    only when every candidate is limited does it wait, once, for the delay Google specifies.
+    """
+    cfg = {"max_output_tokens": max_output_tokens} if max_output_tokens else None
+    last_exc = None
+    now = time.monotonic()
+    # A hard ceiling on the whole attempt. Each rate-limited model costs a round-trip to
+    # discover, so probing a long list can quietly eat a minute — and every caller now
+    # degrades gracefully, which makes failing fast strictly better than succeeding slowly.
+    deadline = now + float(os.getenv("GEMINI_TOTAL_BUDGET_S", "45"))
+
+    def _call(name):
+        model = genai.GenerativeModel(name)
+        resp = model.generate_content(prompt, generation_config=cfg) if cfg             else model.generate_content(prompt)
+        return resp.text
+
+    candidates = _gemini_candidates()
+    # Discovering a model is rate-limited costs a round-trip — up to 8s, measured. Remembering
+    # it for the length of its own cooldown means later calls in the same warm instance skip
+    # straight to a model that can answer instead of paying that toll again.
+    ready = [m for m in candidates if _GEMINI_COOLDOWN.get(m, 0) <= now] or candidates
+
+    for name in ready:
+        if time.monotonic() >= deadline:
+            break
+        try:
+            return _call(name)
+        except Exception as exc:
+            if not _is_quota_error(exc):
+                raise
+            _GEMINI_COOLDOWN[name] = time.monotonic() + min(_quota_retry_delay(exc), 120.0)
+            last_exc = exc
+
+    # Every candidate is limited. Wait only as long as the soonest one needs, capped so a
+    # serverless invocation is never spent asleep — a clear failure beats being killed.
+    soonest = min((t for t in _GEMINI_COOLDOWN.values() if t > now), default=now)
+    remaining = deadline - time.monotonic()
+    delay = min(max(soonest - time.monotonic(), 0),
+                float(os.getenv("GEMINI_MAX_WAIT_S", "30")), max(remaining - 5, 0))
+    if delay > 0:
+        time.sleep(delay)
+        for name in candidates[:2]:
+            if time.monotonic() >= deadline:
+                break
+            try:
+                return _call(name)
+            except Exception as exc:
+                if not _is_quota_error(exc):
+                    raise
+                last_exc = exc
+    raise last_exc
 
 
 def _fetch_serp_via_gemini(keyword: str, location_name: str = "Global (No Geolocation)") -> dict:
