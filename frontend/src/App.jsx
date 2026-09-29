@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Activity, LayoutDashboard, Link2, Search, Layers, LogOut, Settings, Target, BarChart2, Globe, Users as UsersIcon, Clock, TrendingUp, Bell, CalendarClock } from 'lucide-react';
+import { Activity, LayoutDashboard, Link2, Search, Layers, LogOut, Settings, Target, BarChart2, Globe, Users as UsersIcon, Clock, TrendingUp, Bell, CalendarClock, ListTree } from 'lucide-react';
 import moveupLogo from './assets/logo.png';
 import GscDashboard from './GscDashboard';
 import TechnicalAudit from './TechnicalAudit';
@@ -13,6 +13,7 @@ import IndexationControl from './IndexationControl';
 import Users from './Users';
 import History from './History';
 import Tracking from './Tracking';
+import Keywords from './Keywords';
 import ContentFreshness from './ContentFreshness';
 import './index.css';
 
@@ -21,6 +22,7 @@ const NAV_GROUPS = [
     { name: 'GSC Dashboard',      icon: <Activity size={17} /> },
     { name: 'SEO Health',         icon: <BarChart2 size={17} /> },
     { name: 'Tracking - Keywords', icon: <TrendingUp size={17} /> },
+    { name: 'Keyword Corpus',    icon: <ListTree size={17} /> },
     { name: 'Indexation Control', icon: <Globe size={17} /> },
   ]},
   { label: 'Audit', items: [
@@ -51,6 +53,7 @@ function renderPage(page, user) {
     case 'SERP Analyzer':      return <SerpAnalyzer />;
     case 'FS Stealer':         return <FsStealer />;
     case 'Tracking - Keywords': return <Tracking />;
+    case 'Keyword Corpus':     return <Keywords />;
     case 'Content Freshness':  return <ContentFreshness />;
     case 'History':            return <History />;
     case 'Users':

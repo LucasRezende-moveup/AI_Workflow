@@ -3549,6 +3549,234 @@ def hreflang_crawls(domain: Optional[str] = None, limit: int = 20,
     return {"crawls": rows}
 
 
+# --- MoveUp Publisher Keywords API ---------------------------------------------
+#
+# Read-only proxy over the keyword corpus, the editorial plan and the valuation tables.
+#
+# Proxied rather than called from the browser for one reason: the key reads with its owner's
+# role and market scope, so shipping it to the client would hand every signed-in user the
+# admin's whole scope. It stays in the environment and never crosses the wire.
+#
+# Two things the upstream docs warn about, enforced here rather than left to each caller:
+#   · The documented base is http:// and 301s to https. curl and requests both drop the
+#     Authorization header across that scheme change, so the redirect answers 401 and looks
+#     like a bad key. The base is pinned to https.
+#   · verifiedVolumeShare is 0 in every market we can see, meaning no volume has been
+#     confirmed against Mangools — the corpus is imported, largely hand-typed. Anything ranked
+#     by volume has to say so, so the share travels with every list response.
+
+_KW_TIMEOUT = 30
+
+
+def _kw_base() -> str:
+    base = os.getenv("KEYWORDS_API_BASE",
+                     "https://console.moveup.tools/publisher/keywords/api/v1").rstrip("/")
+    # Force https: the http host redirects, and the redirect costs the auth header.
+    if base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
+    return base
+
+
+def _kw_get(path: str, params: dict = None) -> dict:
+    key = os.getenv("KEYWORDS_API_KEY", "").strip()
+    if not key:
+        raise HTTPException(status_code=503,
+                            detail="KEYWORDS_API_KEY is not configured on the server.")
+    try:
+        r = http_requests.get(
+            f"{_kw_base()}{path}",
+            headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+            params={k: v for k, v in (params or {}).items() if v not in (None, "")},
+            timeout=_KW_TIMEOUT, allow_redirects=False)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Keywords API unreachable: {exc}")
+
+    if r.status_code in (301, 302, 307, 308):
+        raise HTTPException(
+            status_code=502,
+            detail="Keywords API redirected — the base URL must be https, or the key is dropped.")
+    if r.status_code == 401:
+        raise HTTPException(status_code=502, detail="Keywords API rejected the key (401).")
+    if r.status_code == 403:
+        raise HTTPException(status_code=502,
+                            detail=f"Keywords API refused: {r.text[:200]} — the key's owner may have no scope for that market.")
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail="No such keyword, market or endpoint upstream.")
+    if not r.ok:
+        raise HTTPException(status_code=502,
+                            detail=f"Keywords API error {r.status_code}: {r.text[:200]}")
+    try:
+        return r.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="Keywords API returned a non-JSON body.")
+
+
+def _kw_num(v):
+    """Upstream sends numbers as strings ('10100000', '1212000.0000'). Null means unknown —
+    never zero — so it is preserved rather than coerced."""
+    if v is None or v == "":
+        return None
+    try:
+        f = float(v)
+        return int(f) if f.is_integer() else f
+    except (TypeError, ValueError):
+        return v
+
+
+@app.get("/api/keywords/whoami")
+def keywords_whoami(current_user=Depends(_decode_token)):
+    """Who the key reads as, and the markets in its scope."""
+    return _kw_get("/whoami")
+
+
+@app.get("/api/keywords/stats/{market}")
+def keywords_stats(market: str, current_user=Depends(_decode_token)):
+    """One market in numbers. Worth reading before anything ranked by volume."""
+    d = _kw_get(f"/stats/{market}")
+    for k in ("total_volume", "verified_volume", "market_value"):
+        if k in d:
+            d[k] = _kw_num(d[k])
+    return d
+
+
+@app.get("/api/keywords/list")
+def keywords_list(
+    market: Optional[str] = None, q: Optional[str] = None,
+    brand: Optional[str] = None, activity: Optional[str] = None,
+    user_intent: Optional[str] = None, provenance: Optional[str] = None,
+    volume_source: Optional[str] = None, volume_min: Optional[int] = None,
+    seo_track: Optional[str] = None, updated_since: Optional[str] = None,
+    archived: Optional[str] = None, limit: int = 100, offset: int = 0,
+    current_user=Depends(_decode_token),
+):
+    """The corpus, filtered and paged. Ordered by keyword_value descending upstream."""
+    data = _kw_get("/keywords", {
+        "market": market, "q": q, "brand": brand, "activity": activity,
+        "user_intent": user_intent, "provenance": provenance,
+        "volume_source": volume_source, "volume_min": volume_min,
+        "seo_track": seo_track, "updated_since": updated_since, "archived": archived,
+        "limit": max(1, min(limit, 500)), "offset": max(0, offset),
+    })
+    for row in data.get("rows") or []:
+        for k in ("search_volume", "keyword_value", "reach_1", "reach_2", "reach_3",
+                  "previous_volume", "mangools_volume", "keyword_difficulty", "mangools_kd"):
+            if k in row:
+                row[k] = _kw_num(row[k])
+
+    # A volume ranking built on unverified numbers has to admit it, so the caveat rides along
+    # with the rows rather than waiting to be looked up.
+    if market:
+        try:
+            st = _kw_get(f"/stats/{market}")
+            data["verified_volume_share"] = st.get("verifiedVolumeShare")
+            data["without_volume"] = st.get("without_volume")
+            data["market_keywords"] = st.get("keywords")
+        except HTTPException:
+            pass
+    return data
+
+
+@app.get("/api/keywords/detail/{ref}")
+def keywords_detail(ref: str, current_user=Depends(_decode_token)):
+    """One keyword, its articles and its volume history."""
+    return _kw_get(f"/keywords/{ref}")
+
+
+@app.get("/api/keywords/coverage/{market}")
+def keywords_coverage(market: str, current_user=Depends(_decode_token)):
+    """Operator x intent matrix — where the editorial plan has gaps."""
+    return _kw_get(f"/coverage/{market}")
+
+
+@app.get("/api/keywords/articles")
+def keywords_articles(market: Optional[str] = None, site: Optional[str] = None,
+                      stage: Optional[str] = None, limit: int = 100, offset: int = 0,
+                      current_user=Depends(_decode_token)):
+    """The editorial plan. `unpublished` and `redirected` stages are not live coverage."""
+    return _kw_get("/articles", {"market": market, "site": site, "stage": stage,
+                                 "limit": max(1, min(limit, 500)), "offset": max(0, offset)})
+
+
+@app.get("/api/keywords/referentials")
+def keywords_referentials(name: Optional[str] = None, current_user=Depends(_decode_token)):
+    """The closed vocabularies, for populating filters."""
+    return _kw_get(f"/referentials/{name}" if name else "/referentials")
+
+
+class KeywordsToTrackingRequest(BaseModel):
+    refs: List[str] = []
+    market: Optional[str] = None
+    domain: str
+    location: Optional[str] = None
+
+
+@app.post("/api/keywords/to-tracking")
+def keywords_to_tracking(req: KeywordsToTrackingRequest, current_user=Depends(_decode_token)):
+    """Put chosen corpus keywords into rank tracking.
+
+    The bridge between the two systems: the corpus knows which keywords are worth money, and
+    tracking knows where we rank. The upstream API is read-only, so `seo_track` is not set
+    there — this only creates rows on our side, and skips anything already tracked so it can
+    be re-run without duplicating."""
+    if not req.refs:
+        raise HTTPException(status_code=400, detail="Select at least one keyword.")
+    dom = _clean_domain(req.domain)
+    if not dom:
+        raise HTTPException(status_code=400, detail="Enter a valid domain (e.g. example.com).")
+
+    # Resolve refs to keyword text upstream — the corpus is the source of truth for wording,
+    # which is normalised there and can be corrected after import.
+    resolved = []
+    for ref in req.refs[:200]:
+        try:
+            d = _kw_get(f"/keywords/{ref}")
+        except HTTPException:
+            continue
+        row = d.get("keyword") if isinstance(d.get("keyword"), dict) else d
+        text = (row or {}).get("keyword")
+        if text:
+            resolved.append({"ref": ref, "keyword": str(text).strip(),
+                             "market": (row or {}).get("market"),
+                             "value": _kw_num((row or {}).get("keyword_value"))})
+    if not resolved:
+        raise HTTPException(status_code=404, detail="None of those refs could be read upstream.")
+
+    location = req.location if req.location in DFS_LOCATIONS else TRACK_DEFAULT_LOCATION
+    project_id = _ensure_project(dom, name=dom, location=location)
+    target_url = f"https://{dom}/"
+
+    added, skipped = [], []
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT LOWER(keyword) AS k FROM keyword_tracking WHERE project_id = %s",
+                    (project_id,))
+                existing = {r["k"] for r in cur.fetchall()}
+                for item in resolved:
+                    if item["keyword"].lower() in existing:
+                        skipped.append(item["ref"])
+                        continue
+                    cur.execute(
+                        "INSERT INTO keyword_tracking (id, keyword, target_url, location, project_id) "
+                        "VALUES (%s,%s,%s,%s,%s)",
+                        (str(uuid.uuid4()), item["keyword"], target_url, location, project_id))
+                    existing.add(item["keyword"].lower())
+                    added.append(item)
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {
+        "project_id": project_id, "domain": dom, "location": location,
+        "added": len(added), "skipped_already_tracked": len(skipped),
+        "keywords": [a["keyword"] for a in added][:50],
+        "note": "Added to tracking only. The Keywords API is read-only, so seo_track upstream is unchanged.",
+    }
+
+
 # --- GSC Endpoints ---
 
 # Global GSC Client (Singleton)
