@@ -1,14 +1,18 @@
 import { useState } from 'react';
-import { Zap, Bug, Server, GitBranch, TrendingUp, AlertTriangle } from 'lucide-react';
+import { Zap, Bug, Server, GitBranch, TrendingUp, AlertTriangle, Link as LinkIcon, Languages } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import CwvAnalysis from './CwvAnalysis';
 import ScreamingFrog from './ScreamingFrog';
 import LogAnalyzer from './LogAnalyzer';
+import BacklinkAudit from './BacklinkAudit';
+import HreflangCheck from './HreflangCheck';
 
 const TABS = [
   { id: 'cwv',   label: 'Core Web Vitals', Icon: Zap    },
   { id: 'crawl', label: 'Crawl Audit',      Icon: Bug    },
   { id: 'logs',  label: 'Log Analysis',     Icon: Server },
+  { id: 'links', label: 'Backlinks',         Icon: LinkIcon },
+  { id: 'hreflang', label: 'Hreflang',      Icon: Languages },
 ];
 
 function BrokenRedirectAudit({ sfResult }) {
@@ -269,6 +273,16 @@ export default function TechnicalAudit() {
       <div style={{ display: activeTab === 'logs' ? 'flex' : 'none', flexDirection: 'column', gap: '1.5rem' }}>
         <LogAnalyzer onData={setLogAnalytics} />
         <CrawlBudgetAnalysis analytics={logAnalytics} />
+      </div>
+
+      {/* Backlinks Tab */}
+      <div style={{ display: activeTab === 'links' ? 'flex' : 'none', flexDirection: 'column', gap: '1.5rem' }}>
+        <BacklinkAudit />
+      </div>
+
+      {/* Hreflang Tab */}
+      <div style={{ display: activeTab === 'hreflang' ? 'flex' : 'none', flexDirection: 'column', gap: '1.5rem' }}>
+        <HreflangCheck />
       </div>
     </div>
   );

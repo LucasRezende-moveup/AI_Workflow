@@ -28,3 +28,6 @@ frontend/dist/
 Thumbs.db
 .vercel
 .env*
+
+# Agent config — has contained plaintext API tokens in permission rules
+.claude/

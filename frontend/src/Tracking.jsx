@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, RefreshCw, Trash2, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, Globe, Link, X, Target, ArrowLeft, Folder } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, Globe, Link, X, Target, ArrowLeft, Folder, Search, Download, Wallet } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 const API = (path, opts = {}) => {
@@ -34,6 +34,153 @@ const btnStyle = {
   borderRadius: 6, padding: '5px 7px', cursor: 'pointer', color: 'var(--text-muted)',
   display: 'flex', alignItems: 'center', transition: 'background 0.15s',
 };
+
+// Tracking has no "global" option — DataForSEO resolves every SERP against a real location,
+// so a keyword is always measured in a named market. Brazil is this portfolio's; the shared
+// geolocation list still offers "Global" for the one-off analysis tools, so it is filtered
+// out here rather than removed at the source.
+const TRACK_DEFAULT_LOCATION = 'Brazil (General)';
+const trackingGeos = list => list.filter(g => g !== 'Global (No Geolocation)');
+
+// Search normalization: lowercase and strip accents, so "codigo" finds "código" and
+// "sao paulo" finds "São Paulo". Half this account's keywords are Portuguese — an
+// exact-match search would miss them unless the user typed the diacritics.
+function norm(s) {
+  return (s || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+// ── CSV export ────────────────────────────────────────────────────────────────
+const CSV_HEADERS = ['Project', 'Keyword', 'Position', 'Target URL', 'Ranking page',
+                     'Location', 'FS holder', 'Top 3 domains', 'Last checked'];
+
+function csvCell(value) {
+  const s = value == null ? '' : String(value);
+  // Quote on comma, quote, newline or semicolon — the last one matters because Excel in a
+  // pt-BR locale reads semicolons as column separators.
+  return /[",;\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function buildCsv(rows, projectFor) {
+  const lines = [CSV_HEADERS.map(csvCell).join(',')];
+  for (const it of rows) {
+    lines.push([
+      projectFor(it),
+      it.keyword,
+      it.position ?? 'not ranking',
+      it.target_url || '',
+      it.ranking_url || '',
+      it.location || '',
+      it.fs_holder_domain || '',
+      (it.top_domains || []).slice(0, 3).map(t => `${t.position}. ${t.domain}`).join(' | '),
+      it.last_checked ? new Date(it.last_checked).toLocaleString() : 'never',
+    ].map(csvCell).join(','));
+  }
+  // Leading BOM so Excel opens accented keywords as UTF-8 instead of mojibake.
+  return '\ufeff' + lines.join('\r\n');
+}
+
+function downloadCsv(rows, projectFor, label) {
+  const blob = new Blob([buildCsv(rows, projectFor)], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `tracking-${label}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// ── Account / spend strip ─────────────────────────────────────────────────────
+// Tracking buys one DataForSEO SERP per keyword per day and silently stops recording when the
+// balance runs out — a drained account and a quiet day look identical in the charts. The
+// remaining credit therefore belongs on screen, next to today's coverage.
+const money = n => `$${(Number(n) || 0).toFixed(3)}`;
+
+function AccountStrip({ account, cron }) {
+  if (!account && !cron) return null;
+  const failed  = account && !account.ok;
+  const balance = account?.money?.balance;
+  const perDay  = cron?.total_keywords ? cron.total_keywords * 0.002 : 0;
+  // Days of runway at today's keyword count. Below a week is worth flagging before the
+  // series starts gapping.
+  const daysLeft = perDay > 0 && balance != null ? Math.floor(balance / perDay) : null;
+  const low = daysLeft !== null && daysLeft <= 7;
+
+  const tone = failed || low
+    ? { bg: 'rgba(248,113,113,0.08)', border: 'rgba(248,113,113,0.3)' }
+    : { bg: 'rgb(var(--ink) / 0.03)', border: 'rgb(var(--ink) / 0.09)' };
+
+  return (
+    <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center',
+      padding: '10px 16px', borderRadius: 10, background: tone.bg, border: `1px solid ${tone.border}`,
+      fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+      {failed ? (
+        <span role="alert" style={{ color: '#dc2626', fontWeight: 600 }}>
+          DataForSEO unavailable — {account.error}
+        </span>
+      ) : (
+        <>
+          {balance != null && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Wallet size={13} aria-hidden="true" />
+              <strong style={{ color: low ? '#dc2626' : 'var(--text-strong)', fontVariantNumeric: 'tabular-nums' }}>
+                {money(balance)}
+              </strong>
+              balance
+              {daysLeft !== null && (
+                <span style={{ color: low ? '#dc2626' : 'var(--text-dim)' }}>
+                  · ~{daysLeft} day{daysLeft === 1 ? '' : 's'} at {cron.total_keywords} keyword{cron.total_keywords === 1 ? '' : 's'}
+                </span>
+              )}
+            </span>
+          )}
+          {cron && (
+            <>
+              <span>spent today <strong style={{ color: 'var(--text-strong)', fontVariantNumeric: 'tabular-nums' }}>{money(cron.spend_today)}</strong></span>
+              <span>
+                checked today <strong style={{ color: 'var(--text-strong)', fontVariantNumeric: 'tabular-nums' }}>
+                  {cron.checked_today}/{cron.total_keywords}
+                </strong>
+                {cron.due_today > 0 && <span style={{ color: 'var(--text-dim)' }}> · {cron.due_today} still due</span>}
+              </span>
+            </>
+          )}
+          {account?.login && <span style={{ color: 'var(--text-dim)', marginLeft: 'auto' }}>{account.login}</span>}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Keyword search box ────────────────────────────────────────────────────────
+function SearchBox({ value, onChange, shown, total, placeholder = 'Search keywords…' }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', flex: '1 1 260px' }}>
+      <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 420 }}>
+        <Search size={14} aria-hidden="true"
+          style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
+        <input
+          type="search" className="glass-input" value={value}
+          onChange={e => onChange(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Escape') onChange(''); }}
+          placeholder={placeholder} aria-label={placeholder}
+          style={{ width: '100%', padding: '7px 30px 7px 31px', fontSize: '0.82rem' }} />
+        {value && (
+          <button type="button" onClick={() => onChange('')} aria-label="Clear search"
+            style={{ position: 'absolute', right: 7, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex', padding: 2 }}>
+            <X size={13} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+      {value && (
+        <span role="status" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+          {shown} of {total}
+        </span>
+      )}
+    </div>
+  );
+}
 
 // Domain favicon via Google's service, with a Globe fallback if it fails to load.
 function Favicon({ domain, size = 16, style }) {
@@ -370,7 +517,7 @@ function TrackedRow({ item, onDelete, onCheck }) {
                 <Link size={10} aria-hidden="true" /> ranking page: {urlPath(item.ranking_url)}
               </span>
             )}
-            {item.location && item.location !== 'Global (No Geolocation)' && (
+            {item.location && (
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 3 }}>
                 <Globe size={10} />{item.location}
               </span>
@@ -439,14 +586,14 @@ function AddForm({ project, onSaved, onClose }) {
   const [keyword,  setKeyword]  = useState('');
   const [url,      setUrl]      = useState('');
   const [bulkText, setBulkText] = useState('');
-  const [location, setLocation] = useState(project?.location || 'Global (No Geolocation)');
-  const [geoList,  setGeoList]  = useState(['Global (No Geolocation)']);
+  const [location, setLocation] = useState(project?.location || TRACK_DEFAULT_LOCATION);
+  const [geoList,  setGeoList]  = useState([TRACK_DEFAULT_LOCATION]);
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
 
   useEffect(() => {
     fetch('/api/serp/geolocations').then(r => r.json())
-      .then(d => { if (d.geolocations?.length) setGeoList(d.geolocations); }).catch(() => {});
+      .then(d => { if (d.geolocations?.length) setGeoList(trackingGeos(d.geolocations)); }).catch(() => {});
   }, []);
 
   const bulkCount = mode === 'bulk' ? parseBulk(bulkText).length : 0;
@@ -546,14 +693,14 @@ function AddForm({ project, onSaved, onClose }) {
 function RegisterForm({ onSaved, onClose }) {
   const [domain, setDomain]     = useState('');
   const [name, setName]         = useState('');
-  const [location, setLocation] = useState('Global (No Geolocation)');
-  const [geoList, setGeoList]   = useState(['Global (No Geolocation)']);
+  const [location, setLocation] = useState(TRACK_DEFAULT_LOCATION);
+  const [geoList, setGeoList]   = useState([TRACK_DEFAULT_LOCATION]);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState('');
 
   useEffect(() => {
     fetch('/api/serp/geolocations').then(r => r.json())
-      .then(d => { if (d.geolocations?.length) setGeoList(d.geolocations); }).catch(() => {});
+      .then(d => { if (d.geolocations?.length) setGeoList(trackingGeos(d.geolocations)); }).catch(() => {});
   }, []);
 
   async function submit(e) {
@@ -662,6 +809,9 @@ export default function Tracking() {
   const [activeId, setActiveId] = useState(null);      // project id, '__none__', or null (overview)
   const [showForm, setShowForm] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
+  const [query, setQuery]       = useState('');
+  const [account, setAccount]   = useState(null);
+  const [cron, setCron]         = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -672,9 +822,20 @@ export default function Tracking() {
       setProjects((await pr.json()).projects || []);
       setItems((await kr.json()).tracked || []);
     } catch (e) { setError(e.message); } finally { setLoading(false); }
+
+    // Balance and coverage are best-effort — a DataForSEO hiccup must not blank the page.
+    try {
+      const [ac, cs] = await Promise.all([API('/api/tracking/account'), API('/api/tracking/cron-status')]);
+      if (ac.ok) setAccount(await ac.json());
+      if (cs.ok) setCron(await cs.json());
+    } catch { /* silent */ }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // One search term, both views: on the overview it answers "which projects track this?", and
+  // it carries into whichever project you open so you land on the keywords you searched for.
+  // It is never stale-but-invisible — both views render the box and a match count.
 
   async function handleCheck(id) {
     const res = await API(`/api/tracking/${id}/check`, { method: 'POST' });
@@ -701,6 +862,38 @@ export default function Tracking() {
     ? items.filter(i => activeId === '__none__' ? !i.project_id : i.project_id === activeId)
     : [];
 
+  // Search matches the keyword and its target URL, both accent-folded.
+  const q = norm(query.trim());
+  const matchesQuery = i => norm(i.keyword).includes(q) || norm(i.target_url).includes(q);
+  const visibleItems = q ? detailItems.filter(matchesQuery) : detailItems;
+
+  // Overview search: every matching keyword, grouped under the project that tracks it, so one
+  // query answers "who has this keyword, and how are we doing on it?" in a single view.
+  const matchGroups = (() => {
+    if (!q) return [];
+    const by = new Map();
+    for (const it of items.filter(matchesQuery)) {
+      const key = it.project_id || '__none__';
+      if (!by.has(key)) by.set(key, []);
+      by.get(key).push(it);
+    }
+    return [...by.entries()]
+      .map(([id, rows]) => ({
+        id,
+        project: projects.find(p => p.id === id) || null,
+        label: (projects.find(p => p.id === id) || {}).domain || 'Keywords without a target site',
+        rows: rows.sort((a, b) => (a.position ?? 999) - (b.position ?? 999)),
+      }))
+      .sort((a, b) => b.rows.length - a.rows.length);
+  })();
+  const matchCount = matchGroups.reduce((n, g) => n + g.rows.length, 0);
+
+  // CSV rows carry the project domain, so an export of everything is still readable.
+  const projectFor = it => {
+    const p = projects.find(pr => pr.id === it.project_id);
+    return p ? p.domain : 'unassigned';
+  };
+
   // Client-side KPIs for the detail header (fresh after re-checks).
   const detailSummary = activeId && detailItems.length ? (() => {
     const ranked = detailItems.filter(i => i.position != null);
@@ -719,6 +912,7 @@ export default function Tracking() {
     const label = activeProject ? activeProject.domain : 'Keywords without a target site';
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <AccountStrip account={account} cron={cron} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <button onClick={() => { setActiveId(null); setShowForm(false); }} aria-label="Back to projects" style={btnStyle}><ArrowLeft size={15} aria-hidden="true" /></button>
@@ -766,8 +960,32 @@ export default function Tracking() {
           </div>
         )}
 
+        {detailItems.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <SearchBox value={query} onChange={setQuery} shown={visibleItems.length} total={detailItems.length} />
+            <button type="button" onClick={() => downloadCsv(visibleItems, projectFor, activeProject ? activeProject.domain : 'unassigned')}
+              disabled={visibleItems.length === 0} className="btn-secondary"
+              title={q ? 'Export the keywords matching your search' : 'Export every keyword in this project'}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 13px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+              <Download size={13} aria-hidden="true" />
+              Export CSV{q && visibleItems.length !== detailItems.length ? ` (${visibleItems.length})` : ''}
+            </button>
+          </div>
+        )}
+
+        {detailItems.length > 0 && visibleItems.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+            <Search size={24} style={{ marginBottom: 10, opacity: 0.3 }} aria-hidden="true" />
+            <div>No keywords match “{query.trim()}”.</div>
+            <button type="button" onClick={() => setQuery('')}
+              style={{ marginTop: 8, background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}>
+              Clear search
+            </button>
+          </div>
+        )}
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {detailItems.map(item => <TrackedRow key={item.id} item={item} onDelete={handleDelete} onCheck={handleCheck} />)}
+          {visibleItems.map(item => <TrackedRow key={item.id} item={item} onDelete={handleDelete} onCheck={handleCheck} />)}
         </div>
         {spin}
       </div>
@@ -777,12 +995,19 @@ export default function Tracking() {
   // ── Projects overview ───────────────────────────────────────────────────────
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <AccountStrip account={account} cron={cron} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
           {projects.length} project{projects.length !== 1 ? 's' : ''} · {items.length} keyword{items.length !== 1 ? 's' : ''}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={load} aria-label="Refresh" style={btnStyle}><RefreshCw size={13} aria-hidden="true" /></button>
+          <button type="button" onClick={() => downloadCsv(q ? items.filter(matchesQuery) : items, projectFor, q ? 'search' : 'all-projects')}
+            disabled={items.length === 0 || (q && matchCount === 0)} className="btn-secondary"
+            title={q ? 'Export the keywords matching your search, across all projects' : 'Export every tracked keyword, across all projects'}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 13px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
+            <Download size={13} aria-hidden="true" /> Export CSV{q ? ` (${matchCount})` : ''}
+          </button>
           <button onClick={() => setShowRegister(v => !v)} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.82rem' }}>
             <Plus size={14} /> Register domain
           </button>
@@ -790,6 +1015,11 @@ export default function Tracking() {
       </div>
 
       {showRegister && <RegisterForm onSaved={afterSave} onClose={() => setShowRegister(false)} />}
+
+      {!loading && items.length > 0 && (
+        <SearchBox value={query} onChange={setQuery} shown={matchCount} total={items.length}
+          placeholder="Find a keyword across every project…" />
+      )}
 
       {error && (
         <div role="alert" style={{ padding: '10px 14px', borderRadius: 8, fontSize: '0.82rem', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', color: '#dc2626' }}>{error}</div>
@@ -804,7 +1034,59 @@ export default function Tracking() {
         </div>
       )}
 
-      {!loading && (projects.length > 0 || unassigned.length > 0) && (
+      {/* Search results: which projects track this keyword, and where each one ranks. */}
+      {!loading && q && (
+        matchCount === 0 ? (
+          <div style={{ textAlign: 'center', padding: '50px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+            <Search size={24} style={{ marginBottom: 10, opacity: 0.3 }} aria-hidden="true" />
+            <div>No project tracks a keyword matching “{query.trim()}”.</div>
+            <button type="button" onClick={() => setQuery('')}
+              style={{ marginTop: 8, background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}>
+              Clear search
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              <strong style={{ color: 'var(--text-strong)' }}>{matchCount}</strong> keyword{matchCount !== 1 ? 's' : ''} matching
+              “{query.trim()}” in <strong style={{ color: 'var(--text-strong)' }}>{matchGroups.length}</strong> project{matchGroups.length !== 1 ? 's' : ''}
+            </div>
+            {matchGroups.map(g => (
+              <div key={g.id} className="glass-panel" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 16px', borderBottom: '1px solid rgb(var(--ink) / 0.07)' }}>
+                  {g.project ? <Favicon domain={g.project.domain} size={17} /> : <Folder size={15} color="var(--text-muted)" aria-hidden="true" />}
+                  <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-strong)' }}>{g.label}</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    · {g.rows.length} match{g.rows.length !== 1 ? 'es' : ''}
+                  </span>
+                  <button type="button" onClick={() => setActiveId(g.id)}
+                    style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: '0.76rem' }}>
+                    Open project →
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {g.rows.map(it => (
+                    <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 16px', borderBottom: '1px solid rgb(var(--ink) / 0.04)' }}>
+                      <span style={{ width: 46, textAlign: 'center', flexShrink: 0 }}><PositionBadge position={it.position} /></span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: '0.84rem', color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {it.keyword}
+                      </span>
+                      {it.ranking_url && (
+                        <span title={it.ranking_url} style={{ fontSize: '0.72rem', color: '#15803d', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>
+                          {urlPath(it.ranking_url)}
+                        </span>
+                      )}
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>{timeAgo(it.last_checked)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {!loading && !q && (projects.length > 0 || unassigned.length > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
           {projects.map(p => <ProjectCard key={p.id} project={p} onOpen={pr => setActiveId(pr.id)} onDelete={handleDeleteProject} />)}
           {unassigned.length > 0 && (
