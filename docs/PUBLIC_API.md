@@ -170,3 +170,146 @@ curl -s -H "Authorization: Bearer $KEY" "$BASE/rankings?since=2026-10-01T00:00:0
 - `top_domains` is the SERP, not our rankings.
 - The API cannot write. If asked to add or re-check a keyword, say so — that is
   done in the console.
+
+---
+
+## Field reference
+
+Generated from the running service. Every endpoint below is `GET`; the public
+API has no other method.
+
+### `GET /api/v1` — no key required
+
+**In:** nothing.
+**Out:** `service`, `version`, `auth`, `endpoints` (map of path → description),
+`notes[]`.
+
+### `GET /api/v1/whoami`
+
+**In:** nothing.
+
+| Out | Type | Meaning |
+|---|---|---|
+| `key.id` | string | UUID of the key row |
+| `key.name` | string | the name it was minted under |
+| `key.prefix` | string | the 8 characters shown in the console |
+| `created_by` | string | email of the admin who minted it |
+| `scope` | string | `all projects`, or `N project(s)` |
+| `project_ids` | array·null | explicit scope, or null for everything |
+| `read_only` | bool | always true |
+| `requests_served` | int | lifetime request count for this key |
+
+### `GET /api/v1/projects`
+
+**In:** nothing — a key only ever sees the projects in its scope.
+
+| Out (per project) | Type | Meaning |
+|---|---|---|
+| `id`, `name`, `domain`, `location` | string | project identity |
+| `created_at` | ISO | when the project was registered |
+| `keywords` | int | keywords tracked under it |
+| `ranking` | int | how many have a position in their latest snapshot |
+| `avg_position` | float·null | mean of the positions that exist |
+| `top3`, `top10` | int | keywords at or above position 3 / 10 |
+| `visibility_pct` | int | `top10 / keywords`, rounded |
+| `last_checked` | ISO·null | newest snapshot in the project |
+
+### `GET /api/v1/keywords`
+
+| In | Type | Default | Notes |
+|---|---|---|---|
+| `project_id` | string | — | 403 if outside the key's scope |
+| `q` | string | — | case-insensitive substring of the keyword |
+| `position_max` | int | — | only keywords at or above this position |
+| `ranking` | bool | — | `true` = has a position, `false` = does not |
+| `updated_since` | ISO | — | snapshots newer than this; the sync parameter |
+| `limit` | int | 100 | max 500 |
+| `offset` | int | 0 | |
+
+**Out:** `{ total, limit, offset, rows[] }`, ordered by position with
+non-ranking keywords last.
+
+| Row field | Type | Meaning |
+|---|---|---|
+| `id` | string | tracking id — use it for `/keywords/{id}` |
+| `keyword` | string | the tracked phrase |
+| `target_url` | string·null | the page expected to rank |
+| `location` | string | market the SERP was measured in |
+| `project_id`, `domain` | string | owning project |
+| `created_at` | ISO | when tracking started |
+| `position` | int·**null** | **null = not ranking**, never 0 |
+| `ranking_url` | string·null | the URL that actually ranked |
+| `fs_holder_domain` | string·null | who holds the featured snippet |
+| `fs_present` | bool·null | null on rows predating snippet detection |
+| `top_domains` | array | top 10 of that SERP: `{position, domain}` |
+| `source` | string·**null** | `dataforseo`, or **null for pre-migration SerpAPI rows** |
+| `checked_at` | ISO·null | when the snapshot was taken |
+
+### `GET /api/v1/keywords/{tracking_id}`
+
+| In | Type | Default |
+|---|---|---|
+| `tracking_id` | path | required |
+| `history_days` | int | 90, max 365 |
+
+**Out:** `{ keyword, history[], history_days }`. `keyword` is the full tracking
+row plus `domain`; each `history` entry carries `position`, `ranking_url`,
+`fs_holder_domain`, `fs_present`, `top_domains`, `source`, `cost`, `checked_at`,
+oldest first.
+
+### `GET /api/v1/rankings`
+
+| In | Type | Default | Notes |
+|---|---|---|---|
+| `project_id` | string | — | 403 if outside scope |
+| `since` | ISO | — | the high-water mark to sync from |
+| `limit` | int | 200 | max 1000 |
+| `offset` | int | 0 | |
+
+**Out:** `{ total, limit, offset, rows[] }`, **oldest first** so a sync can walk
+forward. Row: `id`, `tracking_id`, `keyword`, `project_id`, `domain`,
+`position`, `ranking_url`, `fs_holder_domain`, `fs_present`, `source`,
+`checked_at`.
+
+### `GET /api/v1/stats/{project_id}`
+
+**In:** `project_id` in the path.
+
+| Out | Type | Meaning |
+|---|---|---|
+| `project_id`, `domain`, `location` | string | project identity |
+| `keywords` | int | tracked under it |
+| `ranking` / `not_ranking` | int | split by whether a position exists |
+| `top3`, `top10` | int | at or above position 3 / 10 |
+| `avg_position` | float·null | over ranking keywords only |
+| `visibility_pct` | int | `top10 / keywords` |
+| `checked_today` | int | distinct keywords measured today (UTC) |
+| `coverage_today_pct` | int | `checked_today / keywords` |
+| `latest_from_serpapi` | int | keywords whose newest snapshot predates the DataForSEO migration |
+| `last_checked` | ISO·null | newest snapshot |
+| `note` | string | the caveats above, restated inline |
+
+### `GET /api/v1/alerts`
+
+| In | Type | Default |
+|---|---|---|
+| `project_id` | string | — |
+| `limit` | int | 100, max 500 |
+
+**Out:** `{ alerts[] }`, newest first. Each: `id`, `keyword`, `alert_type`
+(`position_drop`, `position_gain`, `started_ranking`, `lost_ranking`,
+`fs_changed`), `severity` (`critical`, `warning`, `info`), `message`,
+`prev_value`, `curr_value`, `created_at`, `project_id`, `domain`.
+
+---
+
+## Key management (console only)
+
+Not part of the public API. These authenticate a super-admin's session, not a
+key, and live under `/api/` rather than `/api/v1/`.
+
+| Endpoint | In | Out |
+|---|---|---|
+| `POST /api/api-keys` | `{name, project_ids?}` | `{id, name, prefix, key, project_ids, warning}` — **`key` is returned once and never again** |
+| `GET /api/api-keys` | — | `{keys[]}`: `id`, `name`, `prefix`, `created_by`, `project_ids`, `created_at`, `last_used_at`, `revoked_at`, `revoked`, `request_count` |
+| `DELETE /api/api-keys/{key_id}` | path id | `{revoked: true, id}` |
