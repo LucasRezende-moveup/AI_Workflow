@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import pandas as pd
 from typing import List, Optional
@@ -519,6 +520,30 @@ def _ensure_schema():
                     CREATE INDEX IF NOT EXISTS hreflang_pages_locale_idx
                     ON hreflang_pages (crawl_id, locale)
                 """)
+                # ── Public API keys ───────────────────────────────────────────────────
+                # Only the hash is stored: a key is shown once at creation and is otherwise
+                # unrecoverable, so a leaked database cannot be turned into working keys.
+                # `prefix` exists purely so a human can tell two keys apart in the console.
+                # Revoked keys are kept, never deleted, so the audit trail survives.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS api_keys (
+                        id            TEXT PRIMARY KEY,
+                        name          TEXT NOT NULL,
+                        prefix        TEXT NOT NULL,
+                        key_hash      TEXT NOT NULL UNIQUE,
+                        created_by    TEXT NOT NULL DEFAULT '',
+                        project_ids   JSONB,
+                        request_count BIGINT NOT NULL DEFAULT 0,
+                        created_at    TIMESTAMPTZ DEFAULT NOW(),
+                        last_used_at  TIMESTAMPTZ,
+                        revoked_at    TIMESTAMPTZ
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS api_keys_hash_idx ON api_keys (key_hash)
+                    WHERE revoked_at IS NULL
+                """)
+
                 cur.execute("SELECT COUNT(*) AS cnt FROM users")
                 row = cur.fetchone()
                 if row["cnt"] == 0:
@@ -3775,6 +3800,494 @@ def keywords_to_tracking(req: KeywordsToTrackingRequest, current_user=Depends(_d
         "keywords": [a["keyword"] for a in added][:50],
         "note": "Added to tracking only. The Keywords API is read-only, so seo_track upstream is unchanged.",
     }
+
+
+# --- Public API (v1) -----------------------------------------------------------
+#
+# Key-authenticated, read-only access to the rank-tracking data for people outside this app.
+#
+# Separate from everything under /api/* that the console uses: those endpoints authenticate a
+# human's JWT and inherit that person's session. A key is its own identity with its own scope,
+# so the two never share a code path and a key can never pick up a logged-in user's access.
+#
+# Design follows the conventions this team already reads elsewhere:
+#   · The key is shown once, at creation, and stored only as a SHA-256 hash. Nobody, including
+#     an administrator, can recover it — lost keys are revoked and replaced.
+#   · 401 is deliberately indistinguishable for missing, malformed, unknown and revoked keys.
+#     Confirming that a prefix exists would turn the endpoint into a key oracle.
+#   · Non-GET returns 405 before the key is examined, so a write attempt never reaches auth.
+
+import hashlib
+
+_PUB_PREFIX = "mu_live"
+
+
+def _api_key_hash(raw: str) -> str:
+    return hashlib.sha256(raw.strip().encode()).hexdigest()
+
+
+def _mint_api_key() -> tuple:
+    """Returns (full_key, prefix, hash). The full key exists only in this response."""
+    prefix = uuid.uuid4().hex[:8]
+    secret = uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    full = f"{_PUB_PREFIX}_{prefix}_{secret}"
+    return full, prefix, _api_key_hash(full)
+
+
+def _public_key_identity(authorization: Optional[str], x_api_key: Optional[str]) -> dict:
+    """Resolve a key to its row, or raise. Updates last-used as a side effect."""
+    raw = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        raw = authorization[7:].strip()
+    elif x_api_key:
+        raw = x_api_key.strip()
+
+    unauthorized = HTTPException(
+        status_code=401,
+        detail="Send a key as `Authorization: Bearer mu_live_…` or `X-API-Key`. "
+               "Keys are created in the console under API Keys.")
+    if not raw or not raw.startswith(_PUB_PREFIX + "_"):
+        raise unauthorized
+
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM api_keys WHERE key_hash = %s AND revoked_at IS NULL",
+                    (_api_key_hash(raw),))
+                row = cur.fetchone()
+                if row:
+                    cur.execute(
+                        "UPDATE api_keys SET last_used_at = NOW(), request_count = request_count + 1 "
+                        "WHERE id = %s", (row["id"],))
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Key store unavailable: {exc}")
+
+    if not row:
+        raise unauthorized
+    return dict(row)
+
+
+def _public_key(authorization: str = Header(None), x_api_key: str = Header(None)) -> dict:
+    return _public_key_identity(authorization, x_api_key)
+
+
+def _key_projects(key: dict) -> Optional[list]:
+    """Project ids this key may read, or None for every project."""
+    scope = key.get("project_ids")
+    if isinstance(scope, str):
+        try:
+            scope = json.loads(scope)
+        except Exception:
+            scope = None
+    return scope or None
+
+
+def _scope_clause(key: dict, column: str = "p.id"):
+    """SQL fragment + params restricting a query to the key's projects."""
+    ids = _key_projects(key)
+    if not ids:
+        return "", []
+    return f" AND {column} = ANY(%s)", [list(ids)]
+
+
+def _require_project_in_scope(key: dict, project_id: str):
+    ids = _key_projects(key)
+    if ids and project_id not in ids:
+        raise HTTPException(status_code=403, detail="project_not_in_scope")
+
+
+@app.middleware("http")
+async def _public_api_read_only(request, call_next):
+    """The public surface is read-only. Checked before auth so a write never reaches the key."""
+    if request.url.path.startswith("/api/v1/") and request.method not in ("GET", "HEAD", "OPTIONS"):
+        return JSONResponse(status_code=405,
+                            content={"error": "read_only",
+                                     "detail": "The public API is read-only. Any method other than GET returns 405."})
+    return await call_next(request)
+
+
+# ── key management (console, super-admin) ─────────────────────────────────────
+
+class ApiKeyCreate(BaseModel):
+    name: str
+    project_ids: Optional[List[str]] = None     # None = every project
+
+
+@app.post("/api/api-keys")
+def api_key_create(req: ApiKeyCreate, current_user=Depends(_require_super_admin)):
+    """Mint a key. The full value is returned exactly once and never stored."""
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Give the key a name you will recognise later.")
+    full, prefix, digest = _mint_api_key()
+    kid = str(uuid.uuid4())
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO api_keys (id, name, prefix, key_hash, created_by, project_ids)
+                       VALUES (%s,%s,%s,%s,%s,%s)""",
+                    (kid, name[:120], prefix, digest, current_user.get("email") or "",
+                     json.dumps(req.project_ids) if req.project_ids else None))
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {
+        "id": kid, "name": name, "prefix": prefix, "key": full,
+        "project_ids": req.project_ids,
+        "warning": "Copy this now — it is stored only as a hash and cannot be shown again.",
+    }
+
+
+@app.get("/api/api-keys")
+def api_key_list(current_user=Depends(_require_super_admin)):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT id, name, prefix, created_by, project_ids, created_at,
+                              last_used_at, revoked_at, request_count
+                       FROM api_keys ORDER BY created_at DESC""")
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        for k in ("created_at", "last_used_at", "revoked_at"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+        r["revoked"] = bool(r.pop("revoked_at", None)) if False else r["revoked_at"] is not None
+    return {"keys": rows}
+
+
+@app.delete("/api/api-keys/{key_id}")
+def api_key_revoke(key_id: str, current_user=Depends(_require_super_admin)):
+    """Revoke immediately. Rows are kept so the audit trail survives."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE api_keys SET revoked_at = NOW() WHERE id = %s AND revoked_at IS NULL "
+                    "RETURNING id", (key_id,))
+                gone = cur.fetchone()
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not gone:
+        raise HTTPException(status_code=404, detail="No such key, or it was already revoked.")
+    return {"revoked": True, "id": key_id}
+
+
+# ── the public surface ────────────────────────────────────────────────────────
+
+@app.get("/api/v1")
+def v1_index():
+    """The endpoint map. Unauthenticated so a key can be tested against something."""
+    return {
+        "service": "Moveup Media SEO — rank tracking API",
+        "version": "v1",
+        "auth": "Authorization: Bearer mu_live_… (or X-API-Key). Read-only; any non-GET returns 405.",
+        "endpoints": {
+            "GET /api/v1/whoami": "which key this is and what it can read",
+            "GET /api/v1/projects": "tracked domains with their current KPIs",
+            "GET /api/v1/keywords": "tracked keywords with their latest position",
+            "GET /api/v1/keywords/{id}": "one keyword with its position history",
+            "GET /api/v1/rankings": "ranking snapshots, for incremental sync",
+            "GET /api/v1/stats/{project_id}": "one project in numbers",
+            "GET /api/v1/alerts": "recent ranking alerts",
+        },
+        "notes": [
+            "position is null when the target did not appear in the tracked depth — that is "
+            "'not ranking', not 0.",
+            "Snapshots carry `source`; rows written before the DataForSEO migration have none "
+            "and came from SerpAPI. Positions are not strictly comparable across that boundary.",
+            "Use `updated_since` against a stored high-water mark rather than re-reading "
+            "everything.",
+        ],
+    }
+
+
+@app.get("/api/v1/whoami")
+def v1_whoami(key=Depends(_public_key)):
+    ids = _key_projects(key)
+    return {
+        "key": {"id": key["id"], "name": key["name"], "prefix": key["prefix"]},
+        "created_by": key.get("created_by"),
+        "scope": "all projects" if not ids else f"{len(ids)} project(s)",
+        "project_ids": ids,
+        "read_only": True,
+        "requests_served": key.get("request_count"),
+    }
+
+
+@app.get("/api/v1/projects")
+def v1_projects(key=Depends(_public_key)):
+    """Tracked domains, with the same KPIs the console shows."""
+    clause, params = _scope_clause(key)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT p.id, p.name, p.domain, p.location, p.created_at,
+                           COUNT(kt.id)                              AS keywords,
+                           COUNT(kr.position)                        AS ranking,
+                           ROUND(AVG(kr.position)::numeric, 1)       AS avg_position,
+                           COUNT(*) FILTER (WHERE kr.position <= 3)  AS top3,
+                           COUNT(*) FILTER (WHERE kr.position <= 10) AS top10,
+                           MAX(kr.checked_at)                        AS last_checked
+                    FROM tracking_projects p
+                    LEFT JOIN keyword_tracking kt ON kt.project_id = p.id
+                    LEFT JOIN LATERAL (
+                        SELECT position, checked_at FROM keyword_rankings
+                        WHERE tracking_id = kt.id ORDER BY checked_at DESC LIMIT 1
+                    ) kr ON true
+                    WHERE true{clause}
+                    GROUP BY p.id ORDER BY COUNT(kt.id) DESC
+                """, params)
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        r["avg_position"] = float(r["avg_position"]) if r["avg_position"] is not None else None
+        for k in ("keywords", "ranking", "top3", "top10"):
+            r[k] = int(r[k] or 0)
+        for k in ("created_at", "last_checked"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+        r["visibility_pct"] = round(r["top10"] / r["keywords"] * 100) if r["keywords"] else 0
+    return {"projects": rows}
+
+
+@app.get("/api/v1/keywords")
+def v1_keywords(project_id: Optional[str] = None, q: Optional[str] = None,
+                position_max: Optional[int] = None, ranking: Optional[bool] = None,
+                updated_since: Optional[str] = None,
+                limit: int = 100, offset: int = 0, key=Depends(_public_key)):
+    """Tracked keywords with their most recent snapshot."""
+    if project_id:
+        _require_project_in_scope(key, project_id)
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+
+    where, params = ["true"], []
+    clause, sparams = _scope_clause(key, "kt.project_id")
+    if clause:
+        where.append(clause.replace(" AND ", "", 1)); params += sparams
+    if project_id:
+        where.append("kt.project_id = %s"); params.append(project_id)
+    if q:
+        where.append("kt.keyword ILIKE %s"); params.append(f"%{q}%")
+    if updated_since:
+        where.append("kr.checked_at > %s"); params.append(updated_since)
+    if position_max is not None:
+        where.append("kr.position <= %s"); params.append(position_max)
+    if ranking is True:
+        where.append("kr.position IS NOT NULL")
+    elif ranking is False:
+        where.append("kr.position IS NULL")
+    sql_where = " AND ".join(where)
+
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) AS n FROM keyword_tracking kt
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM keyword_rankings WHERE tracking_id = kt.id
+                        ORDER BY checked_at DESC LIMIT 1) kr ON true
+                    WHERE {sql_where}""", params)
+                total = int(cur.fetchone()["n"] or 0)
+                cur.execute(f"""
+                    SELECT kt.id, kt.keyword, kt.target_url, kt.location, kt.project_id,
+                           kt.created_at, p.domain,
+                           kr.position, kr.ranking_url, kr.fs_holder_domain, kr.fs_present,
+                           kr.top_domains, kr.source, kr.checked_at
+                    FROM keyword_tracking kt
+                    LEFT JOIN tracking_projects p ON p.id = kt.project_id
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM keyword_rankings WHERE tracking_id = kt.id
+                        ORDER BY checked_at DESC LIMIT 1) kr ON true
+                    WHERE {sql_where}
+                    ORDER BY kr.position ASC NULLS LAST, kt.keyword ASC
+                    LIMIT %s OFFSET %s""", params + [limit, offset])
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        for k in ("created_at", "checked_at"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+    return {"total": total, "limit": limit, "offset": offset, "rows": rows}
+
+
+@app.get("/api/v1/keywords/{tracking_id}")
+def v1_keyword_detail(tracking_id: str, history_days: int = 90, key=Depends(_public_key)):
+    """One keyword, with its position history."""
+    history_days = max(1, min(history_days, 365))
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT kt.*, p.domain FROM keyword_tracking kt
+                    LEFT JOIN tracking_projects p ON p.id = kt.project_id
+                    WHERE kt.id = %s""", (tracking_id,))
+                kw = cur.fetchone()
+                if not kw:
+                    raise HTTPException(status_code=404, detail="not_found")
+                kw = dict(kw)
+                _require_project_in_scope(key, kw.get("project_id"))
+                cur.execute("""
+                    SELECT position, ranking_url, fs_holder_domain, fs_present, top_domains,
+                           source, cost, checked_at
+                    FROM keyword_rankings
+                    WHERE tracking_id = %s AND checked_at > NOW() - (%s || ' days')::interval
+                    ORDER BY checked_at ASC""", (tracking_id, history_days))
+                history = [dict(r) for r in cur.fetchall()]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for k in ("created_at",):
+        if kw.get(k):
+            kw[k] = kw[k].isoformat()
+    for h in history:
+        h["checked_at"] = h["checked_at"].isoformat()
+        h["cost"] = float(h["cost"]) if h.get("cost") is not None else None
+    return {"keyword": kw, "history": history, "history_days": history_days}
+
+
+@app.get("/api/v1/rankings")
+def v1_rankings(project_id: Optional[str] = None, since: Optional[str] = None,
+                limit: int = 200, offset: int = 0, key=Depends(_public_key)):
+    """Raw snapshots, oldest first — the incremental-sync endpoint."""
+    if project_id:
+        _require_project_in_scope(key, project_id)
+    limit = max(1, min(limit, 1000))
+    where, params = ["true"], []
+    clause, sparams = _scope_clause(key, "kt.project_id")
+    if clause:
+        where.append(clause.replace(" AND ", "", 1)); params += sparams
+    if project_id:
+        where.append("kt.project_id = %s"); params.append(project_id)
+    if since:
+        where.append("kr.checked_at > %s"); params.append(since)
+    sql_where = " AND ".join(where)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""SELECT COUNT(*) AS n FROM keyword_rankings kr
+                                JOIN keyword_tracking kt ON kt.id = kr.tracking_id
+                                WHERE {sql_where}""", params)
+                total = int(cur.fetchone()["n"] or 0)
+                cur.execute(f"""
+                    SELECT kr.id, kr.tracking_id, kt.keyword, kt.project_id, p.domain,
+                           kr.position, kr.ranking_url, kr.fs_holder_domain, kr.fs_present,
+                           kr.source, kr.checked_at
+                    FROM keyword_rankings kr
+                    JOIN keyword_tracking kt ON kt.id = kr.tracking_id
+                    LEFT JOIN tracking_projects p ON p.id = kt.project_id
+                    WHERE {sql_where}
+                    ORDER BY kr.checked_at ASC
+                    LIMIT %s OFFSET %s""", params + [limit, max(0, offset)])
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        r["checked_at"] = r["checked_at"].isoformat()
+    return {"total": total, "limit": limit, "offset": offset, "rows": rows}
+
+
+@app.get("/api/v1/stats/{project_id}")
+def v1_stats(project_id: str, key=Depends(_public_key)):
+    """One project in numbers. Worth reading before anything ranked by position."""
+    _require_project_in_scope(key, project_id)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT domain, location FROM tracking_projects WHERE id = %s",
+                            (project_id,))
+                proj = cur.fetchone()
+                if not proj:
+                    raise HTTPException(status_code=404, detail="not_found")
+                cur.execute("""
+                    SELECT COUNT(*) AS keywords,
+                           COUNT(kr.position) AS ranking,
+                           COUNT(*) FILTER (WHERE kr.position <= 3)  AS top3,
+                           COUNT(*) FILTER (WHERE kr.position <= 10) AS top10,
+                           ROUND(AVG(kr.position)::numeric, 1)       AS avg_position,
+                           MAX(kr.checked_at)                        AS last_checked,
+                           COUNT(*) FILTER (WHERE kr.source IS NULL) AS pre_migration
+                    FROM keyword_tracking kt
+                    LEFT JOIN LATERAL (
+                        SELECT position, checked_at, source FROM keyword_rankings
+                        WHERE tracking_id = kt.id ORDER BY checked_at DESC LIMIT 1) kr ON true
+                    WHERE kt.project_id = %s""", (project_id,))
+                s = dict(cur.fetchone())
+                cur.execute("""
+                    SELECT COUNT(DISTINCT kr.tracking_id) AS checked_today
+                    FROM keyword_rankings kr JOIN keyword_tracking kt ON kt.id = kr.tracking_id
+                    WHERE kt.project_id = %s
+                      AND (kr.checked_at AT TIME ZONE 'UTC')::date = (NOW() AT TIME ZONE 'UTC')::date""",
+                    (project_id,))
+                today = int(cur.fetchone()["checked_today"] or 0)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    kws = int(s["keywords"] or 0)
+    return {
+        "project_id": project_id, "domain": proj["domain"], "location": proj["location"],
+        "keywords": kws,
+        "ranking": int(s["ranking"] or 0),
+        "not_ranking": kws - int(s["ranking"] or 0),
+        "top3": int(s["top3"] or 0),
+        "top10": int(s["top10"] or 0),
+        "avg_position": float(s["avg_position"]) if s["avg_position"] is not None else None,
+        "visibility_pct": round(int(s["top10"] or 0) / kws * 100) if kws else 0,
+        "checked_today": today,
+        "coverage_today_pct": round(today / kws * 100) if kws else 0,
+        "latest_from_serpapi": int(s["pre_migration"] or 0),
+        "last_checked": s["last_checked"].isoformat() if s["last_checked"] else None,
+        "note": "`not_ranking` means the target was absent from the tracked depth, not position 0. "
+                "`latest_from_serpapi` counts keywords whose newest snapshot predates the "
+                "DataForSEO migration and is not strictly comparable with later ones.",
+    }
+
+
+@app.get("/api/v1/alerts")
+def v1_alerts(project_id: Optional[str] = None, limit: int = 100, key=Depends(_public_key)):
+    """Recent ranking alerts — drops, gains, lost rankings, snippet changes."""
+    if project_id:
+        _require_project_in_scope(key, project_id)
+    limit = max(1, min(limit, 500))
+    where, params = ["true"], []
+    clause, sparams = _scope_clause(key, "kt.project_id")
+    if clause:
+        where.append(clause.replace(" AND ", "", 1)); params += sparams
+    if project_id:
+        where.append("kt.project_id = %s"); params.append(project_id)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT a.id, a.keyword, a.alert_type, a.severity, a.message,
+                           a.prev_value, a.curr_value, a.created_at,
+                           kt.project_id, p.domain
+                    FROM alerts a
+                    LEFT JOIN keyword_tracking kt ON kt.id = a.tracking_id
+                    LEFT JOIN tracking_projects p ON p.id = kt.project_id
+                    WHERE {' AND '.join(where)}
+                    ORDER BY a.created_at DESC LIMIT %s""", params + [limit])
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        if r.get("created_at"):
+            r["created_at"] = r["created_at"].isoformat()
+    return {"alerts": rows}
 
 
 # --- GSC Endpoints ---
