@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 import pandas as pd
 from typing import List, Optional
@@ -3998,6 +3998,7 @@ def v1_index():
             "GET /api/v1/rankings": "ranking snapshots, for incremental sync",
             "GET /api/v1/stats/{project_id}": "one project in numbers",
             "GET /api/v1/alerts": "recent ranking alerts",
+            "GET /api/v1/agents.md": "the agent guide — read this first if you are an AI tool",
         },
         "notes": [
             "position is null when the target did not appear in the tracked depth — that is "
@@ -4008,6 +4009,33 @@ def v1_index():
             "everything.",
         ],
     }
+
+
+_AGENT_DOC_CACHE = {}
+
+
+@app.get("/api/v1/agents.md")
+def v1_agent_guide():
+    """The agent guide, served so a tool can be pointed at a URL rather than a file.
+
+    Unauthenticated on purpose: it describes shapes and pitfalls, never data, and an agent
+    that cannot read the contract until it has a working key is an agent that guesses."""
+    if "doc" not in _AGENT_DOC_CACHE:
+        here = os.path.dirname(os.path.abspath(__file__))
+        text = None
+        for candidate in (os.path.join(here, "..", "docs", "API_FOR_AGENTS.md"),
+                          os.path.join(here, "docs", "API_FOR_AGENTS.md"),
+                          "docs/API_FOR_AGENTS.md"):
+            try:
+                with open(candidate, encoding="utf-8") as fh:
+                    text = fh.read()
+                    break
+            except Exception:
+                continue
+        _AGENT_DOC_CACHE["doc"] = text or (
+            "# Agent guide unavailable\n\nThe markdown was not bundled with this "
+            "deployment. See GET /api/v1 for the endpoint map.\n")
+    return PlainTextResponse(_AGENT_DOC_CACHE["doc"], media_type="text/markdown; charset=utf-8")
 
 
 @app.get("/api/v1/whoami")
