@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import ApiKeys from './ApiKeys';
 import { UserPlus, Trash2, Edit2, Check, X, Shield, User, AlertCircle, RefreshCw, KeyRound } from 'lucide-react';
 
 // ── Self-service password change (shown to editors; also usable by anyone) ──────
@@ -460,6 +461,8 @@ export default function Users({ currentUser }) {
           </table>
         )}
       </div>
+
+      {isAdmin && <ApiKeys />}
     </div>
   );
 }

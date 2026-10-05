@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 import pandas as pd
 from typing import List, Optional
@@ -13,6 +14,7 @@ import bcrypt
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
 import requests as _http
+from collections import defaultdict
 try:
     import psycopg2
     import psycopg2.extras
@@ -163,7 +165,7 @@ def _ensure_schema():
                         id         TEXT PRIMARY KEY,
                         name       TEXT NOT NULL,
                         domain     TEXT NOT NULL UNIQUE,
-                        location   TEXT NOT NULL DEFAULT 'Global (No Geolocation)',
+                        location   TEXT NOT NULL DEFAULT 'Brazil (General)',
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
@@ -172,7 +174,7 @@ def _ensure_schema():
                         id         TEXT PRIMARY KEY,
                         keyword    TEXT NOT NULL,
                         target_url TEXT,
-                        location   TEXT NOT NULL DEFAULT 'Global (No Geolocation)',
+                        location   TEXT NOT NULL DEFAULT 'Brazil (General)',
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
@@ -219,10 +221,38 @@ def _ensure_schema():
                     ALTER TABLE keyword_rankings
                     ADD COLUMN IF NOT EXISTS fs_present BOOLEAN
                 """)
+                # Which SERP provider measured this row. NULL = SerpAPI, the only source until
+                # the switch to DataForSEO. Two providers sample Google differently, so a
+                # position change across a provider boundary is not a real ranking movement —
+                # this column is what lets the alerting tell those two things apart.
+                cur.execute("""
+                    ALTER TABLE keyword_rankings
+                    ADD COLUMN IF NOT EXISTS source TEXT
+                """)
+                # What the snapshot cost. SerpAPI billed per credit off-platform; DataForSEO
+                # bills per request, so per-row cost is now knowable — and worth knowing, since
+                # an exhausted balance stalls the sweep silently.
+                cur.execute("""
+                    ALTER TABLE keyword_rankings
+                    ADD COLUMN IF NOT EXISTS cost NUMERIC DEFAULT 0
+                """)
+                # Retire "Global (No Geolocation)" from tracking. DataForSEO's google/organic
+                # always requires a location, so a "global" keyword had to resolve to *some*
+                # market — and for this portfolio that market is Brazil, not the US default the
+                # mapping started with. Migrating the stored rows keeps what the UI shows and
+                # what the API queries in agreement; leaving them would have every chart
+                # labelled "Global" while the numbers underneath came from Brazil.
+                # Idempotent: once no rows match it is a no-op on every later cold start.
+                for _tbl in ("tracking_projects", "keyword_tracking"):
+                    cur.execute(
+                        f"ALTER TABLE {_tbl} ALTER COLUMN location SET DEFAULT 'Brazil (General)'")
+                    cur.execute(
+                        f"UPDATE {_tbl} SET location = 'Brazil (General)' "
+                        f"WHERE location = 'Global (No Geolocation)'")
                 # Per-invocation log for the tracking cron. 500+ keywords cannot be checked
                 # inside one function timeout, so coverage is spread over several runs — this
                 # is how a day that finished cleanly is told apart from one that ran out of
-                # budget or burned through its SerpAPI quota.
+                # budget or burned through its DataForSEO balance.
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS tracking_cron_runs (
                         id           TEXT PRIMARY KEY,
@@ -408,6 +438,112 @@ def _ensure_schema():
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS serp_cache_created_idx ON serp_cache (created_at)
                 """)
+                # ── Hreflang crawler ──────────────────────────────────────────────────
+                # A crawl is resumable: the client starts one, then calls step() until it is
+                # drained. Page fingerprints are persisted because equivalence is decided
+                # *across* invocations — a page fetched in the first step has to be comparable
+                # with one fetched in the tenth, and nothing survives in memory between calls.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS hreflang_crawls (
+                        id            TEXT PRIMARY KEY,
+                        domain        TEXT NOT NULL,
+                        status        TEXT NOT NULL DEFAULT 'crawling',
+                        root_locale   TEXT,
+                        sitemap_urls  INTEGER NOT NULL DEFAULT 0,
+                        locales       JSONB,
+                        unsitemapped  JSONB,
+                        pages_queued  INTEGER NOT NULL DEFAULT 0,
+                        pages_done    INTEGER NOT NULL DEFAULT 0,
+                        pages_failed  INTEGER NOT NULL DEFAULT 0,
+                        notes         TEXT,
+                        error         TEXT,
+                        created_at    TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at    TIMESTAMPTZ DEFAULT NOW(),
+                        finished_at   TIMESTAMPTZ
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS hreflang_crawls_domain_idx
+                    ON hreflang_crawls (domain, created_at DESC)
+                """)
+                # The work list. One row per sitemap URL selected for fetching; a step claims
+                # pending rows, so a killed invocation loses at most what it had in flight.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS hreflang_queue (
+                        id         BIGSERIAL PRIMARY KEY,
+                        crawl_id   TEXT REFERENCES hreflang_crawls(id) ON DELETE CASCADE,
+                        url        TEXT NOT NULL,
+                        locale     TEXT NOT NULL,
+                        path_key   TEXT NOT NULL,
+                        state      TEXT NOT NULL DEFAULT 'pending',
+                        UNIQUE (crawl_id, url)
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS hreflang_queue_pick_idx
+                    ON hreflang_queue (crawl_id, state, id)
+                """)
+                # Fetched pages. images/numbers/outbound/words are the translation-surviving
+                # fingerprints the matcher compares; they are capped on write so a wide crawl
+                # cannot bloat a row.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS hreflang_pages (
+                        id              BIGSERIAL PRIMARY KEY,
+                        crawl_id        TEXT REFERENCES hreflang_crawls(id) ON DELETE CASCADE,
+                        url             TEXT NOT NULL,
+                        final_url       TEXT,
+                        locale          TEXT,
+                        locale_folder   TEXT,
+                        locale_source   TEXT,
+                        locale_mismatch TEXT,
+                        path_key        TEXT,
+                        status          INTEGER,
+                        html_lang       TEXT,
+                        canonical       TEXT,
+                        title           TEXT,
+                        h1              TEXT,
+                        hreflangs       JSONB,
+                        images          JSONB,
+                        numbers         JSONB,
+                        outbound        JSONB,
+                        words           JSONB,
+                        error           TEXT,
+                        fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE (crawl_id, url)
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS hreflang_pages_group_idx
+                    ON hreflang_pages (crawl_id, path_key)
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS hreflang_pages_locale_idx
+                    ON hreflang_pages (crawl_id, locale)
+                """)
+                # ── Public API keys ───────────────────────────────────────────────────
+                # Only the hash is stored: a key is shown once at creation and is otherwise
+                # unrecoverable, so a leaked database cannot be turned into working keys.
+                # `prefix` exists purely so a human can tell two keys apart in the console.
+                # Revoked keys are kept, never deleted, so the audit trail survives.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS api_keys (
+                        id            TEXT PRIMARY KEY,
+                        name          TEXT NOT NULL,
+                        prefix        TEXT NOT NULL,
+                        key_hash      TEXT NOT NULL UNIQUE,
+                        created_by    TEXT NOT NULL DEFAULT '',
+                        project_ids   JSONB,
+                        request_count BIGINT NOT NULL DEFAULT 0,
+                        created_at    TIMESTAMPTZ DEFAULT NOW(),
+                        last_used_at  TIMESTAMPTZ,
+                        revoked_at    TIMESTAMPTZ
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS api_keys_hash_idx ON api_keys (key_hash)
+                    WHERE revoked_at IS NULL
+                """)
+
                 cur.execute("SELECT COUNT(*) AS cnt FROM users")
                 row = cur.fetchone()
                 if row["cnt"] == 0:
@@ -719,10 +855,15 @@ def get_history_run(run_id: str, current_user=Depends(_decode_token)):
 
 # ── Keyword Tracking ──────────────────────────────────────────────────────────
 
+# Tracking has no "global" option: DataForSEO always resolves a SERP against a real location,
+# so every tracked keyword is measured in a named market. Brazil is this portfolio's.
+TRACK_DEFAULT_LOCATION = "Brazil (General)"
+
+
 class TrackingAddRequest(BaseModel):
     keyword: str
     target_url: Optional[str] = None
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
     project_id: Optional[str] = None
 
 
@@ -733,14 +874,14 @@ class TrackingBulkItem(BaseModel):
 
 class TrackingBulkRequest(BaseModel):
     items: List[TrackingBulkItem]
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
     project_id: Optional[str] = None
 
 
 class ProjectRequest(BaseModel):
     domain: str
     name: Optional[str] = None
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
 
 
 def _norm_host(netloc: str) -> str:
@@ -787,7 +928,7 @@ def _ensure_project(domain: str, name: str = None, location: str = None) -> Opti
                 cur.execute(
                     "INSERT INTO tracking_projects (id, name, domain, location) VALUES (%s,%s,%s,%s) "
                     "ON CONFLICT (domain) DO UPDATE SET domain = EXCLUDED.domain RETURNING id",
-                    (pid, name or dom, dom, location or "Global (No Geolocation)"),
+                    (pid, name or dom, dom, location or TRACK_DEFAULT_LOCATION),
                 )
                 return cur.fetchone()["id"]
     except Exception:
@@ -819,6 +960,15 @@ def _fire_alerts(tracking_id: str, keyword: str, prev: dict, curr: dict):
     """Compare two ranking snapshots and insert alert rows for significant changes."""
     from urllib.parse import urlparse
     alerts_to_insert = []
+
+    # A provider switch is not a ranking movement. The first DataForSEO snapshot for a keyword
+    # gets compared against a SerpAPI one (source NULL on every row written before the switch),
+    # and two providers sample Google differently enough that most keywords shift a place or
+    # two. Alerting on that would page the team about hundreds of phantom drops on changeover
+    # day and bury any real movement. One comparison per keyword is skipped; the next one,
+    # DataForSEO against DataForSEO, alerts normally.
+    if (prev.get("source") or "serpapi") != (curr.get("source") or "serpapi"):
+        return
 
     prev_pos  = prev.get("position")
     curr_pos  = curr.get("position")
@@ -902,15 +1052,19 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
     """
     Fetch live SERP, save a ranking snapshot, fire alerts on changes.
 
-    Pinned to SerpAPI: a rank series is only meaningful if every point comes from the same
-    search engine. When SerpAPI is unavailable this returns {"skipped": True} and writes
-    nothing, leaving a visible gap rather than a fabricated position.
+    Pinned to DataForSEO, with no fallback: a rank series is only meaningful if every point
+    comes from the same source. When DataForSEO is unavailable this returns {"skipped": True}
+    and writes nothing, leaving a visible gap rather than a fabricated position.
+
+    `_serp_dfs_cached` is the strict fetcher — DataForSEO or nothing. It shares its cache
+    namespace with the DataForSEO tracking test copy, so a SERP either one buys is reused
+    rather than paid for twice.
     """
     from urllib.parse import urlparse
-    serp = _serp_cached(keyword, location_name=location, provider="serpapi")
+    serp = _serp_dfs_cached(keyword, location_name=location)
     organic = serp.get("organic", [])
     if not organic:
-        return {"skipped": True, "reason": serp.get("error", "no organic results from SerpAPI")}
+        return {"skipped": True, "reason": serp.get("error", "no organic results from DataForSEO")}
     position = None
     ranking_url = None
     if target_url and organic:
@@ -960,7 +1114,7 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
         with _db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT position, fs_holder_domain, fs_present FROM keyword_rankings
+                    """SELECT position, fs_holder_domain, fs_present, source FROM keyword_rankings
                        WHERE tracking_id = %s ORDER BY checked_at DESC LIMIT 1""",
                     (tracking_id,)
                 )
@@ -972,20 +1126,22 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
 
     # A failed write must not be silent: the cron counts it as a failure so a broken run is
     # visible instead of looking like a day when nothing moved.
+    cost = float(serp.get("cost") or 0)
     row_id = str(uuid.uuid4())
     with _db_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO keyword_rankings
                    (id, tracking_id, position, ranking_url, fs_holder_url, fs_holder_domain,
-                    fs_present, total_results, top_domains)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    fs_present, total_results, top_domains, source, cost)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (row_id, tracking_id, position, ranking_url, fs_url, fs_domain,
-                 fs_present, len(organic), json.dumps(top_domains))
+                 fs_present, len(organic), json.dumps(top_domains), "dataforseo", cost)
             )
         conn.commit()
 
-    curr_snapshot = {"position": position, "fs_holder_domain": fs_domain, "fs_present": fs_present}
+    curr_snapshot = {"position": position, "fs_holder_domain": fs_domain,
+                     "fs_present": fs_present, "source": "dataforseo"}
     if prev_snapshot:
         _fire_alerts(tracking_id, keyword, prev_snapshot, curr_snapshot)
 
@@ -997,6 +1153,8 @@ def _run_tracking_check(tracking_id: str, keyword: str, target_url: Optional[str
         "fs_present": fs_present,
         "total_results": len(organic),
         "top_domains": top_domains,
+        "source": "dataforseo",
+        "cost": cost,
     }
 
 
@@ -1103,7 +1261,7 @@ class ImportRow(BaseModel):
 
 class TrackingImportRequest(BaseModel):
     domain: str
-    location: str = "Global (No Geolocation)"
+    location: str = TRACK_DEFAULT_LOCATION
     target_url: Optional[str] = None
     keywords: List[str] = []
     history: List[ImportRow] = []
@@ -1485,7 +1643,7 @@ def tracking_check(tracking_id: str, current_user=Depends(_decode_token)):
         # "not ranking" — nothing was measured and nothing was stored.
         raise HTTPException(
             status_code=503,
-            detail=f"SerpAPI unavailable, no snapshot recorded: {ranking.get('reason', '')}")
+            detail=f"DataForSEO unavailable, no snapshot recorded: {ranking.get('reason', '')}")
     return ranking
 
 
@@ -1502,6 +1660,66 @@ def tracking_delete(tracking_id: str, current_user=Depends(_decode_token)):
     if not gone:
         raise HTTPException(status_code=404, detail="Not found")
     return {"deleted": True}
+
+
+# ── DataForSEO SERP fetcher ───────────────────────────────────────────────────
+#
+# Shared by rank tracking (strict — this fetcher or nothing) and the FS Stealer (which reaches
+# it through _serp_cached with provider="dataforseo", and may fall back). This was once a
+# parallel "test copy" of tracking with its own /api/tracking-dfs endpoints and *_dfs tables;
+# once tracking moved to DataForSEO the copy was redundant and was removed. The old tables are
+# still in the database, holding the comparison data, but nothing reads them.
+
+from dataforseo_utils import (fetch_serp_via_dataforseo, dfs_account_status,
+                              fetch_backlinks_summary, fetch_backlinks)
+
+
+def _serp_dfs_cached(keyword: str, location_name: str, force: bool = False) -> dict:
+    """DataForSEO SERP with the same short-lived DB cache the other tools use, under its own
+    key namespace so a SerpAPI result can never satisfy a DataForSEO lookup — that would put
+    two providers' positions into one rank series."""
+    ttl = float(os.getenv("DATAFORSEO_CACHE_TTL_HOURS", os.getenv("SERP_CACHE_TTL_HOURS", "6")))
+    key = f"dfs|{(keyword or '').strip().lower()}|{location_name}"
+
+    if ttl > 0 and not force:
+        try:
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT result FROM serp_cache WHERE cache_key = %s "
+                        "AND created_at > NOW() - (%s * INTERVAL '1 hour')",
+                        (key, ttl),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        res = row["result"]
+                        if isinstance(res, str):
+                            res = json.loads(res)
+                        if isinstance(res, dict) and res.get("source") == "dataforseo":
+                            res["_cached"] = True
+                            res["cost"] = 0.0        # a cache hit costs nothing; don't re-bill it
+                            return res
+        except Exception:
+            pass
+
+    res = fetch_serp_via_dataforseo(keyword, location_name=location_name)
+    if isinstance(res, dict) and res.get("organic"):
+        try:
+            with _db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO serp_cache (cache_key, keyword, location, result)
+                           VALUES (%s,%s,%s,%s)
+                           ON CONFLICT (cache_key) DO UPDATE
+                             SET result = EXCLUDED.result, created_at = NOW()""",
+                        (key, (keyword or "").strip(), location_name, json.dumps(res)),
+                    )
+                conn.commit()
+        except Exception:
+            pass
+    if isinstance(res, dict):
+        res["_cached"] = False
+    return res
 
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
@@ -1682,6 +1900,7 @@ def cron_check_all(authorization: str = Header(None)):
     due = due[:TRACK_MAX_PER_RUN]
 
     checked = failed = 0
+    spend = 0.0
     skipped: list = []
     errors: list = []
 
@@ -1709,12 +1928,14 @@ def cron_check_all(authorization: str = Header(None)):
                         skipped.append({"keyword": item["keyword"], "reason": res.get("reason", "")[:200]})
                     else:
                         checked += 1
+                        spend += float(res.get("cost") or 0)
     finally:
         # Always close the row — a run left open would block the next hour's invocation.
         left = len(remaining)
         duration = round(time.monotonic() - started, 1)
         note = "; ".join(filter(None, [
-            f"{len(skipped)} skipped (SerpAPI unavailable)" if skipped else "",
+            f"${round(spend, 4)} spent" if spend else "",
+            f"{len(skipped)} skipped (DataForSEO unavailable)" if skipped else "",
             f"{failed} failed" if failed else "",
             "time budget reached" if left else "",
             "batch cap hit — more still due" if more_than_batch else "",
@@ -1735,6 +1956,7 @@ def cron_check_all(authorization: str = Header(None)):
         "checked": checked,
         "skipped": len(skipped),
         "failed": failed,
+        "cost": round(spend, 4),
         "unprocessed_this_run": left,
         "more_due_beyond_batch": more_than_batch,
         "duration_s": duration,
@@ -1753,12 +1975,15 @@ def tracking_cron_status(current_user=Depends(_decode_token)):
                 cur.execute("SELECT COUNT(*) AS n FROM keyword_tracking")
                 total = int(cur.fetchone()["n"] or 0)
                 cur.execute(
-                    """SELECT COUNT(DISTINCT kr.tracking_id) AS n
+                    """SELECT COUNT(DISTINCT kr.tracking_id) AS n,
+                              COALESCE(SUM(kr.cost), 0)      AS spend
                        FROM keyword_rankings kr
                        WHERE (kr.checked_at AT TIME ZONE 'UTC')::date
                              = (NOW() AT TIME ZONE 'UTC')::date"""
                 )
-                done = int(cur.fetchone()["n"] or 0)
+                _row = cur.fetchone()
+                done = int(_row["n"] or 0)
+                spend_today = float(_row["spend"] or 0)
                 cur.execute(
                     """SELECT started_at, duration_s, due_at_start, checked, skipped,
                               failed, remaining, notes
@@ -1777,8 +2002,18 @@ def tracking_cron_status(current_user=Depends(_decode_token)):
         "checked_today": done,
         "due_today": max(0, total - done),
         "coverage_pct": round(done / total * 100) if total else 0,
+        "source": "dataforseo",
+        "spend_today": round(spend_today, 4),
         "runs_today": runs,
     }
+
+
+@app.get("/api/tracking/account")
+def tracking_account(current_user=Depends(_decode_token)):
+    """DataForSEO credentials and balance. Tracking buys a SERP per keyword per day and stops
+    recording when the balance runs out, so the remaining credit belongs on screen next to the
+    coverage numbers — a drained account and a quiet day look identical otherwise."""
+    return dfs_account_status()
 
 
 class SiteConfig(BaseModel):
@@ -2325,6 +2560,1764 @@ def export_logs(req: ExportRequest):
     )
 
 
+# --- Crawl budget action plan -------------------------------------------------
+#
+# Crawl budget is spent on every request Googlebot makes, not just the useful ones. A log
+# window already tells us where it went: the deterministic signals below are computed from
+# the merged aggregate, and the model only ranks and explains them. The numbers are never
+# left to the model to invent — a plan built on a hallucinated 404 rate is worse than none.
+
+# Path shapes that consume crawl budget without earning rankings.
+_CB_ASSET_RE = re.compile(r"\.(js|css|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|eot|mp4|webm|pdf)(\?|$)", re.I)
+_CB_NOISE_RE = re.compile(r"(/wp-admin|/wp-json|/xmlrpc\.php|/feed/?$|/\?s=|/search|/page/\d+|/tag/|/author/|/cart|/checkout|\?replytocom=|\?utm_)", re.I)
+
+# Third-party crawlers that cost server resources without sending traffic. Googlebot and
+# bingbot are excluded: those earn their keep.
+_CB_THIRD_PARTY = {"AhrefsBot", "SemrushBot", "YandexBot", "dotbot", "mj12bot",
+                   "PetalBot", "DataForSeoBot"}
+
+
+def _crawl_budget_signals(agg: dict) -> dict:
+    """Turn a merged log aggregate into the crawl-budget facts worth acting on."""
+    total = int(agg.get("total_hits") or 0)
+    gb = (agg.get("bot_aggregations") or {}).get("Googlebot") or {}
+    gb_status = {s["name"]: int(s["value"]) for s in (gb.get("status_data") or [])}
+    gb_hits = sum(gb_status.values()) or int(agg.get("googlebot_hits") or 0)
+
+    def _band(prefix):
+        return sum(v for k, v in gb_status.items() if str(k).startswith(prefix))
+
+    ok      = gb_status.get("200", 0)
+    notmod  = gb_status.get("304", 0)
+    redir   = _band("3") - notmod
+    missing = gb_status.get("404", 0) + gb_status.get("410", 0)
+    server  = _band("5")
+    forbid  = gb_status.get("403", 0)
+    # 304s are a *good* outcome — Googlebot revalidated and skipped a full fetch — so they
+    # are not counted as waste. Only redirects, errors and blocks are.
+    wasted  = redir + missing + server + forbid
+
+    gb_paths = gb.get("top_paths") or []
+    path_hits = sum(int(p.get("hits") or 0) for p in gb_paths) or 1
+    param_hits = sum(int(p.get("hits") or 0) for p in gb_paths if "?" in (p.get("path") or ""))
+    asset_hits = sum(int(p.get("hits") or 0) for p in gb_paths if _CB_ASSET_RE.search(p.get("path") or ""))
+    noise_hits = sum(int(p.get("hits") or 0) for p in gb_paths if _CB_NOISE_RE.search(p.get("path") or ""))
+
+    third_party = [
+        {"bot": b["bot"], "hits": int(b["hits"]),
+         "pct_of_total": round(int(b["hits"]) / total * 100, 1) if total else 0}
+        for b in (agg.get("bot_breakdown") or [])
+        if b.get("bot") in _CB_THIRD_PARTY and int(b.get("hits") or 0) > 0
+    ]
+
+    series = gb.get("time_series") or []
+    trend = None
+    if len(series) >= 4:
+        half = len(series) // 2
+        first = sum(int(d.get("hits") or 0) for d in series[:half]) / max(half, 1)
+        last  = sum(int(d.get("hits") or 0) for d in series[half:]) / max(len(series) - half, 1)
+        if first > 0:
+            trend = round((last - first) / first * 100, 1)
+
+    def pct(n, d):
+        return round(n / d * 100, 1) if d else 0.0
+
+    return {
+        "days_covered":        len(series) or len(agg.get("time_series") or []),
+        "total_hits":          total,
+        "googlebot_hits":      gb_hits,
+        "googlebot_share_pct": pct(gb_hits, total),
+        "status": {"200": ok, "304": notmod, "3xx_redirects": redir,
+                   "404_410": missing, "403": forbid, "5xx": server},
+        "wasted_hits":         wasted,
+        "wasted_pct":          pct(wasted, gb_hits),
+        "redirect_pct":        pct(redir, gb_hits),
+        "not_found_pct":       pct(missing, gb_hits),
+        "server_error_pct":    pct(server, gb_hits),
+        "top_googlebot_paths": gb_paths[:10],
+        "parameter_url_pct":   pct(param_hits, path_hits),
+        "static_asset_pct":    pct(asset_hits, path_hits),
+        "low_value_path_pct":  pct(noise_hits, path_hits),
+        "third_party_bots":    third_party,
+        "third_party_pct":     pct(sum(b["hits"] for b in third_party), total),
+        "googlebot_trend_pct": trend,
+    }
+
+
+def _crawl_budget_actions(site: str, sig: dict) -> dict:
+    """Ask Gemini to rank the measured signals into an action plan."""
+    import json as _json
+
+    paths = "\n".join(f"  {p['hits']:>7,} hits - {p['path']}" for p in sig["top_googlebot_paths"]) or "  (none)"
+    bots = ", ".join(f"{b['bot']} {b['hits']:,} ({b['pct_of_total']}%)" for b in sig["third_party_bots"]) or "none significant"
+    trend = f"{sig['googlebot_trend_pct']:+}%" if sig["googlebot_trend_pct"] is not None else "not enough days"
+    st = sig["status"]
+
+    prompt = f"""You are a technical SEO analysing server logs for crawl budget waste on {site}.
+
+MEASURED DATA - {sig['days_covered']} days of logs. Use these numbers exactly; never invent others.
+
+Googlebot: {sig['googlebot_hits']:,} requests ({sig['googlebot_share_pct']}% of {sig['total_hits']:,} total hits)
+Trend across the window: {trend}
+
+Googlebot response codes:
+  200 OK:        {st['200']:,}
+  304 Not Mod.:  {st['304']:,}   (good - a saved fetch, not waste)
+  3xx redirects: {st['3xx_redirects']:,}   ({sig['redirect_pct']}% of Googlebot requests)
+  404/410:       {st['404_410']:,}   ({sig['not_found_pct']}%)
+  403 blocked:   {st['403']:,}
+  5xx errors:    {st['5xx']:,}   ({sig['server_error_pct']}%)
+  WASTED total:  {sig['wasted_hits']:,} ({sig['wasted_pct']}% of Googlebot requests)
+
+Where Googlebot spent its budget (top paths):
+{paths}
+
+Of those top paths: {sig['parameter_url_pct']}% of hits were parameter URLs, {sig['static_asset_pct']}% static assets, {sig['low_value_path_pct']}% low-value paths (search, pagination, feeds, admin, tag archives).
+
+Third-party crawlers consuming server resources: {bots} ({sig['third_party_pct']}% of all hits).
+
+TASK
+Return the highest-impact actions to improve crawl budget, ranked most impactful first.
+Only recommend what this data supports - if redirects are 0.4% do not write a redirect action.
+Between 3 and 7 actions. Be specific to the paths and numbers above.
+
+Return ONLY valid JSON, no markdown fences, no commentary:
+{{
+  "summary": "2-3 sentences on the single biggest crawl budget problem here, with numbers",
+  "actions": [
+    {{
+      "title": "Short imperative action, max 70 chars",
+      "impact": "high|medium|low",
+      "effort": "low|medium|high",
+      "evidence": "The measured numbers that justify this, quoted from the data above",
+      "fix": "Concretely what to change - the robots.txt line, redirect rule, canonical, sitemap edit or server config",
+      "metric": "What should move in the logs afterwards, and roughly by how much"
+    }}
+  ]
+}}"""
+
+    raw = _gemini_generate(prompt)
+    text = (raw or "").strip()
+    # Gemini wraps JSON in fences often enough that stripping them beats retrying.
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+    try:
+        start, stop = text.index("{"), text.rindex("}") + 1
+        data = _json.loads(text[start:stop])
+    except Exception:
+        # Never drop the analysis because the JSON was malformed — hand back the prose so the
+        # run is still worth something, flagged so the UI renders it as plain text.
+        return {"summary": "", "actions": [], "raw": raw, "parse_failed": True}
+
+    def norm(v, allowed):
+        s = str(v or "").strip().lower()
+        return s if s in allowed else "medium"
+
+    actions = []
+    for a in (data.get("actions") or [])[:7]:
+        if not isinstance(a, dict) or not a.get("title"):
+            continue
+        actions.append({
+            "title":    str(a.get("title", ""))[:120],
+            "impact":   norm(a.get("impact"), {"high", "medium", "low"}),
+            "effort":   norm(a.get("effort"), {"high", "medium", "low"}),
+            "evidence": str(a.get("evidence", ""))[:600],
+            "fix":      str(a.get("fix", ""))[:900],
+            "metric":   str(a.get("metric", ""))[:300],
+        })
+    rank = {"high": 0, "medium": 1, "low": 2}
+    actions.sort(key=lambda a: (rank[a["impact"]], rank[a["effort"]]))
+    return {"summary": str(data.get("summary", ""))[:900], "actions": actions, "parse_failed": False}
+
+
+class CrawlBudgetRequest(BaseModel):
+    site_name: str
+    files: List[str]
+
+
+@app.post("/api/logs/crawl-budget")
+def logs_crawl_budget(req: CrawlBudgetRequest, current_user=Depends(_decode_token)):
+    """Analyse the selected log window and return ranked crawl-budget actions.
+
+    Re-merges the same files the analyse step used; every file but the newest comes from the
+    per-file cache, so this costs one Gemini call and almost no parsing."""
+    sites = load_sites()
+    if req.site_name not in sites:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if not req.files:
+        raise HTTPException(status_code=400, detail="Select a period to analyse.")
+
+    site = sites[req.site_name]
+    base = site["url"].rstrip("/") + "/"
+    auth = (site["username"], site["password"])
+    newest = req.files[0]
+
+    partials = []
+    for fname in req.files:
+        cached = None if fname == newest else _get_log_cache(req.site_name, fname)
+        if cached is None:
+            cached = _parse_one_log_file(base, fname, auth)
+            if cached and fname != newest:
+                _put_log_cache(req.site_name, fname, cached)
+        if cached:
+            partials.append(cached)
+
+    agg = _merge_log_aggregates(partials)
+    if not agg.get("total_hits"):
+        raise HTTPException(status_code=404, detail="No log data in the selected period.")
+
+    sig = _crawl_budget_signals(agg)
+    if not sig["googlebot_hits"]:
+        raise HTTPException(
+            status_code=404,
+            detail="No Googlebot requests in this period — nothing to say about crawl budget.")
+
+    try:
+        plan = _crawl_budget_actions(req.site_name, sig)
+    except Exception as exc:
+        # The signals are measured from the logs and are the expensive part of this endpoint.
+        # Throwing them away because the model was rate-limited turned a degraded result into
+        # no result at all, so the run is returned with the failure attached instead.
+        plan = {"summary": "", "actions": [], "parse_failed": False,
+                "ai_error": str(exc)[:300]}
+
+    out = {
+        "site": req.site_name,
+        "days_covered": sig["days_covered"],
+        "files_analyzed": len(partials),
+        "signals": sig,
+        "summary": plan.get("summary", ""),
+        "actions": plan.get("actions", []),
+        "raw": plan.get("raw"),
+        "parse_failed": plan.get("parse_failed", False),
+        "ai_error": plan.get("ai_error"),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_run(
+        tool="crawl_budget",
+        result=out,
+        target_url=site.get("url"),
+        summary=f"{len(out['actions'])} actions · {sig['wasted_pct']}% of Googlebot requests wasted",
+    )
+    return out
+
+
+# --- Backlink audit / disavow candidates --------------------------------------
+#
+# Two layers, deliberately separated:
+#   1. Deterministic risk scoring from the measured link attributes — reproducible, and the
+#      reason strings are facts rather than opinions.
+#   2. A model pass that judges whether each flagged domain is *actually* manipulative.
+#      This matters because spam heuristics misfire constantly on this portfolio: a fan blog
+#      on blogspot linking to a football site scores 100 for spam and is entirely natural.
+#
+# Disavow is destructive and irreversible in effect — Google treats a disavowed domain as if
+# the link never existed, and most sites never need the file at all. Nothing here auto-submits
+# anything; it produces candidates for a human to review.
+
+# TLDs where the overwhelming majority of registrations are throwaway spam.
+_DISAVOW_BAD_TLD = {
+    "xyz", "top", "club", "icu", "tk", "ml", "ga", "cf", "gq", "buzz", "work", "loan",
+    "download", "stream", "bid", "win", "party", "review", "date", "faith", "science",
+    "men", "racing", "accountant", "cricket", "trade", "webcam", "kim", "mom", "surf",
+}
+
+# Anchor text that signals a paid or injected link rather than an editorial one.
+_DISAVOW_BAD_ANCHOR = re.compile(
+    r"(casino|bet\w*\s*(online|site)|poker|bingo|slots?|viagra|cialis|pharmacy|porn|xxx|"
+    r"escort|loan|payday|replica|cheap\s+\w+|buy\s+\w+\s+online|comprar\s+\w+|"
+    r"apostas?\s+(online|esportivas)|cassino|emprestimo|empréstimo)", re.I)
+
+
+def _disavow_score(b: dict) -> dict:
+    """Score one referring domain for disavow risk. Returns {risk, tier, reasons}."""
+    reasons = []
+    risk = 0
+
+    spam = int(b.get("backlink_spam_score") or 0)
+    rank = int(b.get("domain_from_rank") or 0)
+    dofollow = bool(b.get("dofollow"))
+    tld = (b.get("tld_from") or "").split(".")[-1].lower()
+    anchor = (b.get("anchor") or "").strip()
+    platforms = [str(p).lower() for p in (b.get("domain_from_platform_type") or [])]
+
+    if spam >= 85:
+        risk += 45; reasons.append(f"DataForSEO spam score {spam}/100")
+    elif spam >= 60:
+        risk += 28; reasons.append(f"elevated spam score {spam}/100")
+    elif spam >= 40:
+        risk += 12; reasons.append(f"moderate spam score {spam}/100")
+
+    if rank == 0:
+        risk += 20; reasons.append("referring domain has no measurable authority (rank 0)")
+    elif rank < 15:
+        risk += 10; reasons.append(f"very low domain rank ({rank})")
+
+    if tld in _DISAVOW_BAD_TLD:
+        risk += 20; reasons.append(f".{tld} — a TLD dominated by throwaway spam registrations")
+
+    if anchor and _DISAVOW_BAD_ANCHOR.search(anchor):
+        risk += 25; reasons.append(f'commercial/injected anchor text: "{anchor[:60]}"')
+
+    if b.get("domain_from_is_ip"):
+        risk += 15; reasons.append("link comes from a bare IP address, not a domain")
+
+    links_count = int(b.get("links_count") or 0)
+    if links_count >= 50:
+        risk += 12; reasons.append(f"{links_count} links from the same page — sitewide or injected placement")
+
+    if "message-boards" in platforms and spam >= 40:
+        risk += 8; reasons.append("forum/message-board placement with an elevated spam score")
+
+    if int(b.get("page_from_status_code") or 200) >= 400:
+        risk += 5; reasons.append(f"linking page returns HTTP {b.get('page_from_status_code')}")
+
+    # A nofollow link passes no PageRank, so disavowing it changes nothing. Google's own
+    # guidance is not to bother. Score it down hard rather than hiding it.
+    if not dofollow:
+        risk = int(risk * 0.35)
+        reasons.append("nofollow — passes no ranking signal, so disavowing has no effect")
+
+    if b.get("is_lost"):
+        risk = int(risk * 0.3)
+        reasons.append("link is already gone")
+
+    risk = max(0, min(risk, 100))
+    tier = "high" if risk >= 65 else "medium" if risk >= 38 else "low"
+    return {"risk": risk, "tier": tier, "reasons": reasons}
+
+
+def _backlink_review(domain: str, summary: dict, candidates: list) -> dict:
+    """Second opinion on the flagged domains: manipulative, or a false positive?"""
+    import json as _json
+
+    listing = "\n".join(
+        f"  {c['domain_from']} | risk {c['risk']} | spam {c['spam_score']} | rank {c['domain_rank']} | "
+        f"{'dofollow' if c['dofollow'] else 'nofollow'} | anchor: {(c['anchor'] or '(none)')[:45]} | "
+        f"reasons: {'; '.join(c['reasons'][:3])}"
+        for c in candidates[:40]
+    ) or "  (none flagged)"
+
+    prompt = f"""You are auditing the backlink profile of {domain} for disavow candidates.
+
+PROFILE (measured)
+  Referring domains: {summary.get('referring_domains', 0):,}
+  Total backlinks: {summary.get('backlinks', 0):,}
+  Profile spam score: {summary.get('backlinks_spam_score', 0)}/100
+  Broken backlinks: {summary.get('broken_backlinks', 0):,}
+  Domain rank: {summary.get('rank', 0)}
+
+FLAGGED DOMAINS (scored by measured attributes, worst first)
+{listing}
+
+CRITICAL CONTEXT
+This is a sports/news publisher. Fan blogs, forums, aggregators and small local sites linking
+to it are NATURAL and should NOT be disavowed, even when automated spam scores rate them high
+— blogspot/wordpress fan blogs in particular are usually legitimate. Disavow is only for links
+that are manipulative: paid link networks, hacked-site injections, scraped mirrors, PBNs, and
+irrelevant commercial anchors (gambling/pharma/loans) pointing at a site in another niche.
+Google advises most sites never to file a disavow at all. A wrong disavow destroys real equity
+and is slow to undo. Be conservative: when in doubt, say "keep".
+
+TASK
+Judge each flagged domain. Return ONLY valid JSON, no fences, no commentary:
+{{
+  "verdict": "action_needed|monitor|clean",
+  "summary": "2-4 sentences on the real state of this profile and whether a disavow is warranted at all",
+  "judgements": [
+    {{
+      "domain": "exact domain from the list",
+      "call": "disavow|review|keep",
+      "why": "one sentence, specific to this domain and the evidence given"
+    }}
+  ]
+}}
+Include a judgement for every flagged domain listed above."""
+
+    raw = _gemini_generate(prompt)
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+    try:
+        start, stop = text.index("{"), text.rindex("}") + 1
+        data = _json.loads(text[start:stop])
+    except Exception:
+        return {"verdict": "", "summary": "", "judgements": {}, "raw": raw, "parse_failed": True}
+
+    judgements = {}
+    for j in (data.get("judgements") or []):
+        if isinstance(j, dict) and j.get("domain"):
+            call = str(j.get("call", "")).strip().lower()
+            judgements[str(j["domain"]).strip().lower()] = {
+                "call": call if call in {"disavow", "review", "keep"} else "review",
+                "why": str(j.get("why", ""))[:400],
+            }
+    verdict = str(data.get("verdict", "")).strip().lower()
+    return {
+        "verdict": verdict if verdict in {"action_needed", "monitor", "clean"} else "monitor",
+        "summary": str(data.get("summary", ""))[:900],
+        "judgements": judgements,
+        "parse_failed": False,
+    }
+
+
+class BacklinkAuditRequest(BaseModel):
+    domain: str
+    limit: int = 200
+
+
+@app.post("/api/backlinks/audit")
+def backlinks_audit(req: BacklinkAuditRequest, current_user=Depends(_decode_token)):
+    """Pull a domain's referring links, score them for disavow risk, and have the model
+    sanity-check the flagged ones. Two paid DataForSEO calls plus one Gemini call."""
+    domain = _clean_domain(req.domain)
+    if not domain:
+        raise HTTPException(status_code=400, detail="Enter a valid domain (e.g. example.com).")
+
+    summary = fetch_backlinks_summary(domain)
+    if summary.get("error"):
+        raise HTTPException(status_code=502, detail=summary["error"])
+
+    links = fetch_backlinks(domain, limit=max(25, min(req.limit, 1000)))
+    if links.get("error"):
+        raise HTTPException(status_code=502, detail=links["error"])
+
+    scored = []
+    for b in links.get("items") or []:
+        s = _disavow_score(b)
+        scored.append({
+            "domain_from":  b.get("domain_from"),
+            "url_from":     b.get("url_from"),
+            "url_to":       b.get("url_to"),
+            "anchor":       b.get("anchor"),
+            "spam_score":   int(b.get("backlink_spam_score") or 0),
+            "domain_rank":  int(b.get("domain_from_rank") or 0),
+            "dofollow":     bool(b.get("dofollow")),
+            "tld":          b.get("tld_from"),
+            "platform":     b.get("domain_from_platform_type") or [],
+            "first_seen":   b.get("first_seen"),
+            "is_lost":      bool(b.get("is_lost")),
+            "links_count":  int(b.get("links_count") or 0),
+            "risk":         s["risk"],
+            "tier":         s["tier"],
+            "reasons":      s["reasons"],
+        })
+    scored.sort(key=lambda x: -x["risk"])
+    candidates = [c for c in scored if c["tier"] in ("high", "medium")]
+
+    review = {"verdict": "clean", "summary": "", "judgements": {}, "parse_failed": False}
+    if candidates:
+        try:
+            review = _backlink_review(domain, summary, candidates)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"AI review failed: {exc}")
+
+    for c in candidates:
+        j = review.get("judgements", {}).get((c["domain_from"] or "").lower())
+        c["call"] = (j or {}).get("call", "review")
+        c["why"] = (j or {}).get("why", "")
+
+    tally = {"disavow": 0, "review": 0, "keep": 0}
+    for c in candidates:
+        tally[c["call"]] = tally.get(c["call"], 0) + 1
+
+    out = {
+        "domain": domain,
+        "profile": {
+            "rank":              summary.get("rank"),
+            "backlinks":         summary.get("backlinks"),
+            "referring_domains": summary.get("referring_domains"),
+            "referring_main_domains": summary.get("referring_main_domains"),
+            "spam_score":        summary.get("backlinks_spam_score"),
+            "broken_backlinks":  summary.get("broken_backlinks"),
+            "link_types":        summary.get("referring_links_types") or {},
+        },
+        "analysed_links":  len(scored),
+        "total_referring": links.get("total_count"),
+        "candidates":      candidates[:150],
+        "tally":           tally,
+        "verdict":         review.get("verdict"),
+        "summary":         review.get("summary"),
+        "raw":             review.get("raw"),
+        "parse_failed":    review.get("parse_failed", False),
+        "cost":            round(float(summary.get("cost") or 0) + float(links.get("cost") or 0), 4),
+        "generated_at":    datetime.now(timezone.utc).isoformat(),
+    }
+    _save_run(
+        tool="backlink_audit",
+        result=out,
+        target_url=f"https://{domain}/",
+        summary=f"{tally['disavow']} to disavow · {tally['review']} to review · "
+                f"{len(scored)} links scored of {links.get('total_count') or 0:,} referring domains",
+    )
+    return out
+
+
+# --- Hreflang checker ---------------------------------------------------------
+
+def _hreflang_ai_confirm(pairs: list) -> dict:
+    """Ask the model which borderline pairs are really the same page in another language.
+
+    Best-effort: the structural signals already decided the clear cases, so a quota error or a
+    malformed reply must degrade the result rather than fail the run.
+    """
+    import json as _json
+    listing = "\n".join(
+        f'{i}. A: [{p["locale_a"]}] "{p["title_a"]}" ({p["path_a"]})\n'
+        f'   B: [{p["locale_b"]}] "{p["title_b"]}" ({p["path_b"]})'
+        for i, p in enumerate(pairs, 1))
+
+    prompt = f"""For each numbered pair, decide whether the two pages are the SAME content
+published for a different language or region — the relationship hreflang exists to declare.
+
+Titles are in different languages, so judge by meaning, not by shared words. A translated
+title ("Transfer window" / "Janela de transferências") is the same page. A merely related
+page ("Transfer window" / "Top 10 signings") is NOT — say no.
+
+{listing}
+
+Return ONLY valid JSON, no fences:
+{{"verdicts": [{{"n": 1, "same": true, "why": "one short clause"}}]}}"""
+
+    try:
+        raw = _gemini_generate(prompt)
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+        data = _json.loads(text[text.index("{"):text.rindex("}") + 1])
+        out = {}
+        for v in data.get("verdicts") or []:
+            try:
+                out[int(v["n"])] = {"same": bool(v.get("same")), "why": str(v.get("why", ""))[:200]}
+            except Exception:
+                continue
+        return {"verdicts": out, "error": None}
+    except Exception as exc:
+        return {"verdicts": {}, "error": str(exc)[:200]}
+
+
+# --- Hreflang crawler (resumable) ---------------------------------------------
+#
+# Three calls instead of one: start() discovers locales and seeds the queue, step() drains it
+# under a wall-clock budget, and result() decides equivalence over everything stored so far.
+#
+# Why it is split: a Vercel function dies at 300s. A single-shot crawl either has to cap pages
+# low enough to survive a slow site — in which case it covers almost nothing — or risks being
+# killed and returning nothing at all. Stepping keeps every call comfortably inside the limit
+# and makes a slow site cost more calls rather than the whole result.
+#
+# Why pages are persisted: equivalence is decided *across* calls. A page fetched in the first
+# step has to be comparable with one fetched in the tenth, so the fingerprints that survive
+# translation are stored per page rather than held in memory.
+
+import hreflang as _hl
+
+_HL_WORD_CAP = 300      # words kept per page, for same-language lexical comparison
+_HL_SET_CAP  = 60       # images / numbers / outbound hosts kept per page
+
+
+def _hl_default_workers():
+    return int(os.getenv("HREFLANG_WORKERS", "6"))
+
+
+def _hl_store_page(cur, crawl_id: str, p: dict, path_key: str):
+    """Persist one fetched page, capping the fingerprint sets."""
+    cap = lambda s: sorted(list(s))[:_HL_SET_CAP] if s else []
+    cur.execute(
+        """INSERT INTO hreflang_pages
+           (crawl_id, url, final_url, locale, locale_folder, locale_source, locale_mismatch,
+            path_key, status, html_lang, canonical, title, h1, hreflangs, images, numbers,
+            outbound, words, error)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (crawl_id, url) DO UPDATE SET
+             final_url = EXCLUDED.final_url, locale = EXCLUDED.locale,
+             status = EXCLUDED.status, hreflangs = EXCLUDED.hreflangs,
+             fetched_at = NOW()""",
+        (crawl_id, p["url"], p.get("final_url"), p.get("locale"), p.get("locale_folder"),
+         p.get("locale_source"), p.get("locale_mismatch"), path_key, p.get("status"),
+         p.get("lang"), p.get("canonical"), (p.get("title") or "")[:400],
+         (p.get("h1") or "")[:400], json.dumps(p.get("hreflangs") or {}),
+         json.dumps(cap(p.get("images"))), json.dumps(cap(p.get("numbers"))),
+         json.dumps(cap(p.get("outbound"))),
+         json.dumps(sorted(list(p.get("words") or []))[:_HL_WORD_CAP]),
+         (p.get("error") or None)),
+    )
+
+
+def _hl_load_pages(crawl_id: str) -> list:
+    """Read stored pages back into the shape the matcher and auditor expect."""
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT url, final_url, locale, locale_folder, locale_mismatch, path_key,
+                          status, html_lang, canonical, title, h1, hreflangs, images, numbers,
+                          outbound, words
+                   FROM hreflang_pages WHERE crawl_id = %s AND status = 200""",
+                (crawl_id,))
+            rows = [dict(r) for r in cur.fetchall()]
+    out = []
+    for r in rows:
+        jset = lambda v: set(v if isinstance(v, list) else json.loads(v or "[]"))
+        out.append({
+            "url": r["url"], "final_url": r["final_url"] or r["url"],
+            "locale": r["locale"], "locale_folder": r["locale_folder"],
+            "locale_mismatch": r["locale_mismatch"], "rest": r["path_key"],
+            "status": r["status"], "lang": r["html_lang"], "canonical": r["canonical"],
+            "title": r["title"] or "", "h1": r["h1"] or "",
+            "hreflangs": r["hreflangs"] if isinstance(r["hreflangs"], dict)
+                         else json.loads(r["hreflangs"] or "{}"),
+            "images": jset(r["images"]), "numbers": jset(r["numbers"]),
+            "outbound": jset(r["outbound"]), "words": jset(r["words"]),
+        })
+    return out
+
+
+def _hl_crawl_row(crawl_id: str) -> dict:
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM hreflang_crawls WHERE id = %s", (crawl_id,))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Crawl not found.")
+    return dict(row)
+
+
+def _hl_progress(crawl_id: str) -> dict:
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT state, COUNT(*) AS n FROM hreflang_queue
+                   WHERE crawl_id = %s GROUP BY state""", (crawl_id,))
+            counts = {r["state"]: int(r["n"]) for r in cur.fetchall()}
+    return {"pending": counts.get("pending", 0), "done": counts.get("done", 0),
+            "failed": counts.get("failed", 0)}
+
+
+class HreflangStartRequest(BaseModel):
+    domain: str
+    sitemap_url: Optional[str] = None
+    locales: List[str] = []
+    max_pages: int = 1000
+    probe_locales: bool = True
+
+
+@app.post("/api/hreflang/crawl/start")
+def hreflang_crawl_start(req: HreflangStartRequest, current_user=Depends(_decode_token)):
+    """Discover the site's locales and seed the crawl queue. Fetches no content pages beyond
+    the root and one landing page per probed locale, so it stays fast regardless of site size."""
+    from urllib.parse import urlparse as _up
+
+    domain = _clean_domain(req.domain)
+    if not domain:
+        raise HTTPException(status_code=400, detail="Enter a valid domain (e.g. example.com).")
+    base = f"https://{domain}/"
+    max_pages = max(20, min(req.max_pages, 5000))
+    session = http_requests.Session()
+
+    disc = (_hl.discover_sitemap_urls(req.sitemap_url, session, cap=8000)
+            if req.sitemap_url else _hl.discover_sitemap_urls(base, session, cap=8000))
+    if not disc["urls"] and req.sitemap_url:
+        disc = _hl.discover_sitemap_urls(base, session, cap=8000)
+    all_urls = disc["urls"]
+
+    root_page = _hl.fetch_page(base, session)
+    root_locale = ((root_page.get("lang") or "").strip().replace("_", "-") or None)
+
+    by_locale = defaultdict(list)
+    no_locale = 0
+    for u in all_urls:
+        loc, rest = _hl.split_locale_path(_up(u).path)
+        if loc:
+            by_locale[loc].append((rest.rstrip("/") or "/", u))
+        elif root_locale:
+            by_locale[root_locale].append((rest.rstrip("/") or "/", u))
+        else:
+            no_locale += 1
+
+    probed = []
+    if req.probe_locales:
+        try:
+            probed = _hl.probe_locale_roots(base, session, set(by_locale.keys()), root_locale)
+        except Exception:
+            probed = []
+    for hit in probed:
+        try:
+            extra = _hl.urls_for_locale_root(base, hit["segment"], session,
+                                             cap=max(20, max_pages // 8))
+        except Exception:
+            extra = []
+        seg = f"/{hit['segment']}"
+        for u in extra:
+            path = _up(u).path
+            rest = path[len(seg):] if path.lower().startswith(seg.lower()) else path
+            by_locale[hit["label"]].append((rest.rstrip("/") or "/", u))
+        hit["urls_sampled"] = len(extra)
+
+    wanted = [l for l in req.locales if l] or list(by_locale.keys())
+    by_locale = {l: v for l, v in by_locale.items() if l in wanted and v}
+    if len(by_locale) < 2:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Found {len(by_locale)} locale version(s) of this site "
+                   f"({', '.join(sorted(by_locale)) or 'none'}). hreflang needs at least two "
+                   f"language or region versions to compare.")
+
+    # Paths that already exist in several locales are the cheapest equivalence wins, so they
+    # are queued first; the rest follow, because a translated slug is exactly the case most
+    # likely to be *missing* its hreflang.
+    path_locales = defaultdict(set)
+    for loc, items in by_locale.items():
+        for rest, _u in items:
+            path_locales[rest].add(loc)
+    shared = {p for p, ls in path_locales.items() if len(ls) > 1}
+
+    queued, seen = [], set()
+    per_locale = max(6, max_pages // max(len(by_locale), 1))
+    for loc, items in by_locale.items():
+        head = [(r, u) for r, u in items if r in shared][: int(per_locale * 0.75)]
+        tail = [(r, u) for r, u in items if r not in shared][: per_locale - len(head)]
+        for rest, u in head + tail:
+            if u not in seen and len(queued) < max_pages:
+                seen.add(u); queued.append((u, loc, rest))
+
+    crawl_id = str(uuid.uuid4())
+    locales_summary = sorted(
+        [{"locale": l, "urls_in_sitemap": len(v)} for l, v in by_locale.items()],
+        key=lambda x: -x["urls_in_sitemap"])
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO hreflang_crawls
+                       (id, domain, status, root_locale, sitemap_urls, locales, unsitemapped,
+                        pages_queued, notes)
+                       VALUES (%s,%s,'crawling',%s,%s,%s,%s,%s,%s)""",
+                    (crawl_id, domain, root_locale, len(all_urls),
+                     json.dumps(locales_summary), json.dumps(probed), len(queued),
+                     "; ".join(disc.get("notes") or [])[:300]))
+                if queued:
+                    psycopg2.extras.execute_values(
+                        cur,
+                        "INSERT INTO hreflang_queue (crawl_id, url, locale, path_key) VALUES %s "
+                        "ON CONFLICT (crawl_id, url) DO NOTHING",
+                        [(crawl_id, u, loc, rest) for u, loc, rest in queued])
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not start the crawl: {exc}")
+
+    return {
+        "crawl_id": crawl_id,
+        "domain": domain,
+        "root_locale": root_locale,
+        "sitemap_urls": len(all_urls),
+        "urls_without_locale": no_locale,
+        "locales_found": locales_summary,
+        "unsitemapped_locales": [
+            {"segment": h["segment"], "locale": h["label"], "html_lang": h["html_lang"],
+             "url": h["url"], "urls_sampled": h.get("urls_sampled", 0)} for h in probed],
+        "pages_queued": len(queued),
+        "notes": disc.get("notes") or [],
+    }
+
+
+class HreflangStepRequest(BaseModel):
+    crawl_id: str
+    budget_s: float = 45.0
+    workers: Optional[int] = None
+
+
+@app.post("/api/hreflang/crawl/step")
+def hreflang_crawl_step(req: HreflangStepRequest, current_user=Depends(_decode_token)):
+    """Fetch the next slice of the queue, bounded by wall clock rather than page count.
+
+    The clock is re-checked between slices so the call always returns a truthful report instead
+    of being killed by the platform mid-write. A slow site therefore costs more steps, never a
+    lost result."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    crawl = _hl_crawl_row(req.crawl_id)
+    started = time.monotonic()
+    budget = max(5.0, min(req.budget_s, 120.0))
+    deadline = started + budget
+    workers = max(1, min(req.workers or _hl_default_workers(), 12))
+    # A small pause per request keeps us from looking like an attack; bot protection on these
+    # sites has already 403'd us once.
+    delay = float(os.getenv("HREFLANG_DELAY_MS", "120")) / 1000.0
+
+    session = http_requests.Session()
+    done = failed = 0
+
+    def _one(item):
+        url, loc, rest = item
+        if delay:
+            time.sleep(delay)
+        p = _hl.fetch_page(url, session, timeout=15)
+        p["url"] = url
+        rec = _hl.reconcile_locale(loc, p.get("lang"))
+        p["locale_folder"] = loc
+        p["locale"] = rec["label"]
+        p["locale_source"] = rec["source"]
+        p["locale_mismatch"] = rec["mismatch"]
+        return p, rest
+
+    while time.monotonic() < deadline:
+        # Claim a slice so two concurrent steps cannot fetch the same URLs twice.
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE hreflang_queue SET state = 'in_flight'
+                       WHERE id IN (
+                           SELECT id FROM hreflang_queue
+                           WHERE crawl_id = %s AND state = 'pending'
+                           ORDER BY id LIMIT %s
+                           FOR UPDATE SKIP LOCKED
+                       ) RETURNING url, locale, path_key""",
+                    (req.crawl_id, workers * 2))
+                slice_ = [(r["url"], r["locale"], r["path_key"]) for r in cur.fetchall()]
+            conn.commit()
+        if not slice_:
+            break
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            results = list(ex.map(_one, slice_))
+
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                for p, rest in results:
+                    ok = p.get("status") == 200
+                    try:
+                        _hl_store_page(cur, req.crawl_id, p, rest)
+                    except Exception:
+                        ok = False
+                    cur.execute(
+                        "UPDATE hreflang_queue SET state = %s WHERE crawl_id = %s AND url = %s",
+                        ("done" if ok else "failed", req.crawl_id, p["url"]))
+                    if ok:
+                        done += 1
+                    else:
+                        failed += 1
+            conn.commit()
+
+    prog = _hl_progress(req.crawl_id)
+    complete = prog["pending"] == 0
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE hreflang_crawls
+                       SET pages_done = %s, pages_failed = %s, updated_at = NOW(),
+                           status = %s, finished_at = CASE WHEN %s THEN NOW() ELSE finished_at END
+                       WHERE id = %s""",
+                    (prog["done"], prog["failed"], "complete" if complete else "crawling",
+                     complete, req.crawl_id))
+            conn.commit()
+    except Exception:
+        pass
+
+    return {
+        "crawl_id": req.crawl_id,
+        "fetched_this_step": done,
+        "failed_this_step": failed,
+        "pages_done": prog["done"],
+        "pages_failed": prog["failed"],
+        "pages_pending": prog["pending"],
+        "pages_queued": crawl["pages_queued"],
+        "complete": complete,
+        "duration_s": round(time.monotonic() - started, 1),
+    }
+
+
+@app.get("/api/hreflang/crawl/{crawl_id}")
+def hreflang_crawl_result(crawl_id: str, ai_confirm: bool = True,
+                          current_user=Depends(_decode_token)):
+    """Decide equivalence over every page stored for this crawl, and audit the annotations.
+
+    Safe to call mid-crawl: it reports on whatever has been fetched so far."""
+    crawl = _hl_crawl_row(crawl_id)
+    pages = _hl_load_pages(crawl_id)
+    prog = _hl_progress(crawl_id)
+
+    groups = [_hl.audit_group(k, v) for k, v in _hl.group_by_path(pages).items()]
+    groups.sort(key=lambda g: ({"high": 0, "medium": 1, "low": 2, "ok": 3}[g["severity"]], g["path"]))
+
+    grouped = {p["final_url"] for g in _hl.group_by_path(pages).values() for p in g.values()}
+    orphans = [p for p in pages if p["final_url"] not in grouped]
+
+    # Blocking. Comparing every orphan against every other is O(n^2): at the 5,000-page
+    # setting that is twelve million comparisons inside one request. A real translation pair
+    # always shares at least one fingerprint token, so only pages sharing one are scored.
+    # Tokens carried by nearly every page (a logo, a footer year) are dropped — they are
+    # noise, and they would rebuild the full pairwise set on their own.
+    token_index = defaultdict(set)
+    for i, p in enumerate(orphans):
+        for tok in list(p["images"])[:25] + list(p["numbers"])[:25]:
+            token_index[tok].add(i)
+    pair_ids = set()
+    for idxs in token_index.values():
+        if len(idxs) < 2 or len(idxs) > 60:
+            continue
+        ordered = sorted(idxs)
+        for a_i in range(len(ordered)):
+            for b_i in range(a_i + 1, len(ordered)):
+                pair_ids.add((ordered[a_i], ordered[b_i]))
+
+    candidates, ambiguous = [], []
+    for i, j in pair_ids:
+        a, b = orphans[i], orphans[j]
+        if a["locale"] == b["locale"]:
+            continue
+        same_lang = (a["locale"] or "").split("-")[0] == (b["locale"] or "").split("-")[0]
+        sc = _hl.score_pair(a, b, same_lang)
+        if sc["confidence"] < 0.25:
+            continue
+        row = {
+            "locale_a": a["locale"], "path_a": a["rest"], "url_a": a["final_url"], "title_a": a["title"],
+            "locale_b": b["locale"], "path_b": b["rest"], "url_b": b["final_url"], "title_b": b["title"],
+            "confidence": sc["confidence"], "method": sc["method"], "signals": sc["signals"],
+            "already_linked": any(_hl._norm_url(h) == _hl._norm_url(b["final_url"])
+                                  for h in a["hreflangs"].values()),
+            "suggested_tags": _hl.suggest_tags({a["locale"]: a, b["locale"]: b}),
+        }
+        (candidates if sc["confidence"] >= 0.55 else ambiguous).append(row)
+
+    candidates.sort(key=lambda r: -r["confidence"])
+    ambiguous.sort(key=lambda r: -r["confidence"])
+
+    ai_note = None
+    if ai_confirm and ambiguous:
+        batch = ambiguous[:25]
+        res = _hreflang_ai_confirm(batch)
+        if res["error"]:
+            ai_note = f"AI confirmation unavailable ({res['error']}) — showing structural scores only."
+        else:
+            for n, verdict in res["verdicts"].items():
+                if 1 <= n <= len(batch):
+                    row = batch[n - 1]
+                    row["ai_same"] = verdict["same"]
+                    row["ai_why"] = verdict["why"]
+                    if verdict["same"]:
+                        row["confidence"] = max(row["confidence"], 0.6)
+                        candidates.append(row)
+            ai_note = f"{sum(1 for r in batch if r.get('ai_same'))} of {len(batch)} borderline pairs confirmed by AI."
+        candidates.sort(key=lambda r: -r["confidence"])
+
+    missing_pairs = [c for c in candidates if not c["already_linked"]]
+
+    counts = defaultdict(int)
+    for g in groups:
+        for i in g["issues"]:
+            counts[i["type"]] += 1
+
+    out = {
+        "crawl_id": crawl_id,
+        "domain": crawl["domain"],
+        "status": crawl["status"],
+        "root_locale": crawl["root_locale"],
+        "sitemap_urls": crawl["sitemap_urls"],
+        "locales_found": crawl["locales"] or [],
+        "unsitemapped_locales": crawl["unsitemapped"] or [],
+        "pages_fetched": len(pages),
+        "pages_failed": prog["failed"],
+        "pages_pending": prog["pending"],
+        "groups": groups[:300],
+        "groups_total": len(groups),
+        "missing_pairs": missing_pairs[:150],
+        "summary": {
+            "groups_with_issues": sum(1 for g in groups if g["severity"] != "ok"),
+            "missing_entirely": counts["missing_entirely"],
+            "not_reciprocal": counts["not_reciprocal"],
+            "missing_alternate": counts["missing_alternate"],
+            "missing_self_reference": counts["missing_self_reference"],
+            "invalid_code": counts["invalid_code"],
+            "canonical_conflict": counts["canonical_conflict"],
+            "lang_mismatch": counts["lang_mismatch"],
+            "content_matches_unlinked": len(missing_pairs),
+        },
+        "ai_note": ai_note,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if crawl["status"] == "complete":
+        _save_run(tool="hreflang", result=out, target_url=f"https://{crawl['domain']}/",
+                  summary=f"{out['summary']['groups_with_issues']} of {len(groups)} page sets "
+                          f"have hreflang issues · {len(missing_pairs)} unlinked content matches")
+    return out
+
+
+@app.get("/api/hreflang/crawls")
+def hreflang_crawls(domain: Optional[str] = None, limit: int = 20,
+                    current_user=Depends(_decode_token)):
+    """Recent crawls, so a finished report can be reopened instead of re-crawled."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                if domain:
+                    cur.execute(
+                        """SELECT id, domain, status, root_locale, locales, pages_queued,
+                                  pages_done, pages_failed, created_at, finished_at
+                           FROM hreflang_crawls WHERE domain = %s
+                           ORDER BY created_at DESC LIMIT %s""",
+                        (_clean_domain(domain), min(limit, 100)))
+                else:
+                    cur.execute(
+                        """SELECT id, domain, status, root_locale, locales, pages_queued,
+                                  pages_done, pages_failed, created_at, finished_at
+                           FROM hreflang_crawls ORDER BY created_at DESC LIMIT %s""",
+                        (min(limit, 100),))
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        for k in ("created_at", "finished_at"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+        r["locales"] = [l.get("locale") for l in (r["locales"] or [])]
+    return {"crawls": rows}
+
+
+# --- MoveUp Publisher Keywords API ---------------------------------------------
+#
+# Read-only proxy over the keyword corpus, the editorial plan and the valuation tables.
+#
+# Proxied rather than called from the browser for one reason: the key reads with its owner's
+# role and market scope, so shipping it to the client would hand every signed-in user the
+# admin's whole scope. It stays in the environment and never crosses the wire.
+#
+# Two things the upstream docs warn about, enforced here rather than left to each caller:
+#   · The documented base is http:// and 301s to https. curl and requests both drop the
+#     Authorization header across that scheme change, so the redirect answers 401 and looks
+#     like a bad key. The base is pinned to https.
+#   · verifiedVolumeShare is 0 in every market we can see, meaning no volume has been
+#     confirmed against Mangools — the corpus is imported, largely hand-typed. Anything ranked
+#     by volume has to say so, so the share travels with every list response.
+
+_KW_TIMEOUT = 30
+
+
+def _kw_base() -> str:
+    base = os.getenv("KEYWORDS_API_BASE",
+                     "https://console.moveup.tools/publisher/keywords/api/v1").rstrip("/")
+    # Force https: the http host redirects, and the redirect costs the auth header.
+    if base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
+    return base
+
+
+def _kw_get(path: str, params: dict = None) -> dict:
+    key = os.getenv("KEYWORDS_API_KEY", "").strip()
+    if not key:
+        raise HTTPException(status_code=503,
+                            detail="KEYWORDS_API_KEY is not configured on the server.")
+    try:
+        r = http_requests.get(
+            f"{_kw_base()}{path}",
+            headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+            params={k: v for k, v in (params or {}).items() if v not in (None, "")},
+            timeout=_KW_TIMEOUT, allow_redirects=False)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Keywords API unreachable: {exc}")
+
+    if r.status_code in (301, 302, 307, 308):
+        raise HTTPException(
+            status_code=502,
+            detail="Keywords API redirected — the base URL must be https, or the key is dropped.")
+    if r.status_code == 401:
+        raise HTTPException(status_code=502, detail="Keywords API rejected the key (401).")
+    if r.status_code == 403:
+        raise HTTPException(status_code=502,
+                            detail=f"Keywords API refused: {r.text[:200]} — the key's owner may have no scope for that market.")
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail="No such keyword, market or endpoint upstream.")
+    if not r.ok:
+        raise HTTPException(status_code=502,
+                            detail=f"Keywords API error {r.status_code}: {r.text[:200]}")
+    try:
+        return r.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="Keywords API returned a non-JSON body.")
+
+
+def _kw_num(v):
+    """Upstream sends numbers as strings ('10100000', '1212000.0000'). Null means unknown —
+    never zero — so it is preserved rather than coerced."""
+    if v is None or v == "":
+        return None
+    try:
+        f = float(v)
+        return int(f) if f.is_integer() else f
+    except (TypeError, ValueError):
+        return v
+
+
+@app.get("/api/keywords/whoami")
+def keywords_whoami(current_user=Depends(_decode_token)):
+    """Who the key reads as, and the markets in its scope."""
+    return _kw_get("/whoami")
+
+
+@app.get("/api/keywords/stats/{market}")
+def keywords_stats(market: str, current_user=Depends(_decode_token)):
+    """One market in numbers. Worth reading before anything ranked by volume."""
+    d = _kw_get(f"/stats/{market}")
+    for k in ("total_volume", "verified_volume", "market_value"):
+        if k in d:
+            d[k] = _kw_num(d[k])
+    return d
+
+
+@app.get("/api/keywords/list")
+def keywords_list(
+    market: Optional[str] = None, q: Optional[str] = None,
+    brand: Optional[str] = None, activity: Optional[str] = None,
+    user_intent: Optional[str] = None, provenance: Optional[str] = None,
+    volume_source: Optional[str] = None, volume_min: Optional[int] = None,
+    seo_track: Optional[str] = None, updated_since: Optional[str] = None,
+    archived: Optional[str] = None, limit: int = 100, offset: int = 0,
+    current_user=Depends(_decode_token),
+):
+    """The corpus, filtered and paged. Ordered by keyword_value descending upstream."""
+    data = _kw_get("/keywords", {
+        "market": market, "q": q, "brand": brand, "activity": activity,
+        "user_intent": user_intent, "provenance": provenance,
+        "volume_source": volume_source, "volume_min": volume_min,
+        "seo_track": seo_track, "updated_since": updated_since, "archived": archived,
+        "limit": max(1, min(limit, 500)), "offset": max(0, offset),
+    })
+    for row in data.get("rows") or []:
+        for k in ("search_volume", "keyword_value", "reach_1", "reach_2", "reach_3",
+                  "previous_volume", "mangools_volume", "keyword_difficulty", "mangools_kd"):
+            if k in row:
+                row[k] = _kw_num(row[k])
+
+    # A volume ranking built on unverified numbers has to admit it, so the caveat rides along
+    # with the rows rather than waiting to be looked up.
+    if market:
+        try:
+            st = _kw_get(f"/stats/{market}")
+            data["verified_volume_share"] = st.get("verifiedVolumeShare")
+            data["without_volume"] = st.get("without_volume")
+            data["market_keywords"] = st.get("keywords")
+        except HTTPException:
+            pass
+    return data
+
+
+@app.get("/api/keywords/detail/{ref}")
+def keywords_detail(ref: str, current_user=Depends(_decode_token)):
+    """One keyword, its articles and its volume history."""
+    return _kw_get(f"/keywords/{ref}")
+
+
+@app.get("/api/keywords/coverage/{market}")
+def keywords_coverage(market: str, current_user=Depends(_decode_token)):
+    """Operator x intent matrix — where the editorial plan has gaps."""
+    return _kw_get(f"/coverage/{market}")
+
+
+@app.get("/api/keywords/articles")
+def keywords_articles(market: Optional[str] = None, site: Optional[str] = None,
+                      stage: Optional[str] = None, limit: int = 100, offset: int = 0,
+                      current_user=Depends(_decode_token)):
+    """The editorial plan. `unpublished` and `redirected` stages are not live coverage."""
+    return _kw_get("/articles", {"market": market, "site": site, "stage": stage,
+                                 "limit": max(1, min(limit, 500)), "offset": max(0, offset)})
+
+
+@app.get("/api/keywords/referentials")
+def keywords_referentials(name: Optional[str] = None, current_user=Depends(_decode_token)):
+    """The closed vocabularies, for populating filters."""
+    return _kw_get(f"/referentials/{name}" if name else "/referentials")
+
+
+class KeywordsToTrackingRequest(BaseModel):
+    refs: List[str] = []
+    market: Optional[str] = None
+    domain: str
+    location: Optional[str] = None
+
+
+@app.post("/api/keywords/to-tracking")
+def keywords_to_tracking(req: KeywordsToTrackingRequest, current_user=Depends(_decode_token)):
+    """Put chosen corpus keywords into rank tracking.
+
+    The bridge between the two systems: the corpus knows which keywords are worth money, and
+    tracking knows where we rank. The upstream API is read-only, so `seo_track` is not set
+    there — this only creates rows on our side, and skips anything already tracked so it can
+    be re-run without duplicating."""
+    if not req.refs:
+        raise HTTPException(status_code=400, detail="Select at least one keyword.")
+    dom = _clean_domain(req.domain)
+    if not dom:
+        raise HTTPException(status_code=400, detail="Enter a valid domain (e.g. example.com).")
+
+    # Resolve refs to keyword text upstream — the corpus is the source of truth for wording,
+    # which is normalised there and can be corrected after import.
+    resolved = []
+    for ref in req.refs[:200]:
+        try:
+            d = _kw_get(f"/keywords/{ref}")
+        except HTTPException:
+            continue
+        row = d.get("keyword") if isinstance(d.get("keyword"), dict) else d
+        text = (row or {}).get("keyword")
+        if text:
+            resolved.append({"ref": ref, "keyword": str(text).strip(),
+                             "market": (row or {}).get("market"),
+                             "value": _kw_num((row or {}).get("keyword_value"))})
+    if not resolved:
+        raise HTTPException(status_code=404, detail="None of those refs could be read upstream.")
+
+    location = req.location if req.location in DFS_LOCATIONS else TRACK_DEFAULT_LOCATION
+    project_id = _ensure_project(dom, name=dom, location=location)
+    target_url = f"https://{dom}/"
+
+    added, skipped = [], []
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT LOWER(keyword) AS k FROM keyword_tracking WHERE project_id = %s",
+                    (project_id,))
+                existing = {r["k"] for r in cur.fetchall()}
+                for item in resolved:
+                    if item["keyword"].lower() in existing:
+                        skipped.append(item["ref"])
+                        continue
+                    cur.execute(
+                        "INSERT INTO keyword_tracking (id, keyword, target_url, location, project_id) "
+                        "VALUES (%s,%s,%s,%s,%s)",
+                        (str(uuid.uuid4()), item["keyword"], target_url, location, project_id))
+                    existing.add(item["keyword"].lower())
+                    added.append(item)
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {
+        "project_id": project_id, "domain": dom, "location": location,
+        "added": len(added), "skipped_already_tracked": len(skipped),
+        "keywords": [a["keyword"] for a in added][:50],
+        "note": "Added to tracking only. The Keywords API is read-only, so seo_track upstream is unchanged.",
+    }
+
+
+# --- Public API (v1) -----------------------------------------------------------
+#
+# Key-authenticated, read-only access to the rank-tracking data for people outside this app.
+#
+# Separate from everything under /api/* that the console uses: those endpoints authenticate a
+# human's JWT and inherit that person's session. A key is its own identity with its own scope,
+# so the two never share a code path and a key can never pick up a logged-in user's access.
+#
+# Design follows the conventions this team already reads elsewhere:
+#   · The key is shown once, at creation, and stored only as a SHA-256 hash. Nobody, including
+#     an administrator, can recover it — lost keys are revoked and replaced.
+#   · 401 is deliberately indistinguishable for missing, malformed, unknown and revoked keys.
+#     Confirming that a prefix exists would turn the endpoint into a key oracle.
+#   · Non-GET returns 405 before the key is examined, so a write attempt never reaches auth.
+
+import hashlib
+
+_PUB_PREFIX = "mu_live"
+
+
+def _api_key_hash(raw: str) -> str:
+    return hashlib.sha256(raw.strip().encode()).hexdigest()
+
+
+def _mint_api_key() -> tuple:
+    """Returns (full_key, prefix, hash). The full key exists only in this response."""
+    prefix = uuid.uuid4().hex[:8]
+    secret = uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    full = f"{_PUB_PREFIX}_{prefix}_{secret}"
+    return full, prefix, _api_key_hash(full)
+
+
+def _public_key_identity(authorization: Optional[str], x_api_key: Optional[str]) -> dict:
+    """Resolve a key to its row, or raise. Updates last-used as a side effect."""
+    raw = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        raw = authorization[7:].strip()
+    elif x_api_key:
+        raw = x_api_key.strip()
+
+    unauthorized = HTTPException(
+        status_code=401,
+        detail="Send a key as `Authorization: Bearer mu_live_…` or `X-API-Key`. "
+               "Keys are created in the console under API Keys.")
+    if not raw or not raw.startswith(_PUB_PREFIX + "_"):
+        raise unauthorized
+
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM api_keys WHERE key_hash = %s AND revoked_at IS NULL",
+                    (_api_key_hash(raw),))
+                row = cur.fetchone()
+                if row:
+                    cur.execute(
+                        "UPDATE api_keys SET last_used_at = NOW(), request_count = request_count + 1 "
+                        "WHERE id = %s", (row["id"],))
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Key store unavailable: {exc}")
+
+    if not row:
+        raise unauthorized
+    return dict(row)
+
+
+def _public_key(authorization: str = Header(None), x_api_key: str = Header(None)) -> dict:
+    return _public_key_identity(authorization, x_api_key)
+
+
+def _key_projects(key: dict) -> Optional[list]:
+    """Project ids this key may read, or None for every project."""
+    scope = key.get("project_ids")
+    if isinstance(scope, str):
+        try:
+            scope = json.loads(scope)
+        except Exception:
+            scope = None
+    return scope or None
+
+
+def _scope_clause(key: dict, column: str = "p.id"):
+    """SQL fragment + params restricting a query to the key's projects."""
+    ids = _key_projects(key)
+    if not ids:
+        return "", []
+    return f" AND {column} = ANY(%s)", [list(ids)]
+
+
+def _require_project_in_scope(key: dict, project_id: str):
+    ids = _key_projects(key)
+    if ids and project_id not in ids:
+        raise HTTPException(status_code=403, detail="project_not_in_scope")
+
+
+@app.middleware("http")
+async def _public_api_read_only(request, call_next):
+    """The public surface is read-only. Checked before auth so a write never reaches the key."""
+    if request.url.path.startswith("/api/v1/") and request.method not in ("GET", "HEAD", "OPTIONS"):
+        return JSONResponse(status_code=405,
+                            content={"error": "read_only",
+                                     "detail": "The public API is read-only. Any method other than GET returns 405."})
+    return await call_next(request)
+
+
+# ── key management (console, super-admin) ─────────────────────────────────────
+
+class ApiKeyCreate(BaseModel):
+    name: str
+    project_ids: Optional[List[str]] = None     # None = every project
+
+
+@app.post("/api/api-keys")
+def api_key_create(req: ApiKeyCreate, current_user=Depends(_require_super_admin)):
+    """Mint a key. The full value is returned exactly once and never stored."""
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Give the key a name you will recognise later.")
+    full, prefix, digest = _mint_api_key()
+    kid = str(uuid.uuid4())
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO api_keys (id, name, prefix, key_hash, created_by, project_ids)
+                       VALUES (%s,%s,%s,%s,%s,%s)""",
+                    (kid, name[:120], prefix, digest, current_user.get("email") or "",
+                     json.dumps(req.project_ids) if req.project_ids else None))
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {
+        "id": kid, "name": name, "prefix": prefix, "key": full,
+        "project_ids": req.project_ids,
+        "warning": "Copy this now — it is stored only as a hash and cannot be shown again.",
+    }
+
+
+@app.get("/api/api-keys")
+def api_key_list(current_user=Depends(_require_super_admin)):
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT id, name, prefix, created_by, project_ids, created_at,
+                              last_used_at, revoked_at, request_count
+                       FROM api_keys ORDER BY created_at DESC""")
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        for k in ("created_at", "last_used_at", "revoked_at"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+        r["revoked"] = bool(r.pop("revoked_at", None)) if False else r["revoked_at"] is not None
+    return {"keys": rows}
+
+
+@app.delete("/api/api-keys/{key_id}")
+def api_key_revoke(key_id: str, current_user=Depends(_require_super_admin)):
+    """Revoke immediately. Rows are kept so the audit trail survives."""
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE api_keys SET revoked_at = NOW() WHERE id = %s AND revoked_at IS NULL "
+                    "RETURNING id", (key_id,))
+                gone = cur.fetchone()
+            conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not gone:
+        raise HTTPException(status_code=404, detail="No such key, or it was already revoked.")
+    return {"revoked": True, "id": key_id}
+
+
+# ── the public surface ────────────────────────────────────────────────────────
+
+@app.get("/api/v1")
+def v1_index():
+    """The endpoint map. Unauthenticated so a key can be tested against something."""
+    return {
+        "service": "Moveup Media SEO — rank tracking API",
+        "version": "v1",
+        "auth": "Authorization: Bearer mu_live_… (or X-API-Key). Read-only; any non-GET returns 405.",
+        "endpoints": {
+            "GET /api/v1/whoami": "which key this is and what it can read",
+            "GET /api/v1/projects": "tracked domains with their current KPIs",
+            "GET /api/v1/keywords": "tracked keywords with their latest position",
+            "GET /api/v1/keywords/{id}": "one keyword with its position history",
+            "GET /api/v1/rankings": "ranking snapshots, for incremental sync",
+            "GET /api/v1/stats/{project_id}": "one project in numbers",
+            "GET /api/v1/alerts": "recent ranking alerts",
+            "GET /api/v1/agents.md": "the agent guide — read this first if you are an AI tool",
+        },
+        "notes": [
+            "position is null when the target did not appear in the tracked depth — that is "
+            "'not ranking', not 0.",
+            "Snapshots carry `source`; rows written before the DataForSEO migration have none "
+            "and came from SerpAPI. Positions are not strictly comparable across that boundary.",
+            "Use `updated_since` against a stored high-water mark rather than re-reading "
+            "everything.",
+        ],
+    }
+
+
+_AGENT_DOC_CACHE = {}
+
+
+@app.get("/api/v1/agents.md")
+def v1_agent_guide():
+    """The agent guide, served so a tool can be pointed at a URL rather than a file.
+
+    Unauthenticated on purpose: it describes shapes and pitfalls, never data, and an agent
+    that cannot read the contract until it has a working key is an agent that guesses."""
+    if "doc" not in _AGENT_DOC_CACHE:
+        here = os.path.dirname(os.path.abspath(__file__))
+        text = None
+        for candidate in (os.path.join(here, "..", "docs", "API_FOR_AGENTS.md"),
+                          os.path.join(here, "docs", "API_FOR_AGENTS.md"),
+                          "docs/API_FOR_AGENTS.md"):
+            try:
+                with open(candidate, encoding="utf-8") as fh:
+                    text = fh.read()
+                    break
+            except Exception:
+                continue
+        _AGENT_DOC_CACHE["doc"] = text or (
+            "# Agent guide unavailable\n\nThe markdown was not bundled with this "
+            "deployment. See GET /api/v1 for the endpoint map.\n")
+    return PlainTextResponse(_AGENT_DOC_CACHE["doc"], media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/api/v1/whoami")
+def v1_whoami(key=Depends(_public_key)):
+    ids = _key_projects(key)
+    return {
+        "key": {"id": key["id"], "name": key["name"], "prefix": key["prefix"]},
+        "created_by": key.get("created_by"),
+        "scope": "all projects" if not ids else f"{len(ids)} project(s)",
+        "project_ids": ids,
+        "read_only": True,
+        "requests_served": key.get("request_count"),
+    }
+
+
+@app.get("/api/v1/projects")
+def v1_projects(key=Depends(_public_key)):
+    """Tracked domains, with the same KPIs the console shows."""
+    clause, params = _scope_clause(key)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT p.id, p.name, p.domain, p.location, p.created_at,
+                           COUNT(kt.id)                              AS keywords,
+                           COUNT(kr.position)                        AS ranking,
+                           ROUND(AVG(kr.position)::numeric, 1)       AS avg_position,
+                           COUNT(*) FILTER (WHERE kr.position <= 3)  AS top3,
+                           COUNT(*) FILTER (WHERE kr.position <= 10) AS top10,
+                           MAX(kr.checked_at)                        AS last_checked
+                    FROM tracking_projects p
+                    LEFT JOIN keyword_tracking kt ON kt.project_id = p.id
+                    LEFT JOIN LATERAL (
+                        SELECT position, checked_at FROM keyword_rankings
+                        WHERE tracking_id = kt.id ORDER BY checked_at DESC LIMIT 1
+                    ) kr ON true
+                    WHERE true{clause}
+                    GROUP BY p.id ORDER BY COUNT(kt.id) DESC
+                """, params)
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        r["avg_position"] = float(r["avg_position"]) if r["avg_position"] is not None else None
+        for k in ("keywords", "ranking", "top3", "top10"):
+            r[k] = int(r[k] or 0)
+        for k in ("created_at", "last_checked"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+        r["visibility_pct"] = round(r["top10"] / r["keywords"] * 100) if r["keywords"] else 0
+    return {"projects": rows}
+
+
+@app.get("/api/v1/keywords")
+def v1_keywords(project_id: Optional[str] = None, q: Optional[str] = None,
+                position_max: Optional[int] = None, ranking: Optional[bool] = None,
+                updated_since: Optional[str] = None,
+                limit: int = 100, offset: int = 0, key=Depends(_public_key)):
+    """Tracked keywords with their most recent snapshot."""
+    if project_id:
+        _require_project_in_scope(key, project_id)
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+
+    where, params = ["true"], []
+    clause, sparams = _scope_clause(key, "kt.project_id")
+    if clause:
+        where.append(clause.replace(" AND ", "", 1)); params += sparams
+    if project_id:
+        where.append("kt.project_id = %s"); params.append(project_id)
+    if q:
+        where.append("kt.keyword ILIKE %s"); params.append(f"%{q}%")
+    if updated_since:
+        where.append("kr.checked_at > %s"); params.append(updated_since)
+    if position_max is not None:
+        where.append("kr.position <= %s"); params.append(position_max)
+    if ranking is True:
+        where.append("kr.position IS NOT NULL")
+    elif ranking is False:
+        where.append("kr.position IS NULL")
+    sql_where = " AND ".join(where)
+
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) AS n FROM keyword_tracking kt
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM keyword_rankings WHERE tracking_id = kt.id
+                        ORDER BY checked_at DESC LIMIT 1) kr ON true
+                    WHERE {sql_where}""", params)
+                total = int(cur.fetchone()["n"] or 0)
+                cur.execute(f"""
+                    SELECT kt.id, kt.keyword, kt.target_url, kt.location, kt.project_id,
+                           kt.created_at, p.domain,
+                           kr.position, kr.ranking_url, kr.fs_holder_domain, kr.fs_present,
+                           kr.top_domains, kr.source, kr.checked_at
+                    FROM keyword_tracking kt
+                    LEFT JOIN tracking_projects p ON p.id = kt.project_id
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM keyword_rankings WHERE tracking_id = kt.id
+                        ORDER BY checked_at DESC LIMIT 1) kr ON true
+                    WHERE {sql_where}
+                    ORDER BY kr.position ASC NULLS LAST, kt.keyword ASC
+                    LIMIT %s OFFSET %s""", params + [limit, offset])
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        for k in ("created_at", "checked_at"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+    return {"total": total, "limit": limit, "offset": offset, "rows": rows}
+
+
+@app.get("/api/v1/keywords/{tracking_id}")
+def v1_keyword_detail(tracking_id: str, history_days: int = 90, key=Depends(_public_key)):
+    """One keyword, with its position history."""
+    history_days = max(1, min(history_days, 365))
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT kt.*, p.domain FROM keyword_tracking kt
+                    LEFT JOIN tracking_projects p ON p.id = kt.project_id
+                    WHERE kt.id = %s""", (tracking_id,))
+                kw = cur.fetchone()
+                if not kw:
+                    raise HTTPException(status_code=404, detail="not_found")
+                kw = dict(kw)
+                _require_project_in_scope(key, kw.get("project_id"))
+                cur.execute("""
+                    SELECT position, ranking_url, fs_holder_domain, fs_present, top_domains,
+                           source, cost, checked_at
+                    FROM keyword_rankings
+                    WHERE tracking_id = %s AND checked_at > NOW() - (%s || ' days')::interval
+                    ORDER BY checked_at ASC""", (tracking_id, history_days))
+                history = [dict(r) for r in cur.fetchall()]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for k in ("created_at",):
+        if kw.get(k):
+            kw[k] = kw[k].isoformat()
+    for h in history:
+        h["checked_at"] = h["checked_at"].isoformat()
+        h["cost"] = float(h["cost"]) if h.get("cost") is not None else None
+    return {"keyword": kw, "history": history, "history_days": history_days}
+
+
+@app.get("/api/v1/rankings")
+def v1_rankings(project_id: Optional[str] = None, since: Optional[str] = None,
+                limit: int = 200, offset: int = 0, key=Depends(_public_key)):
+    """Raw snapshots, oldest first — the incremental-sync endpoint."""
+    if project_id:
+        _require_project_in_scope(key, project_id)
+    limit = max(1, min(limit, 1000))
+    where, params = ["true"], []
+    clause, sparams = _scope_clause(key, "kt.project_id")
+    if clause:
+        where.append(clause.replace(" AND ", "", 1)); params += sparams
+    if project_id:
+        where.append("kt.project_id = %s"); params.append(project_id)
+    if since:
+        where.append("kr.checked_at > %s"); params.append(since)
+    sql_where = " AND ".join(where)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""SELECT COUNT(*) AS n FROM keyword_rankings kr
+                                JOIN keyword_tracking kt ON kt.id = kr.tracking_id
+                                WHERE {sql_where}""", params)
+                total = int(cur.fetchone()["n"] or 0)
+                cur.execute(f"""
+                    SELECT kr.id, kr.tracking_id, kt.keyword, kt.project_id, p.domain,
+                           kr.position, kr.ranking_url, kr.fs_holder_domain, kr.fs_present,
+                           kr.source, kr.checked_at
+                    FROM keyword_rankings kr
+                    JOIN keyword_tracking kt ON kt.id = kr.tracking_id
+                    LEFT JOIN tracking_projects p ON p.id = kt.project_id
+                    WHERE {sql_where}
+                    ORDER BY kr.checked_at ASC
+                    LIMIT %s OFFSET %s""", params + [limit, max(0, offset)])
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        r["checked_at"] = r["checked_at"].isoformat()
+    return {"total": total, "limit": limit, "offset": offset, "rows": rows}
+
+
+@app.get("/api/v1/stats/{project_id}")
+def v1_stats(project_id: str, key=Depends(_public_key)):
+    """One project in numbers. Worth reading before anything ranked by position."""
+    _require_project_in_scope(key, project_id)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT domain, location FROM tracking_projects WHERE id = %s",
+                            (project_id,))
+                proj = cur.fetchone()
+                if not proj:
+                    raise HTTPException(status_code=404, detail="not_found")
+                cur.execute("""
+                    SELECT COUNT(*) AS keywords,
+                           COUNT(kr.position) AS ranking,
+                           COUNT(*) FILTER (WHERE kr.position <= 3)  AS top3,
+                           COUNT(*) FILTER (WHERE kr.position <= 10) AS top10,
+                           ROUND(AVG(kr.position)::numeric, 1)       AS avg_position,
+                           MAX(kr.checked_at)                        AS last_checked,
+                           COUNT(*) FILTER (WHERE kr.source IS NULL) AS pre_migration
+                    FROM keyword_tracking kt
+                    LEFT JOIN LATERAL (
+                        SELECT position, checked_at, source FROM keyword_rankings
+                        WHERE tracking_id = kt.id ORDER BY checked_at DESC LIMIT 1) kr ON true
+                    WHERE kt.project_id = %s""", (project_id,))
+                s = dict(cur.fetchone())
+                cur.execute("""
+                    SELECT COUNT(DISTINCT kr.tracking_id) AS checked_today
+                    FROM keyword_rankings kr JOIN keyword_tracking kt ON kt.id = kr.tracking_id
+                    WHERE kt.project_id = %s
+                      AND (kr.checked_at AT TIME ZONE 'UTC')::date = (NOW() AT TIME ZONE 'UTC')::date""",
+                    (project_id,))
+                today = int(cur.fetchone()["checked_today"] or 0)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    kws = int(s["keywords"] or 0)
+    return {
+        "project_id": project_id, "domain": proj["domain"], "location": proj["location"],
+        "keywords": kws,
+        "ranking": int(s["ranking"] or 0),
+        "not_ranking": kws - int(s["ranking"] or 0),
+        "top3": int(s["top3"] or 0),
+        "top10": int(s["top10"] or 0),
+        "avg_position": float(s["avg_position"]) if s["avg_position"] is not None else None,
+        "visibility_pct": round(int(s["top10"] or 0) / kws * 100) if kws else 0,
+        "checked_today": today,
+        "coverage_today_pct": round(today / kws * 100) if kws else 0,
+        "latest_from_serpapi": int(s["pre_migration"] or 0),
+        "last_checked": s["last_checked"].isoformat() if s["last_checked"] else None,
+        "note": "`not_ranking` means the target was absent from the tracked depth, not position 0. "
+                "`latest_from_serpapi` counts keywords whose newest snapshot predates the "
+                "DataForSEO migration and is not strictly comparable with later ones.",
+    }
+
+
+@app.get("/api/v1/alerts")
+def v1_alerts(project_id: Optional[str] = None, limit: int = 100, key=Depends(_public_key)):
+    """Recent ranking alerts — drops, gains, lost rankings, snippet changes."""
+    if project_id:
+        _require_project_in_scope(key, project_id)
+    limit = max(1, min(limit, 500))
+    where, params = ["true"], []
+    clause, sparams = _scope_clause(key, "kt.project_id")
+    if clause:
+        where.append(clause.replace(" AND ", "", 1)); params += sparams
+    if project_id:
+        where.append("kt.project_id = %s"); params.append(project_id)
+    try:
+        with _db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT a.id, a.keyword, a.alert_type, a.severity, a.message,
+                           a.prev_value, a.curr_value, a.created_at,
+                           kt.project_id, p.domain
+                    FROM alerts a
+                    LEFT JOIN keyword_tracking kt ON kt.id = a.tracking_id
+                    LEFT JOIN tracking_projects p ON p.id = kt.project_id
+                    WHERE {' AND '.join(where)}
+                    ORDER BY a.created_at DESC LIMIT %s""", params + [limit])
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for r in rows:
+        if r.get("created_at"):
+            r["created_at"] = r["created_at"].isoformat()
+    return {"alerts": rows}
+
+
 # --- GSC Endpoints ---
 
 # Global GSC Client (Singleton)
@@ -2406,6 +4399,71 @@ def get_gsc_chat(req: GscChatRequest):
 
 # --- Screaming Frog Endpoints ---
 
+def _json_safe_records(df) -> list:
+    """DataFrame -> JSON-safe dicts.
+
+    `df.where(pd.notnull(df), None)` looks like it handles this but does not: on a float
+    column None is cast straight back to NaN, so the NaN survives and json.dumps() dies with
+    "Out of range float values are not JSON compliant" — a 500 the browser only ever sees as a
+    network error. numpy scalars need unwrapping for the same reason.
+    """
+    import math
+    import numpy as _np
+
+    def clean(v):
+        if v is None:
+            return None
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        if isinstance(v, _np.generic):
+            v = v.item()
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                return None
+            return v
+        if v is pd.NaT:
+            return None
+        if isinstance(v, (pd.Timestamp,)):
+            return v.isoformat()
+        if isinstance(v, (bytes, bytearray)):
+            return v.decode("utf-8", "replace")[:500]
+        return v
+
+    return [{str(k): clean(v) for k, v in row.items()}
+            for row in df.to_dict(orient="records")]
+
+
+class SfParsedRequest(BaseModel):
+    """A crawl already parsed in the browser.
+
+    Screaming Frog database-mode files run to hundreds of megabytes and a Vercel function
+    rejects any body over 4.5 MB, so the file never reached this code at all. The browser now
+    opens the SQLite itself and sends only what the report needs: four counts and a sample.
+    """
+    filename: str
+    metrics: dict
+    columns: List[str] = []
+    data: List[dict] = []
+    cols_used: List[Optional[str]] = []
+
+
+@app.post("/api/sf/analyze-parsed")
+def analyze_sf_parsed(req: SfParsedRequest, current_user=Depends(_decode_token)):
+    m = req.metrics or {}
+    return {
+        "metrics": {
+            "total_urls": int(m.get("total_urls") or 0),
+            "status_200": int(m.get("status_200") or 0),
+            "missing_titles": int(m.get("missing_titles") or 0),
+            "missing_desc": int(m.get("missing_desc") or 0),
+        },
+        "data": (req.data or [])[:500],
+        "columns": req.columns,
+        "cols_used": req.cols_used,
+        "source": "client-parsed",
+        "filename": req.filename,
+    }
+
+
 class SfFileWrapper:
     def __init__(self, filename, content):
         self.name = filename
@@ -2471,21 +4529,86 @@ async def analyze_sf(file: UploadFile = File(...)):
 
         # Truncate for UI
         df = df.head(500)
-        df = df.where(pd.notnull(df), None)
 
         return {
             "metrics": {
-                "total_urls": total_urls,
-                "status_200": status_200,
-                "missing_titles": missing_titles,
-                "missing_desc": missing_desc
+                "total_urls": int(total_urls),
+                "status_200": int(status_200),
+                "missing_titles": int(missing_titles),
+                "missing_desc": int(missing_desc)
             },
-            "data": df.to_dict(orient="records"),
-            "columns": list(df.columns),
+            "data": _json_safe_records(df),
+            "columns": [str(c) for c in df.columns],
             "cols_used": [addr_col, status_col, title_col, desc_col]
         }
     else:
         raise HTTPException(status_code=400, detail="Failed to load DataFrame.")
+
+class SfAuditNarrativeRequest(BaseModel):
+    """Findings from the browser-side crawl audit, for a narrative pass."""
+    domain: Optional[str] = None
+    stats: dict = {}
+    issues: List[dict] = []
+
+
+@app.post("/api/sf/audit-narrative")
+def sf_audit_narrative(req: SfAuditNarrativeRequest, current_user=Depends(_decode_token)):
+    """Turn the measured findings into a short brief: what to do first, and what it buys.
+
+    The counts and priorities are decided by the rule engine, not here — the model orders the
+    work and explains the trade-offs. Best-effort: a quota error returns the findings unchanged
+    rather than failing the report, because the audit is useful without it."""
+    st = req.stats or {}
+    lines = []
+    for i in (req.issues or [])[:30]:
+        lines.append(f"[{i.get('priority')}] {i.get('title')} — {i.get('count')} URLs "
+                     f"({i.get('pct')}% of pages), category {i.get('category')}")
+    listing = "\n".join(lines) or "(no issues found)"
+
+    prompt = f"""You are a technical SEO writing the opening brief for a crawl audit of {req.domain or 'this site'}.
+
+MEASURED — {st.get('total_urls', 0)} URLs crawled, {st.get('html_pages', 0)} HTML pages,
+{st.get('indexable_pct')}% indexable, median word count {st.get('median_word_count')}.
+Status codes: {st.get('status_buckets')}
+Issues found: {st.get('counts', {}).get('P0', 0)} P0, {st.get('counts', {}).get('P1', 0)} P1, {st.get('counts', {}).get('P2', 0)} P2.
+
+{listing}
+
+Write for the person who has to do the work. Use these numbers, invent none.
+
+Return ONLY valid JSON, no fences:
+{{
+  "headline": "one sentence on the state of this site",
+  "summary": "3-5 sentences: the pattern behind these numbers, what it is costing, what to do first",
+  "sequence": [
+    {{"step": "what to do", "covers": "which issues this clears", "why_now": "what it unblocks or why it must come first"}}
+  ],
+  "watch_out": "one specific trap in this particular dataset — a fix that would make something worse, or a count that likely has a benign explanation"
+}}
+Between 3 and 5 sequence steps, ordered so earlier steps unblock later ones."""
+
+    try:
+        raw = _gemini_generate(prompt)
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+        import json as _json
+        data = _json.loads(text[text.index("{"):text.rindex("}") + 1])
+        return {
+            "headline": str(data.get("headline", ""))[:300],
+            "summary": str(data.get("summary", ""))[:1200],
+            "sequence": [
+                {"step": str(s_.get("step", ""))[:200],
+                 "covers": str(s_.get("covers", ""))[:200],
+                 "why_now": str(s_.get("why_now", ""))[:300]}
+                for s_ in (data.get("sequence") or [])[:5] if isinstance(s_, dict)],
+            "watch_out": str(data.get("watch_out", ""))[:500],
+            "available": True,
+        }
+    except Exception as exc:
+        return {"available": False, "error": str(exc)[:200],
+                "headline": "", "summary": "", "sequence": [], "watch_out": ""}
+
 
 class SfInsightsRequest(BaseModel):
     summary_text: str
@@ -2511,6 +4634,7 @@ if _google_api_key:
 
 # Cached model selection lives in gemini_utils so every module shares one list_models() call
 from gemini_utils import get_flash_model as _get_flash_model
+from gemini_utils import get_model_candidates as _gemini_candidates
 
 def _fetch_page_text(url, auth=None):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/91.0 Safari/537.36"}
@@ -2694,15 +4818,81 @@ def _normalize_markdown_tables(md: str) -> str:
     return "\n".join(out)
 
 
+# model name -> monotonic time it is usable again. Per-process, so a cold start simply
+# rediscovers it; the cost of being wrong is one extra round-trip.
+_GEMINI_COOLDOWN = {}
+
+
+def _is_quota_error(exc) -> bool:
+    text = str(exc)
+    return "429" in text or "quota" in text.lower() or "rate limit" in text.lower()
+
+
+def _quota_retry_delay(exc, default: float = 20.0) -> float:
+    """Google states how long to wait in the error itself — use it rather than guessing."""
+    m = re.search(r"retry_delay\s*{\s*seconds:\s*(\d+)", str(exc))
+    if m:
+        return float(m.group(1))
+    m = re.search(r"[Pp]lease retry in ([\d.]+)s", str(exc))
+    return float(m.group(1)) if m else default
+
+
 def _gemini_generate(prompt: str, max_output_tokens: int = None) -> str:
-    model_name = _get_flash_model()
-    model = genai.GenerativeModel(model_name)
-    if max_output_tokens:
-        response = model.generate_content(
-            prompt, generation_config={"max_output_tokens": max_output_tokens})
-    else:
-        response = model.generate_content(prompt)
-    return response.text
+    """Generate, surviving a rate-limited model.
+
+    The free tier allows 5 requests per minute *per model*, which two analyses in a row will
+    exhaust — and the whole report was being thrown away for it. Quota is counted separately
+    for each model, so a 429 is answered by moving to the next candidate rather than waiting;
+    only when every candidate is limited does it wait, once, for the delay Google specifies.
+    """
+    cfg = {"max_output_tokens": max_output_tokens} if max_output_tokens else None
+    last_exc = None
+    now = time.monotonic()
+    # A hard ceiling on the whole attempt. Each rate-limited model costs a round-trip to
+    # discover, so probing a long list can quietly eat a minute — and every caller now
+    # degrades gracefully, which makes failing fast strictly better than succeeding slowly.
+    deadline = now + float(os.getenv("GEMINI_TOTAL_BUDGET_S", "45"))
+
+    def _call(name):
+        model = genai.GenerativeModel(name)
+        resp = model.generate_content(prompt, generation_config=cfg) if cfg             else model.generate_content(prompt)
+        return resp.text
+
+    candidates = _gemini_candidates()
+    # Discovering a model is rate-limited costs a round-trip — up to 8s, measured. Remembering
+    # it for the length of its own cooldown means later calls in the same warm instance skip
+    # straight to a model that can answer instead of paying that toll again.
+    ready = [m for m in candidates if _GEMINI_COOLDOWN.get(m, 0) <= now] or candidates
+
+    for name in ready:
+        if time.monotonic() >= deadline:
+            break
+        try:
+            return _call(name)
+        except Exception as exc:
+            if not _is_quota_error(exc):
+                raise
+            _GEMINI_COOLDOWN[name] = time.monotonic() + min(_quota_retry_delay(exc), 120.0)
+            last_exc = exc
+
+    # Every candidate is limited. Wait only as long as the soonest one needs, capped so a
+    # serverless invocation is never spent asleep — a clear failure beats being killed.
+    soonest = min((t for t in _GEMINI_COOLDOWN.values() if t > now), default=now)
+    remaining = deadline - time.monotonic()
+    delay = min(max(soonest - time.monotonic(), 0),
+                float(os.getenv("GEMINI_MAX_WAIT_S", "30")), max(remaining - 5, 0))
+    if delay > 0:
+        time.sleep(delay)
+        for name in candidates[:2]:
+            if time.monotonic() >= deadline:
+                break
+            try:
+                return _call(name)
+            except Exception as exc:
+                if not _is_quota_error(exc):
+                    raise
+                last_exc = exc
+    raise last_exc
 
 
 def _fetch_serp_via_gemini(keyword: str, location_name: str = "Global (No Geolocation)") -> dict:
@@ -2880,7 +5070,10 @@ def _serp_cached(keyword: str, location_name: str = "Global (No Geolocation)",
     still gets fresh data. Only successful results are cached; errors always re-fetch.
     """
     ttl = float(os.getenv("SERP_CACHE_TTL_HOURS", "6"))
-    key = f"{(keyword or '').strip().lower()}|{location_name}"
+    # DataForSEO callers get their own key namespace, shared with the rank-tracking test copy
+    # (_serp_dfs_cached) so a SERP bought by one is reused by the other instead of paid for twice.
+    ns = "dfs|" if provider == "dataforseo" else ""
+    key = f"{ns}{(keyword or '').strip().lower()}|{location_name}"
 
     if ttl > 0:
         try:
@@ -2896,12 +5089,16 @@ def _serp_cached(keyword: str, location_name: str = "Global (No Geolocation)",
                         res = row["result"]
                         if isinstance(res, str):
                             res = json.loads(res)
-                        # A cached entry from a fallback engine must not satisfy a caller that
-                        # explicitly demanded SerpAPI — that would reintroduce the mixed-source
-                        # data the provider pin exists to prevent.
-                        if isinstance(res, dict) and not (
-                            provider == "serpapi" and res.get("source") != "serpapi"
-                        ):
+                        # A cached entry from the wrong engine must not satisfy a caller that
+                        # pinned a provider — that would reintroduce the mixed-source data the
+                        # pin exists to prevent. SerpAPI demands SerpAPI exactly; DataForSEO
+                        # accepts its own fallback chain but never a SerpAPI result.
+                        src = res.get("source") if isinstance(res, dict) else None
+                        wrong_source = (
+                            (provider == "serpapi" and src != "serpapi") or
+                            (provider == "dataforseo" and src == "serpapi")
+                        )
+                        if isinstance(res, dict) and not wrong_source:
                             res["_cached"] = True
                             return res
         except Exception:
@@ -4177,8 +6374,8 @@ def fs_stealer_analyze(req: FsStealerRequest):
     target_url = req.target_url if req.target_url.startswith("http") else "https://" + req.target_url
     intent = _classify_intent(req.keyword)
 
-    # Step 1 — fetch SERP: SerpAPI (real Google) → DuckDuckGo → Google scraper
-    serp = _serp_cached(req.keyword, location_name=req.location_name)
+    # Step 1 — fetch SERP: DataForSEO (real Google) → DuckDuckGo → Google scraper
+    serp = _serp_cached(req.keyword, location_name=req.location_name, provider="dataforseo")
     if not serp.get("organic"):
         raise HTTPException(status_code=502, detail=serp.get("error", "SERP fetch failed. Please try again."))
 
@@ -4190,7 +6387,7 @@ def fs_stealer_analyze(req: FsStealerRequest):
     # snippet from a result that is not #1 — and plenty of SERPs have no snippet at all — so
     # treating organic[0] as "the FS holder" was a guess presented to the user as fact.
     featured = serp.get("featured_snippet")
-    fs_known = serp.get("source") == "serpapi"      # only SerpAPI can confirm absence
+    fs_known = serp.get("source") == "dataforseo"   # only DataForSEO can confirm absence
     if featured and featured.get("link"):
         fs_link = featured["link"]
         fs_holder = next(

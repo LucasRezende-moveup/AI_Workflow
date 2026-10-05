@@ -235,24 +235,40 @@ def fetch_serp_via_serpapi(query, location_name="Global (No Geolocation)"):
 def fetch_serp_results(query, location_name="Global (No Geolocation)", hl="en", provider="auto"):
     """
     SERP fetcher. Priority: SerpAPI (real Google) → DuckDuckGo → Google scraper.
-    Fallback chain always runs in full — SerpAPI failure never blocks DDG.
+    Fallback chain always runs in full — a primary failure never blocks DDG.
 
     provider="serpapi" disables the fallback chain entirely and returns an error instead.
     Rank tracking uses that: DuckDuckGo's rankings are not Google's, so quietly substituting
     them produces phantom position changes and false rank-drop alerts in a stored time series.
+
+    provider="dataforseo" swaps DataForSEO in as the primary and keeps the DDG → scraper
+    fallbacks. The FS Stealer uses that: it is a one-off analysis, not a stored series, so a
+    degraded SERP is still worth something — the tool already labels an unconfirmable snippet
+    as an assumption rather than a fact.
     """
-    # SerpAPI — real Google data, used whenever the key is configured
-    serpapi_result = fetch_serp_via_serpapi(query, location_name)
-    if serpapi_result.get("organic"):
-        return serpapi_result
-    serpapi_error = serpapi_result.get("error", "")
+    primary = "dataforseo" if provider == "dataforseo" else "serpapi"
+
+    if primary == "dataforseo":
+        # Imported lazily so a missing/unconfigured DataForSEO module can never break the
+        # SerpAPI path that production rank tracking depends on.
+        try:
+            from dataforseo_utils import fetch_serp_via_dataforseo
+            primary_result = fetch_serp_via_dataforseo(query, location_name)
+        except Exception as exc:
+            primary_result = {"error": f"DataForSEO client unavailable: {exc}"}
+    else:
+        primary_result = fetch_serp_via_serpapi(query, location_name)
+
+    if primary_result.get("organic"):
+        return primary_result
+    primary_error = primary_result.get("error", "")
 
     if provider == "serpapi":
         return {"organic": [], "related_keywords": [], "paa": [], "featured_snippet": None,
                 "source": "serpapi",
-                "error": serpapi_error or "SerpAPI returned no organic results"}
+                "error": primary_error or "SerpAPI returned no organic results"}
 
-    # DuckDuckGo — reliable from cloud IPs, used as fallback when SerpAPI fails
+    # DuckDuckGo — reliable from cloud IPs, used as fallback when the primary fails
     ddg = fetch_serp_duckduckgo(query, location_name)
     if ddg.get("organic"):
         return ddg
@@ -349,7 +365,8 @@ def fetch_serp_results(query, location_name="Global (No Geolocation)", hl="en", 
         except:
             continue
             
-    detail = f" (SerpAPI: {serpapi_error})" if serpapi_error and "not configured" not in serpapi_error else ""
+    label = "DataForSEO" if primary == "dataforseo" else "SerpAPI"
+    detail = f" ({label}: {primary_error})" if primary_error and "not configured" not in primary_error else ""
     return {"error": f"All SERP sources failed{detail}. Google server IP may be blocked — try again in a few minutes."}
 
 def parse_google_results(html):
